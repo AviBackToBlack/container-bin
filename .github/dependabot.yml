@@ -1,0 +1,17 @@
+version: 2
+updates:
+  # Keep GitHub Actions SHA pins current (pins are full commit SHAs;
+  # Dependabot updates both the SHA and the version comment).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    labels: ["dependencies", "github-actions"]
+
+  # Currently zero third-party Go dependencies (intentional); this keeps
+  # the toolchain directive and any future modules covered anyway.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    labels: ["dependencies", "go"]
