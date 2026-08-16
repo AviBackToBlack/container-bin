@@ -500,3 +500,50 @@ func TestImageRepository(t *testing.T) {
 		}
 	}
 }
+
+func TestVersionDefaultIsDev(t *testing.T) {
+	// Release builds override this via -ldflags "-X main.version=vX.Y.Z".
+	if version != "dev" {
+		t.Fatalf("default version = %q, want \"dev\"", version)
+	}
+}
+
+func TestRejectDuplicateToolSections(t *testing.T) {
+	_, err := parseRegistryTOML(`[tools.jq]
+image = "a:1"
+provider = "stateless"
+
+[tools.jq]
+image = "b:1"
+provider = "stateless"
+`)
+	if err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("expected duplicate section rejection, got %v", err)
+	}
+}
+
+func TestReservedToolNames(t *testing.T) {
+	reserved := []string{"cb", "container-bin", "con", "prn", "aux", "nul", "com1", "com9", "lpt1", "lpt9"}
+	for _, name := range reserved {
+		if !reservedToolName(name) {
+			t.Fatalf("%q should be reserved", name)
+		}
+		if _, err := parseRegistryTOML("[tools." + name + "]\nimage = \"x:1\"\nprovider = \"stateless\"\n"); err == nil {
+			t.Fatalf("registry accepted reserved tool name %q", name)
+		}
+	}
+	for _, name := range []string{"python", "cowsay", "com", "lpt", "com0", "lpt0", "com10", "conx", "nul2"} {
+		if reservedToolName(name) {
+			t.Fatalf("%q should not be reserved", name)
+		}
+	}
+}
+
+func TestNormalizePathEqualsSplitAtEndKeptAsIs(t *testing.T) {
+	tool := Tool{Name: "terraform", PathEquals: []string{"-chdir"}}
+	in := []string{"validate", "-chdir="}
+	got := normalizeToolArgs(tool, in)
+	if !reflect.DeepEqual(got, in) {
+		t.Fatalf("normalizeToolArgs() = %#v, want unchanged %#v", got, in)
+	}
+}

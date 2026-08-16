@@ -18,7 +18,12 @@ import (
 	"time"
 )
 
-const version = "1.0.0"
+// version is injected at release time via:
+//
+//	go build -ldflags "-X main.version=v1.2.3"
+//
+// Local/dev builds report "dev".
+var version = "dev"
 
 // Tool is deliberately generic. Provider owns lifecycle/state semantics;
 // Command is prepended inside the container. An empty Command means: use the
@@ -281,7 +286,6 @@ Commands:
   cb backup    back up registry + lock to a zip
   cb restore   validate/restore a backup (dry-run unless --apply)
   cb self-test run offline end-to-end compatibility checks
-  cb doctor    verify Docker Desktop / Docker Engine is reachable
   cb list      list configured tool profiles
   cb trace     show raw/normalized/mapped argv for a tool without running it
   cb env       show project root and Python environment selected for cwd
@@ -431,6 +435,12 @@ func parseRegistryTOML(s string) (Registry, error) {
 			name := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(sec, "tools.")))
 			if !validToolName(name) {
 				return reg, fmt.Errorf("line %d: invalid tool name %q", lineNo, name)
+			}
+			if reservedToolName(name) {
+				return reg, fmt.Errorf("line %d: tool name %q is reserved (would collide with cb itself or a Windows device name)", lineNo, name)
+			}
+			if _, dup := reg.Tools[name]; dup {
+				return reg, fmt.Errorf("line %d: duplicate [tools.%s] section", lineNo, name)
 			}
 			t := Tool{Name: name, Provider: "stateless"}
 			reg.Tools[name] = t
@@ -712,6 +722,20 @@ func validToolName(s string) bool {
 	return true
 }
 
+// reservedToolName rejects names whose NAME.exe shim would collide with the
+// cb binary itself, or which are Windows reserved device names (creating
+// con.exe / nul.exe etc. misbehaves across Windows tooling).
+func reservedToolName(s string) bool {
+	switch s {
+	case "cb", "container-bin", "con", "prn", "aux", "nul":
+		return true
+	}
+	if len(s) == 4 && (strings.HasPrefix(s, "com") || strings.HasPrefix(s, "lpt")) && s[3] >= '1' && s[3] <= '9' {
+		return true
+	}
+	return false
+}
+
 func listTools(reg Registry, cfgPath string) {
 	names := make([]string, 0, len(reg.Tools))
 	for n := range reg.Tools {
@@ -818,7 +842,14 @@ func doctor(reg Registry, cfgPath string) error {
 
 	if runtime.GOOS == "windows" {
 		out, _ := exec.Command("where.exe", "python").Output()
-		lines := strings.Fields(strings.ReplaceAll(string(out), "\r", ""))
+		// where.exe prints one full path per line; paths may contain spaces,
+		// so this must split on newlines, never on whitespace.
+		var lines []string
+		for _, l := range strings.Split(strings.ReplaceAll(string(out), "\r", ""), "\n") {
+			if l = strings.TrimSpace(l); l != "" {
+				lines = append(lines, l)
+			}
+		}
 		if len(lines) > 0 && strings.EqualFold(filepath.Clean(lines[0]), filepath.Join(dir, "python.exe")) {
 			ok("python resolves to container-bin first")
 		} else {
@@ -1882,7 +1913,9 @@ func discoverNPMGlobalBins(t Tool) ([]string, error) {
 	var bins []string
 	for _, line := range strings.Split(string(out), "\n") {
 		name := strings.ToLower(strings.TrimSpace(line))
-		if name == "" || !validToolName(name) || seen[name] {
+		// Untrusted names discovered inside the container: skip anything that
+		// is not a safe shim name or that would shadow cb / Windows devices.
+		if name == "" || !validToolName(name) || reservedToolName(name) || seen[name] {
 			continue
 		}
 		seen[name] = true
@@ -2581,7 +2614,10 @@ func resolveImage(configured string, pull bool) (LockEntry, error) {
 		}
 	}
 	if resolved == "" {
-		resolved = lines[0]
+		// Fail closed: silently locking a digest from a different repository
+		// (e.g. a locally re-tagged image) would record an identity the
+		// configured reference never had.
+		return LockEntry{}, fmt.Errorf("image %s has no RepoDigest for repository %q (locally tagged image?); pull it from its registry before locking", configured, repo)
 	}
 	i := strings.LastIndex(resolved, "@")
 	if i < 0 || !strings.HasPrefix(resolved[i+1:], "sha256:") {

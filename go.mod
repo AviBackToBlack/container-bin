@@ -1,3 +1,3 @@
-module github.com/example/container-bin
+module github.com/AviBackToBlack/container-bin
 
 go 1.23
