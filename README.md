@@ -1,78 +1,314 @@
-# container-bin v0.9.0 — reproducible image locking
+# ContainerBin
 
-v0.9 adds an immutable image lockfile next to `container-bin.toml`.
+**Run CLI tools on Windows through Docker-backed executable shims — without
+installing the runtimes on the host.**
 
-## New commands
+ContainerBin makes commands such as `python`, `pip`, `node`, `npm`, `npx`,
+`jq`, `yq`, `terraform` and `ffmpeg` look like ordinary Windows executables
+while their real implementations run inside disposable Linux containers on
+Docker Desktop. Your Windows installation stays clean: no Python, no Node, no
+Terraform on the host — just one small Go binary, `cb.exe`.
+
+```powershell
+PS D:\Work\demo> pip install requests
+PS D:\Work\demo> python -c "import requests; print(requests.__version__)"
+2.32.3
+PS D:\Work\demo> ffmpeg -i "D:\Video\input.mkv" "D:\TEMP\output.mkv"
+PS D:\Work\demo> terraform -chdir=.\tf validate
+Success! The configuration is valid.
+```
+
+> **⚠️ ContainerBin is not a security sandbox.** It is a convenience layer that
+> runs the Docker images *you* configured, with the host paths *your commands*
+> reference bind-mounted in and selected environment variables passed through.
+> The registry and lockfile are part of the trust boundary. Read
+> [docs/security-model.md](docs/security-model.md) before pointing it at
+> anything sensitive.
+
+## How it works
+
+```
+PowerShell / cmd / any Windows process
+        │  runs python.exe, jq.exe, terraform.exe, ...
+        ▼
+NAME.exe            (hardlink to cb.exe in one PATH directory)
+        ▼
+cb.exe              dispatches on argv[0]
+        │  registry profile (container-bin.toml)
+        │  argv normalization + conservative Windows→container path mapping
+        │  image lock resolution (container-bin.lock)
+        ▼
+docker run --rm ... image@sha256:digest
+        ▼
+real Linux CLI/runtime in an ephemeral container
+```
+
+- **Process compatibility:** stdin/stdout/stderr, exit codes, piping,
+  redirection, working-directory semantics and interactive vs. captured
+  execution are preserved. Third-party software that probes for a working
+  `python.exe` (validated with Claude CLI) accepts the shim as a real
+  interpreter.
+- **Persistent state where it matters:** `pip install` and `npm install`
+  results survive across invocations in Docker named volumes, even though
+  every container is disposable.
+- **Reproducible images:** `cb lock` pins every configured image to an
+  immutable `repository@sha256:digest`. Updates are explicit (`cb update`),
+  never a side effect of a mutable tag moving.
+
+## Platform support
+
+| Environment | Status |
+|---|---|
+| Windows 10/11 + Docker Desktop (Linux containers) + PowerShell | **Supported** — this is the validated configuration |
+| cmd.exe invocation of shims | Works for the common cases; less battle-tested than PowerShell |
+| Linux / macOS hosts | **Not supported.** The program is Go and cross-compiles, but shim installation, path mapping and doctor checks are Windows-specific |
+| Windows containers | Not supported; images are Linux images |
+
+## Prerequisites
+
+- Windows 10 or 11 (x64)
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) running in
+  **Linux containers** mode
+- A directory on `PATH` where the shims will live
+
+## Installation
+
+1. Download `cb.exe` from [Releases](https://github.com/AviBackToBlack/container-bin/releases)
+   (or build it yourself — see [CONTRIBUTING.md](CONTRIBUTING.md)) and place it
+   in a dedicated directory, e.g. `D:\Tools\container-bin\`.
+
+2. Put that directory **near the front of `PATH`** (System Properties →
+   Environment Variables, or `settings` → "Edit environment variables").
+   ContainerBin deliberately never edits `PATH` for you.
+
+3. Disable the **Windows App Execution Aliases** for Python if present
+   (Settings → Apps → Advanced app settings → App execution aliases → turn off
+   `python.exe` / `python3.exe`). Otherwise the Microsoft Store stub can shadow
+   the ContainerBin shim depending on PATH order. `cb doctor` warns about this.
+
+4. Run:
+
+```powershell
+cb setup
+```
+
+   This writes the default registry (`container-bin.toml`), creates one
+   `NAME.exe` hardlink per configured tool next to `cb.exe`, and runs
+   `cb doctor` to verify Docker, PATH, shims, registry and lock state.
+
+5. Pin your images:
 
 ```powershell
 cb lock
-cb lock --check
-cb update TOOL
-cb update --all
 ```
 
-`container-bin.toml` remains the human intent/configuration file. `container-bin.lock`
-is machine-generated and stores exact Docker image digests.
+## Default tools
 
-Runtime behavior:
+| Shim | Image | Provider |
+|---|---|---|
+| `python`, `python3` | `python:3.13-slim` | python (project `/venv` in a named volume) |
+| `pip`, `pip3` | `python:3.13-slim` | python |
+| `node`, `npm`, `npx` | `node:24-slim` | stateful (`node24` state group) |
+| `jq` | `ghcr.io/jqlang/jq:latest` | stateless |
+| `yq` | `mikefarah/yq:latest` | stateless |
+| `terraform` | `hashicorp/terraform:latest` | stateless (`-chdir` path semantics) |
+| `ffmpeg` | `lscr.io/linuxserver/ffmpeg:latest` | stateless |
 
-- no lockfile: configured tags are used (backward-compatible UNLOCKED mode)
-- lockfile exists: tools run by the exact `repository@sha256:digest`
-- registry contains an image missing from the lockfile: execution fails closed and asks for `cb update TOOL` or `cb lock`
+## The registry: declarative tool profiles
 
-## First migration from v0.8
-
-```powershell
-cb version
-cb inspect terraform
-cb lock
-cb lock --check
-cb inspect terraform
-```
-
-Before `cb lock`, inspect reports `UNLOCKED`. Afterwards it reports the configured
-image plus its immutable locked digest.
-
-## Controlled updates
-
-```powershell
-cb update terraform
-```
-
-Pulls the configured Terraform tag, resolves its current digest, and updates only
-that image entry. Shared images are locked once: `node`, `npm`, `npx`, and npm-exposed
-commands all share the single `node:24-slim` lock entry.
-
-```powershell
-cb update --all
-```
-
-Explicitly refreshes every unique configured image.
-
-## Lockfile model
-
-Example:
+`container-bin.toml` lives next to `cb.exe` and describes every tool
+declaratively:
 
 ```toml
-lock_version = 1
-
-[images.0123456789ab]
-configured = "node:24-slim"
-resolved = "node@sha256:..."
-digest = "sha256:..."
+[tools.terraform]
+image = "hashicorp/terraform:latest"
+provider = "stateless"
+path_equals = ["-chdir"]                # -chdir=HOST_PATH is rewritten safely
+env_prefixes = ["TF_", "AWS_", "ARM_"]  # only these host vars enter the container
 ```
 
-The section id is derived from the configured image string and validated when loading.
-The lockfile is rewritten atomically and validated before replacement.
+Semantics include `command`, `args_prefix`, `path_next`, `path_equals`,
+`path_last`, `path_last_if_any`, `env_names`, `env_prefixes`, `env_set`,
+`project_markers`, `state_group`, `project_volumes` and `shared_volumes`.
+Unknown keys **fail validation** instead of being silently ignored, and a
+`schema_version` newer than the binary supports fails closed. Edit the file,
+then run `cb install` to reconcile shims.
 
-## v1.0.0 productionization
+## Windows path mapping
 
-New commands:
+ContainerBin translates Windows paths in arguments to container paths and
+creates narrowly scoped bind mounts:
 
-- `cb setup` — initialize/upgrade registry, install shims, run doctor.
-- `cb doctor` — validates Docker CLI/engine, registry schema, lock completeness/local exact images, PATH/shims, Python resolution, and managed-volume inspectability.
-- `cb backup [FILE.zip]` — atomically package registry and optional lockfile. Defaults to `backups/` next to cb.exe.
-- `cb restore BACKUP.zip [--apply]` — validates backup; dry-run by default, writes registry/lock only with `--apply`.
-- `cb self-test` — offline end-to-end tests using already-local images: Python state persistence, external Windows path mapping, Node project volume persistence, jq relative paths, and Terraform `-chdir`; temporary project volumes are cleaned afterward.
+- absolute paths (`D:\Video\input.mkv`), explicit relatives (`.\x`, `..\x`),
+  and existing relatives (`data\foo.json`) are mapped;
+- paths inside the project root map into the workspace mount;
+- paths outside it get their own narrow bind mounts (`ffmpeg -i "D:\Video\a.mkv"
+  "D:\TEMP\b.mkv"` produces two separate mounts — never a whole drive);
+- **plain strings are never guessed to be paths.** FFmpeg's `-i` is not forced
+  to be a path because valid inputs include URLs, pipes, devices and lavfi
+  expressions. Tools that need forced path semantics declare them
+  (`path_equals = ["-chdir"]` for Terraform).
 
-This release intentionally does not mutate Windows PATH automatically and does not auto-pull images during self-test.
+PowerShell natively splits `terraform -chdir=.\tf validate` into
+`-chdir=`, `.\tf`, `validate` before the process ever sees it. ContainerBin
+detects this for declared `path_equals` options and rejoins the argv —
+validated against real Terraform.
+
+Use `cb trace TOOL ARGS...` to see raw → normalized → mapped argv and the
+mounts that would be created, without running anything.
+
+## Python and Node state model
+
+**Python:** for a detected project (markers: `pyproject.toml`,
+`requirements.txt`, `setup.py`, `setup.cfg`, `.git`), ContainerBin provisions a
+persistent per-project `/venv` named volume, plus a shared pip cache volume.
+`pip install requests` persists; different projects get isolated environments.
+Outside any project, a compatibility "global" environment serves programs that
+just invoke `python`/`pip` from anywhere.
+
+**Node:** `node`/`npm`/`npx` share the `node24` state group. Project
+dependencies live in a project-scoped named volume mounted at the project's
+`node_modules` (the host may show an empty `node_modules` mountpoint directory
+— contents live in the volume). There's a shared npm cache and a persistent
+npm global prefix. Projects are mounted with their **real basename**
+(`D:\TEMP\node-demo-3` → `/workspace/node-demo-3`) because tools like
+`npm init` derive metadata from it.
+
+## Dynamic npm CLI exposure
+
+```powershell
+npm install -g cowsay
+cb expose npm
+cowsay "hello from a container"
+```
+
+`cb expose npm` discovers binaries in the persistent npm global prefix, adds
+registry profiles for them, and creates Windows shims — `cowsay.exe` appears on
+PATH without Node ever touching the host. `cb unexpose cowsay` removes the shim
+and profile without deleting the underlying npm state. Registry mutations are
+validated and written atomically; a failed validation refuses the update.
+
+## Image locking and explicit updates
+
+```powershell
+cb lock          # pull configured images, write container-bin.lock digests
+cb lock --check  # verify lock completeness and local availability
+cb update jq     # explicitly refresh one image
+cb update --all  # explicitly refresh everything
+```
+
+Runtime behavior is fail-closed:
+
+- no lockfile → backwards-compatible UNLOCKED mode;
+- lockfile present → exact `repository@sha256:digest` execution;
+- an image configured in the registry but missing from the lock → execution
+  **fails** and asks for `cb update TOOL` or `cb lock`.
+
+Tools sharing an image share one lock entry (`node`, `npm`, `npx` and all
+npm-exposed tools ride the single `node:24-slim` entry).
+
+## State inspection and garbage collection
+
+```powershell
+cb state           # volumes classified CURRENT / SHARED / COMPAT / OTHER / ORPHAN
+cb gc              # dry-run for current project state
+cb gc --apply      # delete only explicitly selected current project state
+cb gc --orphans    # dry-run: labeled volumes whose project path no longer exists
+cb gc --orphans --apply
+```
+
+Managed volumes carry labels (`cb.managed=true`, `cb.kind`, `cb.owner`,
+`cb.project_path`, `cb.project_hash`) enabling genuine orphan detection.
+Legacy/unlabeled volumes are **never** guessed to be orphans and never
+auto-deleted.
+
+## Backup and restore
+
+```powershell
+cb backup                       # zip of registry + lock into backups\
+cb restore BACKUP.zip           # dry-run: validates and reports
+cb restore BACKUP.zip --apply   # atomic replacement after validation
+```
+
+## Diagnostics
+
+```powershell
+cb doctor     # Docker CLI/engine, registry schema, lock completeness,
+              # PATH, shims, python resolution, managed volumes
+cb self-test  # offline end-to-end test using already-local locked images:
+              # python /venv persistence, external path mapping, node project
+              # state, jq relative paths, terraform -chdir normalization
+cb trace ...  # dry-run argv/mount mapping for one command
+cb inspect TOOL
+cb env
+cb list
+```
+
+`cb self-test` intentionally pulls nothing; it proves your existing locked
+setup works end to end, then cleans up its temporary project volumes.
+
+## Troubleshooting
+
+- **`python` opens the Microsoft Store / does nothing** — disable the App
+  Execution Aliases (see Installation) or move the shim directory ahead of
+  `WindowsApps` in PATH. `cb doctor` detects both problems.
+- **`image "X" is not locked` error** — you edited an image in the registry
+  while a lockfile exists. That's fail-closed behavior working; run
+  `cb update TOOL` or `cb lock`.
+- **A path argument wasn't mapped** — only recognizable Windows path shapes are
+  mapped (see path mapping above). Check with `cb trace TOOL ARGS...`; declare
+  `path_next`/`path_equals` semantics for the tool if needed.
+- **Docker not reachable** — start Docker Desktop; `cb doctor` shows what cb
+  sees.
+
+## Security model
+
+Short version: ContainerBin executes what its configuration tells it to.
+Whoever can write `container-bin.toml`, `container-bin.lock`, or the shim
+directory controls execution. Path mapping is deliberately conservative, env
+passing is allowlist-only, mounts are as narrow as possible, and lock
+violations fail closed rather than falling back. Full details, including what
+is and isn't a vulnerability: [docs/security-model.md](docs/security-model.md)
+and [SECURITY.md](SECURITY.md).
+
+## Architecture
+
+See [docs/architecture.md](docs/architecture.md) for the full dispatch
+pipeline, the provider model (stateless / python / stateful), volume naming,
+and the reasoning behind apparently odd behavior (PowerShell argv repair,
+FFmpeg's unforced paths, empty `node_modules` mountpoints, shared lock
+entries, legacy Python compatibility state).
+
+## Current limitations
+
+- Windows + Docker Desktop (Linux containers) only.
+- First invocation of a tool after `cb lock` may still need images present
+  locally (`cb lock` pulls them; `cb self-test` never pulls).
+- Container startup adds latency compared to native binaries (typically
+  hundreds of milliseconds; interactive REPLs work but feel it).
+- Two `cb` processes mutating the registry simultaneously are not coordinated
+  (single-user tool; atomic writes keep the file consistent, last writer wins).
+- `cb expose` currently supports the npm global prefix only.
+
+## Roadmap
+
+Larger ideas (decomposing `main.go` into packages, more package-manager
+integrations, self-update, signing) are tracked in the
+[roadmap issue](https://github.com/AviBackToBlack/container-bin/issues).
+
+## Contributing & license
+
+Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) (containerized
+build/test instructions; no Go installation required) and
+[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+
+Licensed under the [Apache License 2.0](LICENSE).
+
+## Release verification
+
+Release binaries are built by a tag-triggered GitHub Actions workflow with
+`SHA256SUMS` checksums and GitHub build provenance attestation. Verify with:
+
+```powershell
+gh attestation verify cb.exe --repo AviBackToBlack/container-bin
+```
