@@ -1,0 +1,32 @@
+name: Feature request
+description: Propose an enhancement or a new tool profile
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do that ContainerBin currently makes hard or impossible?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: |
+        How should it work? For new tool profiles include the image you'd use
+        and any path/env semantics (path_next, path_equals, env_prefixes, ...).
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: model
+    attributes:
+      label: Trust model check
+      options:
+        - label: This proposal keeps conservative path mapping and fail-closed locking intact (or explicitly discusses the trade-off).
+          required: true
