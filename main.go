@@ -855,7 +855,12 @@ func doctor(reg Registry, cfgPath string) error {
 		} else {
 			warn("python does not resolve to container-bin first: %s", strings.TrimSpace(string(out)))
 		}
-		for _, line := range lines[1:] {
+		// Skip the first entry: entries behind it reveal what a shim outage
+		// would fall through to. lines may be empty when no python exists.
+		for i, line := range lines {
+			if i == 0 {
+				continue
+			}
 			if strings.Contains(strings.ToLower(line), `microsoft\windowsapps\python`) {
 				warn("Windows App Execution Alias for python is still present behind the shim")
 			}
@@ -2588,6 +2593,40 @@ func imageRepository(ref string) string {
 	return ref
 }
 
+// canonicalRepository folds away the Docker Hub aliases that the engine
+// normalizes out of RepoDigests, so that a registry entry written as
+// docker.io/library/python matches the python@sha256:... digest Docker
+// reports. Non-Hub registries (ghcr.io/..., private hosts) pass through.
+func canonicalRepository(repo string) string {
+	for _, p := range []string{"docker.io/", "index.docker.io/", "registry-1.docker.io/"} {
+		if strings.HasPrefix(repo, p) {
+			repo = strings.TrimPrefix(repo, p)
+			break
+		}
+	}
+	if strings.HasPrefix(repo, "library/") && strings.Count(repo, "/") == 1 {
+		repo = strings.TrimPrefix(repo, "library/")
+	}
+	return repo
+}
+
+// matchRepoDigest selects the RepoDigest whose repository is the same image
+// repository as the configured reference, modulo Docker Hub normalization.
+// No match is an error condition handled by the caller (fail closed).
+func matchRepoDigest(configured string, repoDigests []string) (string, bool) {
+	want := canonicalRepository(imageRepository(configured))
+	for _, rd := range repoDigests {
+		i := strings.LastIndex(rd, "@")
+		if i < 0 || !strings.HasPrefix(rd[i+1:], "sha256:") {
+			continue
+		}
+		if canonicalRepository(rd[:i]) == want {
+			return rd, true
+		}
+	}
+	return "", false
+}
+
 func resolveImage(configured string, pull bool) (LockEntry, error) {
 	if pull {
 		cmd := exec.Command("docker", "pull", configured)
@@ -2605,24 +2644,14 @@ func resolveImage(configured string, pull bool) (LockEntry, error) {
 	if len(lines) == 0 {
 		return LockEntry{}, fmt.Errorf("image %s has no RepoDigests; cannot lock it reproducibly", configured)
 	}
-	repo := imageRepository(configured)
-	resolved := ""
-	for _, rd := range lines {
-		if strings.HasPrefix(rd, repo+"@sha256:") {
-			resolved = rd
-			break
-		}
-	}
-	if resolved == "" {
+	resolved, ok := matchRepoDigest(configured, lines)
+	if !ok {
 		// Fail closed: silently locking a digest from a different repository
 		// (e.g. a locally re-tagged image) would record an identity the
 		// configured reference never had.
-		return LockEntry{}, fmt.Errorf("image %s has no RepoDigest for repository %q (locally tagged image?); pull it from its registry before locking", configured, repo)
+		return LockEntry{}, fmt.Errorf("image %s has no RepoDigest for repository %q (locally tagged image?); pull it from its registry before locking", configured, imageRepository(configured))
 	}
 	i := strings.LastIndex(resolved, "@")
-	if i < 0 || !strings.HasPrefix(resolved[i+1:], "sha256:") {
-		return LockEntry{}, fmt.Errorf("unexpected RepoDigest %q for %s", resolved, configured)
-	}
 	return LockEntry{Configured: configured, Resolved: resolved, Digest: resolved[i+1:]}, nil
 }
 

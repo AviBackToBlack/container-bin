@@ -547,3 +547,44 @@ func TestNormalizePathEqualsSplitAtEndKeptAsIs(t *testing.T) {
 		t.Fatalf("normalizeToolArgs() = %#v, want unchanged %#v", got, in)
 	}
 }
+
+func TestCanonicalRepository(t *testing.T) {
+	cases := map[string]string{
+		"python":                       "python",
+		"library/python":               "python",
+		"docker.io/library/python":     "python",
+		"index.docker.io/library/node": "node",
+		"docker.io/mikefarah/yq":       "mikefarah/yq",
+		"ghcr.io/jqlang/jq":            "ghcr.io/jqlang/jq",
+		"registry.example:5000/a/b":    "registry.example:5000/a/b",
+		"lscr.io/linuxserver/ffmpeg":   "lscr.io/linuxserver/ffmpeg",
+	}
+	for in, want := range cases {
+		if got := canonicalRepository(in); got != want {
+			t.Fatalf("canonicalRepository(%q)=%q want %q", in, got, want)
+		}
+	}
+}
+
+func TestMatchRepoDigestNormalizesDockerHubRefs(t *testing.T) {
+	digests := []string{"python@sha256:" + strings.Repeat("a", 64)}
+	for _, configured := range []string{"python:3.13-slim", "library/python:3.13-slim", "docker.io/library/python:3.13-slim"} {
+		got, ok := matchRepoDigest(configured, digests)
+		if !ok || got != digests[0] {
+			t.Fatalf("matchRepoDigest(%q) = %q, %v; want %q, true", configured, got, ok, digests[0])
+		}
+	}
+}
+
+func TestMatchRepoDigestFailsClosedOnForeignRepo(t *testing.T) {
+	digests := []string{"someone/else@sha256:" + strings.Repeat("b", 64)}
+	if got, ok := matchRepoDigest("python:3.13-slim", digests); ok {
+		t.Fatalf("expected no match for foreign repo digest, got %q", got)
+	}
+	if _, ok := matchRepoDigest("python:3.13-slim", nil); ok {
+		t.Fatal("expected no match for empty digest list")
+	}
+	if _, ok := matchRepoDigest("python:3.13-slim", []string{"python@md5:oops", "garbage"}); ok {
+		t.Fatal("expected malformed digests to be ignored")
+	}
+}

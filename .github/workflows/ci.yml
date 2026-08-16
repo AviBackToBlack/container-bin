@@ -53,7 +53,7 @@ jobs:
         run: |
           $v = .\cb.exe version
           Write-Host $v
-          if ($v -notmatch 'container-bin dev') { exit 1 }
+          if ($v -notmatch '^container-bin \S+') { exit 1 }
         shell: pwsh
 
   govulncheck:
@@ -67,6 +67,10 @@ jobs:
           # newer than the module's minimum version in go.mod.
           go-version: stable
       - name: Install govulncheck
+        # Deliberately unpinned, unlike the SHA-pinned actions: a vulnerability
+        # scanner is only useful fresh, Dependabot cannot track `go install`
+        # pins inside workflows, and this job has read-only permissions and no
+        # secrets, so the blast radius of a compromised release is minimal.
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
       - name: Run govulncheck
         run: govulncheck ./...
