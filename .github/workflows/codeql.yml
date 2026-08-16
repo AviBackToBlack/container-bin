@@ -24,7 +24,7 @@ jobs:
       matrix:
         include:
           - language: go
-            build-mode: none
+            build-mode: autobuild
           - language: actions
             build-mode: none
     steps:
