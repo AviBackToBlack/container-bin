@@ -11,8 +11,9 @@
 /backups/
 /*.zip
 
-# Empty node_modules mountpoint directories created by the stateful provider
-node_modules/
+# Empty node_modules mountpoint directory created by the stateful provider.
+# Root-anchored like the rest: testdata fixtures must never be hidden.
+/node_modules/
 
 # Go build/test artifacts
 *.test

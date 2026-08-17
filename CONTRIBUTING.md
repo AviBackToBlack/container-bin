@@ -33,6 +33,11 @@ docker run --rm -v "${PWD}:/src" -w /src -e GOFLAGS=-buildvcs=false golang:1.24 
 If you *do* have Go installed, plain `gofmt`, `go vet ./...` and `go test ./...`
 work too. CI runs tests on both Linux and Windows, with the race detector on Linux.
 
+Note on versions: the `golang:1.24` image intentionally leads the module's
+declared minimum (`go 1.23` in `go.mod`); CI resolves its toolchain from
+`go.mod`, so code must not rely on stdlib additions newer than the module
+minimum even if it passes in the newer local container.
+
 ## What unit tests can and cannot prove
 
 Unit tests cover pure logic: registry parsing, lockfile round-trips, path
