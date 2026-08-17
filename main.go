@@ -1037,18 +1037,18 @@ func runTool(t Tool, userArgs []string) (int, error) {
 		} else {
 			pyLabels["cb.kind"] = "compat"
 		}
-		if err := ensureManagedVolume(envID, pyLabels); err != nil {
-			return 1, err
-		}
-		if err := ensureManagedVolume("cb-pip-cache", map[string]string{"cb.managed": "true", "cb.kind": "shared", "cb.owner": "python313/pip-cache"}); err != nil {
-			return 1, err
-		}
 		venvSpec, err := mountSpec("volume", envID, "/venv")
 		if err != nil {
 			return 1, err
 		}
 		pipCacheSpec, err := mountSpec("volume", "cb-pip-cache", "/root/.cache/pip")
 		if err != nil {
+			return 1, err
+		}
+		if err := ensureManagedVolume(envID, pyLabels); err != nil {
+			return 1, err
+		}
+		if err := ensureManagedVolume("cb-pip-cache", map[string]string{"cb.managed": "true", "cb.kind": "shared", "cb.owner": "python313/pip-cache"}); err != nil {
 			return 1, err
 		}
 		args = append(args,
@@ -1072,12 +1072,12 @@ func runTool(t Tool, userArgs []string) (int, error) {
 				return 1, err
 			}
 			vol := statefulProjectVolumeID(t.StateGroup, name, root, found)
-			if err := ensureManagedVolume(vol, map[string]string{"cb.managed": "true", "cb.kind": "project", "cb.owner": t.StateGroup + "/" + name, "cb.project_path": root, "cb.project_hash": volumeHash(root)}); err != nil {
-				return 1, err
-			}
 			dst = statefulWorkspaceDestination(dst, workspaceRoot)
 			volSpec, err := mountSpec("volume", vol, dst)
 			if err != nil {
+				return 1, err
+			}
+			if err := ensureManagedVolume(vol, map[string]string{"cb.managed": "true", "cb.kind": "project", "cb.owner": t.StateGroup + "/" + name, "cb.project_path": root, "cb.project_hash": volumeHash(root)}); err != nil {
 				return 1, err
 			}
 			args = append(args, "--mount", volSpec)
@@ -1088,11 +1088,11 @@ func runTool(t Tool, userArgs []string) (int, error) {
 				return 1, err
 			}
 			vol := statefulSharedVolumeID(t.StateGroup, name)
-			if err := ensureManagedVolume(vol, map[string]string{"cb.managed": "true", "cb.kind": "shared", "cb.owner": t.StateGroup + "/" + name}); err != nil {
-				return 1, err
-			}
 			volSpec, err := mountSpec("volume", vol, dst)
 			if err != nil {
+				return 1, err
+			}
+			if err := ensureManagedVolume(vol, map[string]string{"cb.managed": "true", "cb.kind": "shared", "cb.owner": t.StateGroup + "/" + name}); err != nil {
 				return 1, err
 			}
 			args = append(args, "--mount", volSpec)
