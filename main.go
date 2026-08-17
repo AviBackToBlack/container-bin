@@ -2118,7 +2118,7 @@ func recoverFromBackup(path string, validate func(backupPath string) error) (boo
 	bak := path + ".bak"
 	if _, err := os.Stat(bak); err == nil {
 		if err := validate(bak); err != nil {
-			return false, fmt.Errorf("%s is missing and its backup %s is unusable: %w", path, bak, err)
+			return false, fmt.Errorf("%s is missing and its backup %s is unusable: %w. Remove %s to fall back to defaults, or fix it and retry.", path, bak, err, bak)
 		}
 		if err := os.Rename(bak, path); err != nil {
 			return false, err
@@ -2136,8 +2136,17 @@ func validateRegistryBackup(bak string) error {
 	if err != nil {
 		return err
 	}
-	_, err = parseRegistryTOML(string(b))
-	return err
+	if len(b) == 0 {
+		return errors.New("backup is empty")
+	}
+	reg, err := parseRegistryTOML(string(b))
+	if err != nil {
+		return err
+	}
+	if len(reg.Tools) == 0 {
+		return errors.New("backup contains no tools")
+	}
+	return nil
 }
 
 func inspectTool(reg Registry, args []string) error {
@@ -2438,6 +2447,7 @@ func restoreCommand(cfgPath string, args []string) error {
 		}
 	} else {
 		_ = os.Remove(lockPath)
+		_ = os.Remove(lockPath + ".bak")
 	}
 	fmt.Println("restored registry/lock atomically; run `cb install` to reconcile shims")
 	return nil
