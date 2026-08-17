@@ -235,10 +235,10 @@ cb restore BACKUP.zip --apply   # atomic replacement after validation
 `cb install`, `cb setup`, `cb restore`, `cb expose`, `cb unexpose`,
 `cb uninstall`, `cb lock` and `cb update` serialize through
 `container-bin.mutation.lock` next to `cb.exe`. A second concurrent
-mutation fails fast with a clear message instead of waiting, because
-commands such as `cb update --all` may run for minutes. If a `cb`
-process is killed while holding the lock, delete `container-bin.mutation.lock`
-manually before the next mutating command.
+mutation waits up to 5 seconds for the lock, then fails with a clear
+message if the holder is still active. If a `cb` process is killed while
+holding the lock, delete `container-bin.mutation.lock` manually before the
+next mutating command.
 
 ## Diagnostics
 

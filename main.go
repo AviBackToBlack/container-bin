@@ -3,6 +3,7 @@ package main
 import (
 	"archive/zip"
 	"bufio"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -10,10 +11,12 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
+	"sync"
 	"strings"
 	"time"
 )
@@ -254,30 +257,50 @@ func main() {
 		}
 	case "expose":
 		if err := withMutationLock(cfgPath, func() error {
+			reg, _, err := loadRegistry()
+			if err != nil {
+				return err
+			}
 			return exposeTool(reg, cfgPath, os.Args[2:])
 		}); err != nil {
 			fatalf("expose: %v", err)
 		}
 	case "unexpose":
 		if err := withMutationLock(cfgPath, func() error {
+			reg, _, err := loadRegistry()
+			if err != nil {
+				return err
+			}
 			return unexposeTools(reg, cfgPath, os.Args[2:])
 		}); err != nil {
 			fatalf("unexpose: %v", err)
 		}
 	case "uninstall":
 		if err := withMutationLock(cfgPath, func() error {
+			reg, _, err := loadRegistry()
+			if err != nil {
+				return err
+			}
 			return uninstallTools(reg, cfgPath, os.Args[2:])
 		}); err != nil {
 			fatalf("uninstall: %v", err)
 		}
 	case "lock":
 		if err := withMutationLock(cfgPath, func() error {
+			reg, _, err := loadRegistry()
+			if err != nil {
+				return err
+			}
 			return lockCommand(reg, cfgPath, os.Args[2:])
 		}); err != nil {
 			fatalf("lock: %v", err)
 		}
 	case "update":
 		if err := withMutationLock(cfgPath, func() error {
+			reg, _, err := loadRegistry()
+			if err != nil {
+				return err
+			}
 			return updateCommand(reg, cfgPath, os.Args[2:])
 		}); err != nil {
 			fatalf("update: %v", err)
@@ -2612,7 +2635,14 @@ func acquireMutationLock(cfgPath string, wait time.Duration) (func(), error) {
 	for {
 		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
 		if err == nil {
-			line := fmt.Sprintf("pid=%d at %s", os.Getpid(), time.Now().Format(time.RFC3339))
+			token := make([]byte, 16)
+			if _, rerr := rand.Read(token); rerr != nil {
+				_ = f.Close()
+				_ = os.Remove(path)
+				return nil, rerr
+			}
+			tokenHex := hex.EncodeToString(token)
+			line := fmt.Sprintf("pid=%d token=%s at %s", os.Getpid(), tokenHex, time.Now().Format(time.RFC3339))
 			if _, werr := f.WriteString(line); werr != nil {
 				_ = f.Close()
 				_ = os.Remove(path)
@@ -2622,13 +2652,18 @@ func acquireMutationLock(cfgPath string, wait time.Duration) (func(), error) {
 				_ = os.Remove(path)
 				return nil, cerr
 			}
-			released := false
+			var once sync.Once
 			return func() {
-				if released {
-					return
-				}
-				released = true
-				_ = os.Remove(path)
+				once.Do(func() {
+					data, err := os.ReadFile(path)
+					if err != nil {
+						return
+					}
+					if strings.TrimSpace(string(data)) != line {
+						return
+					}
+					_ = os.Remove(path)
+				})
 			}, nil
 		}
 		if !os.IsExist(err) {
@@ -2641,12 +2676,31 @@ func acquireMutationLock(cfgPath string, wait time.Duration) (func(), error) {
 	}
 }
 
+// withMutationLock is not re-entrant; call sites must not nest another
+// withMutationLock-wrapped operation while holding the lock.
 func withMutationLock(cfgPath string, fn func() error) error {
 	release, err := acquireMutationLock(cfgPath, mutationLockWait)
 	if err != nil {
 		return err
 	}
 	defer release()
+
+	c := make(chan os.Signal, 1)
+	done := make(chan struct{})
+	signal.Notify(c, os.Interrupt)
+	go func() {
+		select {
+		case <-c:
+			release()
+			os.Exit(1)
+		case <-done:
+		}
+	}()
+	defer func() {
+		signal.Stop(c)
+		close(done)
+	}()
+
 	return fn()
 }
 
