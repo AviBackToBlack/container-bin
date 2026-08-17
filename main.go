@@ -2666,10 +2666,22 @@ func acquireMutationLock(cfgPath string, wait time.Duration) (func(), error) {
 				})
 			}, nil
 		}
-		if !os.IsExist(err) {
+		// Windows keeps a deleted file in a pending-delete state until every
+		// handle to it closes, and reports ERROR_ACCESS_DENIED rather than
+		// ERROR_FILE_EXISTS for a create during that window. A release racing
+		// an acquire therefore looks like a permission failure, so treat it as
+		// contention and let the timeout decide.
+		if !os.IsExist(err) && !(runtime.GOOS == "windows" && os.IsPermission(err)) {
 			return nil, err
 		}
 		if time.Since(start) >= wait {
+			// A permission error with no lock file to blame is a genuinely
+			// unwritable directory, not contention; report what actually failed.
+			if os.IsPermission(err) {
+				if _, statErr := os.Stat(path); statErr != nil {
+					return nil, fmt.Errorf("create %s: %w", path, err)
+				}
+			}
 			return nil, fmt.Errorf("another cb command is mutating the registry (holder: %s); retry, or delete %s if no cb process is running", readMutationLockHolder(path), path)
 		}
 		time.Sleep(mutationLockRetryInterval)
