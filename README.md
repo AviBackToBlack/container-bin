@@ -234,7 +234,8 @@ cb restore BACKUP.zip --apply   # atomic replacement after validation
 
 ```powershell
 cb doctor     # Docker CLI/engine, container mode, registry schema,
-              # lock completeness, PATH, shims, python resolution, managed volumes
+              # lock completeness, PATH, shims, python resolution,
+              # managed volumes
 cb self-test  # offline end-to-end test using already-local locked images:
               # python /venv persistence, external path mapping, node project
               # state, jq relative paths, terraform -chdir normalization

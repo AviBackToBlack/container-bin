@@ -781,7 +781,7 @@ func dockerOSTypeVerdict(raw string) (status, message string) {
 	case "linux":
 		return "ok", "docker is in Linux-container mode"
 	case "windows":
-		return "fail", "docker is in Windows-container mode; ContainerBin runs Linux images only, and the user should switch via the Docker Desktop tray icon → \"Switch to Linux containers\""
+		return "fail", "docker is in Windows-container mode; ContainerBin runs Linux images only — switch to Linux containers from the Docker Desktop tray menu"
 	default:
 		if normalized == "" {
 			return "warn", "container mode could not be determined"
