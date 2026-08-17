@@ -134,6 +134,11 @@ Unknown keys **fail validation** instead of being silently ignored, and a
 `schema_version` newer than the binary supports fails closed. Edit the file,
 then run `cb install` to reconcile shims.
 
+One exception applies to every path-forcing key (`path_next`, `path_equals`,
+`path_last`): a value whose final element is `...` is never rewritten, because
+Windows cannot represent such a directory and rewriting it would silently
+change which files the tool acts on. See [Windows path mapping](#windows-path-mapping).
+
 ## Windows path mapping
 
 ContainerBin translates Windows paths in arguments to container paths and
