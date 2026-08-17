@@ -1684,6 +1684,9 @@ const (
 	exitInterrupted = 130
 )
 
+// osExit is an indirection so unit tests can observe the exit code. A test
+// stub that returns instead of terminating will cause fatalf to continue to
+// its caller, so stubs must either panic or otherwise halt the goroutine.
 var osExit = os.Exit
 
 func fatalf(format string, args ...any) {

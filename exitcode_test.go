@@ -88,6 +88,14 @@ func TestSubprocessExitCodes(t *testing.T) {
 	}
 }
 
+// buildTestCb builds a temporary cb binary for the subprocess exit-code
+// tests. It requires `go` on PATH and a writable module/build cache. It
+// also relies on registryPath() resolving relative to the spawned
+// executable's directory, so the test runs without a real
+// container-bin.toml and falls back to defaultRegistry(). If
+// registryPath() ever changes to a user-profile location, this test could
+// start creating container-bin.mutation.lock in the developer's real
+// registry.
 func buildTestCb(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
