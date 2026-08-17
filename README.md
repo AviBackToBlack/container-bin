@@ -109,6 +109,7 @@ cb lock
 | `python`, `python3` | `python:3.13-slim` | python (project `/venv` in a named volume) |
 | `pip`, `pip3` | `python:3.13-slim` | python |
 | `node`, `npm`, `npx` | `node:24-slim` | stateful (`node24` state group) |
+| `go`, `gofmt` | `golang:1.24` | stateful (`go124` state group) |
 | `jq` | `ghcr.io/jqlang/jq:latest` | stateless |
 | `yq` | `mikefarah/yq:latest` | stateless |
 | `terraform` | `hashicorp/terraform:latest` | stateless (`-chdir` path semantics) |
@@ -321,6 +322,10 @@ entries, legacy Python compatibility state).
   `container-bin.mutation.lock`; a second concurrent mutation fails fast
   instead of waiting, and a lock file left by a killed process must be deleted
   manually.
+- Go shims run a Linux Go toolchain: `go build` produces a Linux binary by
+  default. Set `GOOS=windows` (allowed by the profile) to build a Windows
+  executable, e.g. `$env:GOOS="windows"; go build`. `go test` must remain
+  native to the container because a Windows test binary cannot run inside it.
 - `cb expose` currently supports the npm global prefix only.
 
 ## Roadmap

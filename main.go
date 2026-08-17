@@ -166,6 +166,28 @@ shared_volumes = ["npm-cache:/root/.npm", "npm-global:/cb/npm-global"]
 env_set = ["NPM_CONFIG_PREFIX=/cb/npm-global"]
 env_prefixes = ["NPM_CONFIG_"]
 env_names = ["NODE_ENV", "NODE_OPTIONS", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"]
+
+[tools.go]
+image = "golang:1.24"
+provider = "stateful"
+command = ["go"]
+state_group = "go124"
+project_markers = ["go.mod", "go.work", ".git"]
+shared_volumes = ["gomodcache:/go/pkg/mod", "gobuild:/root/.cache/go-build", "gobin:/go/bin"]
+path_next = ["-o", "-C"]
+# Do not allowlist path-valued variables; Windows paths are meaningless inside the Linux container
+env_names = ["GOFLAGS", "GOPROXY", "GONOPROXY", "GOPRIVATE", "GOSUMDB", "GONOSUMDB", "GOINSECURE", "GOOS", "GOARCH", "GOARM", "CGO_ENABLED", "GOTOOLCHAIN", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"]
+
+[tools.gofmt]
+image = "golang:1.24"
+provider = "stateful"
+command = ["gofmt"]
+state_group = "go124"
+project_markers = ["go.mod", "go.work", ".git"]
+shared_volumes = ["gomodcache:/go/pkg/mod", "gobuild:/root/.cache/go-build", "gobin:/go/bin"]
+path_last = true
+# Do not allowlist path-valued variables; Windows paths are meaningless inside the Linux container
+env_names = ["GOFLAGS", "GOPROXY", "GONOPROXY", "GOPRIVATE", "GOSUMDB", "GONOSUMDB", "GOINSECURE", "GOOS", "GOARCH", "GOARM", "CGO_ENABLED", "GOTOOLCHAIN", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"]
 `
 
 func main() {
