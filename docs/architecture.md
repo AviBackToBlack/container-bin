@@ -141,6 +141,19 @@ validating the backup. If the backup is unreadable or otherwise unusable,
 loading stops with a hard error rather than falling back to defaults or an
 unlocked state.
 
+Atomic replacement protects file integrity, but it does not protect against
+lost updates when two `cb` processes read, modify and write the same file.
+Those mutations are therefore serialized through `container-bin.mutation.lock`
+next to the registry: `install`, `setup`, `restore`, `expose`, `unexpose`,
+`uninstall`, `lock` and `update` hold the lock across their whole
+read-modify-write sequence, while the shim-dispatch path and all read-only
+commands remain lock-free. `cb` loads the registry once before dispatch, outside the lock, only for
+dispatch and read-only commands. Every mutating command re-reads the registry
+after acquiring the lock, so the pre-dispatch snapshot is never used for a
+write and cannot cause a lost update.
+A killed `cb` can leave the lock file behind; the next invocation refuses to
+mutate the registry and tells the user to delete it.
+
 ## What runs where
 
 | Piece | Runs on |
