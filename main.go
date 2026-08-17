@@ -2118,7 +2118,7 @@ func recoverFromBackup(path string, validate func(backupPath string) error) (boo
 	bak := path + ".bak"
 	if _, err := os.Stat(bak); err == nil {
 		if err := validate(bak); err != nil {
-			return false, fmt.Errorf("%s is missing and its backup %s is unusable: %w. Remove %s to fall back to defaults, or fix it and retry.", path, bak, err, bak)
+			return false, fmt.Errorf("%s is missing and its backup %s is unusable: %w; remove the backup to fall back to defaults, or repair it and retry", path, bak, err)
 		}
 		if err := os.Rename(bak, path); err != nil {
 			return false, err
@@ -2139,14 +2139,11 @@ func validateRegistryBackup(bak string) error {
 	if len(b) == 0 {
 		return errors.New("backup is empty")
 	}
-	reg, err := parseRegistryTOML(string(b))
-	if err != nil {
-		return err
-	}
-	if len(reg.Tools) == 0 {
-		return errors.New("backup contains no tools")
-	}
-	return nil
+	// parseRegistryTOML already rejects a tool-less registry, so this needs no
+	// separate check for one; keeping the rule in a single place stops the two
+	// copies from drifting apart later.
+	_, err = parseRegistryTOML(string(b))
+	return err
 }
 
 func inspectTool(reg Registry, args []string) error {

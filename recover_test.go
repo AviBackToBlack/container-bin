@@ -205,4 +205,24 @@ func TestValidateRegistryBackup(t *testing.T) {
 	if err := validateRegistryBackup(bad); err == nil {
 		t.Fatal("expected invalid registry to be rejected")
 	}
+
+	// A zero-byte backup is a truncation artifact rather than recoverable data.
+	empty := filepath.Join(dir, "empty.bak")
+	if err := os.WriteFile(empty, nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateRegistryBackup(empty); err == nil {
+		t.Fatal("expected empty backup to be rejected")
+	}
+
+	// A tool-less registry is rejected too. The rule lives in parseRegistryTOML
+	// rather than here, so this pins the guarantee at the boundary that matters
+	// and keeps holding if the check ever moves.
+	toolless := filepath.Join(dir, "toolless.bak")
+	if err := os.WriteFile(toolless, []byte("schema_version = 1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateRegistryBackup(toolless); err == nil {
+		t.Fatal("expected tool-less backup to be rejected")
+	}
 }
