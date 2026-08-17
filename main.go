@@ -1958,7 +1958,17 @@ func exposeTool(reg Registry, cfgPath string, args []string) error {
 	}
 	requested := map[string]bool{}
 	for _, a := range args[1:] {
-		requested[strings.ToLower(a)] = true
+		name := strings.ToLower(a)
+		// Discovery drops reserved names silently; an explicit request for
+		// one deserves a visible explanation instead of "no matching binaries".
+		if reservedToolName(name) {
+			fmt.Printf("skip %-16s reserved name cannot be exposed as a shim\n", name)
+			continue
+		}
+		requested[name] = true
+	}
+	if len(args) > 1 && len(requested) == 0 {
+		return errors.New("all requested names are reserved and cannot be exposed")
 	}
 	var selected []string
 	for _, b := range bins {
