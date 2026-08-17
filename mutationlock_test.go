@@ -235,3 +235,33 @@ func TestMutationLockWithReleasesOnError(t *testing.T) {
 		t.Fatalf("lock file not released after withMutationLock error: %v", statErr)
 	}
 }
+
+// The error message tells users to delete a lock they believe is stale. If they
+// do that while the holder is in fact alive, a third process can take the lock —
+// and the original holder must not then delete it on the way out, which would
+// leave two mutators running unserialized.
+func TestMutationLockReleaseKeepsForeignLock(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "container-bin.toml")
+	path := mutationLockPathForRegistry(cfg)
+
+	release, err := acquireMutationLock(cfg, 50*time.Millisecond)
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+
+	foreign := "pid=999999 token=0123456789abcdef at 2026-01-01T00:00:00Z"
+	if err := os.WriteFile(path, []byte(foreign), 0644); err != nil {
+		t.Fatalf("overwrite lock: %v", err)
+	}
+
+	release()
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("release removed a lock it no longer owned: %v", err)
+	}
+	if string(data) != foreign {
+		t.Fatalf("foreign lock content changed: %q", string(data))
+	}
+}
