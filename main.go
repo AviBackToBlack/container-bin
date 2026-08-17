@@ -409,9 +409,18 @@ func loadRegistry() (Registry, string, error) {
 	}
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return defaultRegistry(), path, nil
-	}
-	if err != nil {
+		rec, err := recoverFromBackup(path, validateRegistryBackup)
+		if err != nil {
+			return Registry{}, path, err
+		}
+		if !rec {
+			return defaultRegistry(), path, nil
+		}
+		data, err = os.ReadFile(path)
+		if err != nil {
+			return Registry{}, path, err
+		}
+	} else if err != nil {
 		return Registry{}, path, err
 	}
 	reg, err := parseRegistryTOML(string(data))
@@ -2100,6 +2109,43 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
 	return nil
 }
 
+func recoverFromBackup(path string, validate func(backupPath string) error) (bool, error) {
+	if _, err := os.Stat(path); err == nil {
+		return false, nil
+	} else if !os.IsNotExist(err) {
+		return false, err
+	}
+	bak := path + ".bak"
+	if _, err := os.Stat(bak); err == nil {
+		if err := validate(bak); err != nil {
+			return false, fmt.Errorf("%s is missing and its backup %s is unusable: %w; remove the backup to fall back to defaults, or repair it and retry", path, bak, err)
+		}
+		if err := os.Rename(bak, path); err != nil {
+			return false, err
+		}
+		fmt.Fprintf(os.Stderr, "container-bin: recovered %s from %s after an interrupted write\n", path, bak)
+		return true, nil
+	} else if !os.IsNotExist(err) {
+		return false, err
+	}
+	return false, nil
+}
+
+func validateRegistryBackup(bak string) error {
+	b, err := os.ReadFile(bak)
+	if err != nil {
+		return err
+	}
+	if len(b) == 0 {
+		return errors.New("backup is empty")
+	}
+	// parseRegistryTOML already rejects a tool-less registry, so this needs no
+	// separate check for one; keeping the rule in a single place stops the two
+	// copies from drifting apart later.
+	_, err = parseRegistryTOML(string(b))
+	return err
+}
+
 func inspectTool(reg Registry, args []string) error {
 	if len(args) != 1 {
 		return errors.New("usage: cb inspect TOOL")
@@ -2398,6 +2444,7 @@ func restoreCommand(cfgPath string, args []string) error {
 		}
 	} else {
 		_ = os.Remove(lockPath)
+		_ = os.Remove(lockPath + ".bak")
 	}
 	fmt.Println("restored registry/lock atomically; run `cb install` to reconcile shims")
 	return nil
@@ -2509,9 +2556,21 @@ func loadLockFileForRegistry() (*LockFile, string, error) {
 func loadLockFile(path string) (*LockFile, error) {
 	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
+		rec, err := recoverFromBackup(path, func(bak string) error {
+			_, err := loadLockFile(bak)
+			return err
+		})
+		if err != nil {
+			return nil, err
+		}
+		if !rec {
+			return nil, nil
+		}
+		b, err = os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+	} else if err != nil {
 		return nil, err
 	}
 	lf := &LockFile{Version: 0, Images: map[string]LockEntry{}}

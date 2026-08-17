@@ -135,6 +135,11 @@ restore) validate the complete resulting document *before* replacement, then
 write via temp file + rename with a short-lived `.bak` window (Windows cannot
 reliably rename over an open file). A crash mid-operation leaves either the
 old file, the new file, or the old file under `.bak` — never a torn write.
+The next `cb` load automatically recovers `container-bin.toml` or
+`container-bin.lock` from its `.bak` if the live file is missing, after
+validating the backup. If the backup is unreadable or otherwise unusable,
+loading stops with a hard error rather than falling back to defaults or an
+unlocked state.
 
 ## What runs where
 
