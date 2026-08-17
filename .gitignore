@@ -1,0 +1,29 @@
+# Compiled binaries
+*.exe
+*.exe~
+
+# Local ContainerBin runtime state (generated next to cb.exe, never source).
+# Anchored to the repo root so testdata fixtures are never hidden.
+/container-bin.toml
+/container-bin.lock
+/container-bin.toml.bak
+/container-bin.lock.bak
+/backups/
+/*.zip
+
+# Empty node_modules mountpoint directory created by the stateful provider.
+# Root-anchored like the rest: testdata fixtures must never be hidden.
+/node_modules/
+
+# Go build/test artifacts
+*.test
+*.out
+/dist/
+
+# Editor / OS noise
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+Desktop.ini
+.DS_Store

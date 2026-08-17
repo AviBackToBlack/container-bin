@@ -1,0 +1,79 @@
+name: Bug report
+description: Something in ContainerBin misbehaves
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. **Sanitize everything you paste** — `cb inspect`,
+        registry snippets and environment output can contain credentials
+        (cloud tokens passed via `env_prefixes`, proxy URLs with passwords,
+        private registry hosts).
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproducible command
+      description: The exact command you ran, from which shell (PowerShell / cmd / other).
+      placeholder: |
+        PS D:\Work\demo> terraform -chdir=.\tf validate
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened, including full error output.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: version
+    attributes:
+      label: cb version
+      description: Output of `cb version`.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: cb doctor output
+      description: Full output of `cb doctor` (sanitized).
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: "Windows 11 Pro 24H2 (26100.xxxx)"
+    validations:
+      required: true
+  - type: input
+    id: docker
+    attributes:
+      label: Docker Desktop version
+      placeholder: "Docker Desktop 4.x.x, engine 27.x, Linux containers"
+    validations:
+      required: true
+  - type: input
+    id: powershell
+    attributes:
+      label: Shell and version
+      placeholder: "PowerShell 7.4.5 / Windows PowerShell 5.1 / cmd.exe"
+    validations:
+      required: true
+  - type: textarea
+    id: inspect
+    attributes:
+      label: cb inspect TOOL / cb trace output (if tool-specific)
+      description: |
+        For a specific tool misbehaving, paste sanitized `cb inspect TOOL` and
+        `cb trace TOOL ARGS...` output, plus the relevant registry section.
+      render: text

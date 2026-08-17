@@ -18,7 +18,12 @@ import (
 	"time"
 )
 
-const version = "1.0.0"
+// version is injected at release time via:
+//
+//	go build -ldflags "-X main.version=v1.2.3"
+//
+// Local/dev builds report "dev".
+var version = "dev"
 
 // Tool is deliberately generic. Provider owns lifecycle/state semantics;
 // Command is prepended inside the container. An empty Command means: use the
@@ -166,7 +171,7 @@ func main() {
 		fatalf("registry: %v", err)
 	}
 
-	invoked := strings.TrimSuffix(strings.ToLower(filepath.Base(os.Args[0])), filepath.Ext(os.Args[0]))
+	invoked := invokedName(os.Args[0])
 	if invoked != "cb" && invoked != "container-bin" && !strings.HasPrefix(invoked, "cb-v") {
 		tool, ok := reg.Tools[invoked]
 		if !ok {
@@ -271,6 +276,14 @@ func main() {
 	}
 }
 
+// invokedName derives the dispatch name from argv[0]. Windows filenames are
+// case-insensitive, so both base and extension are lowered before trimming —
+// cmd.exe can hand us PYTHON.EXE, which must still dispatch as "python".
+func invokedName(argv0 string) string {
+	base := strings.ToLower(filepath.Base(argv0))
+	return strings.TrimSuffix(base, filepath.Ext(base))
+}
+
 func usage(cfg string) {
 	fmt.Printf(`container-bin (cb) %s — Docker-backed Windows CLI shims
 
@@ -281,7 +294,6 @@ Commands:
   cb backup    back up registry + lock to a zip
   cb restore   validate/restore a backup (dry-run unless --apply)
   cb self-test run offline end-to-end compatibility checks
-  cb doctor    verify Docker Desktop / Docker Engine is reachable
   cb list      list configured tool profiles
   cb trace     show raw/normalized/mapped argv for a tool without running it
   cb env       show project root and Python environment selected for cwd
@@ -431,6 +443,12 @@ func parseRegistryTOML(s string) (Registry, error) {
 			name := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(sec, "tools.")))
 			if !validToolName(name) {
 				return reg, fmt.Errorf("line %d: invalid tool name %q", lineNo, name)
+			}
+			if reservedToolName(name) {
+				return reg, fmt.Errorf("line %d: tool name %q is reserved (would collide with cb itself or a Windows device name); rename or delete the [tools.%s] section in the registry file to recover", lineNo, name, name)
+			}
+			if _, dup := reg.Tools[name]; dup {
+				return reg, fmt.Errorf("line %d: duplicate [tools.%s] section", lineNo, name)
 			}
 			t := Tool{Name: name, Provider: "stateless"}
 			reg.Tools[name] = t
@@ -712,6 +730,25 @@ func validToolName(s string) bool {
 	return true
 }
 
+// reservedToolName rejects names whose NAME.exe shim would collide with the
+// cb binary itself, or which are Windows reserved device names (creating
+// con.exe / nul.exe etc. misbehaves across Windows tooling).
+func reservedToolName(s string) bool {
+	switch s {
+	case "cb", "container-bin", "con", "prn", "aux", "nul":
+		return true
+	}
+	// main() treats any argv[0] starting with "cb-v" as the management CLI
+	// (versioned binary names), so such a shim could never dispatch to a tool.
+	if strings.HasPrefix(s, "cb-v") {
+		return true
+	}
+	if len(s) == 4 && (strings.HasPrefix(s, "com") || strings.HasPrefix(s, "lpt")) && s[3] >= '1' && s[3] <= '9' {
+		return true
+	}
+	return false
+}
+
 func listTools(reg Registry, cfgPath string) {
 	names := make([]string, 0, len(reg.Tools))
 	for n := range reg.Tools {
@@ -818,15 +855,25 @@ func doctor(reg Registry, cfgPath string) error {
 
 	if runtime.GOOS == "windows" {
 		out, _ := exec.Command("where.exe", "python").Output()
-		lines := strings.Fields(strings.ReplaceAll(string(out), "\r", ""))
+		// where.exe prints one full path per line; paths may contain spaces,
+		// so this must split on newlines, never on whitespace.
+		var lines []string
+		for _, l := range strings.Split(strings.ReplaceAll(string(out), "\r", ""), "\n") {
+			if l = strings.TrimSpace(l); l != "" {
+				lines = append(lines, l)
+			}
+		}
 		if len(lines) > 0 && strings.EqualFold(filepath.Clean(lines[0]), filepath.Join(dir, "python.exe")) {
 			ok("python resolves to container-bin first")
 		} else {
 			warn("python does not resolve to container-bin first: %s", strings.TrimSpace(string(out)))
 		}
-		for _, line := range lines[1:] {
+		// Scan every result: the alias warning matters most when the
+		// WindowsApps stub is the FIRST match (i.e. it wins over the shim).
+		for _, line := range lines {
 			if strings.Contains(strings.ToLower(line), `microsoft\windowsapps\python`) {
-				warn("Windows App Execution Alias for python is still present behind the shim")
+				warn("Windows App Execution Alias for python is present on PATH; disable it in Windows Settings > Apps > App execution aliases")
+				break
 			}
 		}
 	}
@@ -1882,7 +1929,9 @@ func discoverNPMGlobalBins(t Tool) ([]string, error) {
 	var bins []string
 	for _, line := range strings.Split(string(out), "\n") {
 		name := strings.ToLower(strings.TrimSpace(line))
-		if name == "" || !validToolName(name) || seen[name] {
+		// Untrusted names discovered inside the container: skip anything that
+		// is not a safe shim name or that would shadow cb / Windows devices.
+		if name == "" || !validToolName(name) || reservedToolName(name) || seen[name] {
 			continue
 		}
 		seen[name] = true
@@ -1909,7 +1958,17 @@ func exposeTool(reg Registry, cfgPath string, args []string) error {
 	}
 	requested := map[string]bool{}
 	for _, a := range args[1:] {
-		requested[strings.ToLower(a)] = true
+		name := strings.ToLower(a)
+		// Discovery drops reserved names silently; an explicit request for
+		// one deserves a visible explanation instead of "no matching binaries".
+		if reservedToolName(name) {
+			fmt.Printf("skip %-16s reserved name cannot be exposed as a shim\n", name)
+			continue
+		}
+		requested[name] = true
+	}
+	if len(args) > 1 && len(requested) == 0 {
+		return errors.New("all requested names are reserved and cannot be exposed")
 	}
 	var selected []string
 	for _, b := range bins {
@@ -2555,6 +2614,40 @@ func imageRepository(ref string) string {
 	return ref
 }
 
+// canonicalRepository folds away the Docker Hub aliases that the engine
+// normalizes out of RepoDigests, so that a registry entry written as
+// docker.io/library/python matches the python@sha256:... digest Docker
+// reports. Non-Hub registries (ghcr.io/..., private hosts) pass through.
+func canonicalRepository(repo string) string {
+	for _, p := range []string{"docker.io/", "index.docker.io/", "registry-1.docker.io/"} {
+		if strings.HasPrefix(repo, p) {
+			repo = strings.TrimPrefix(repo, p)
+			break
+		}
+	}
+	if strings.HasPrefix(repo, "library/") && strings.Count(repo, "/") == 1 {
+		repo = strings.TrimPrefix(repo, "library/")
+	}
+	return repo
+}
+
+// matchRepoDigest selects the RepoDigest whose repository is the same image
+// repository as the configured reference, modulo Docker Hub normalization.
+// No match is an error condition handled by the caller (fail closed).
+func matchRepoDigest(configured string, repoDigests []string) (string, bool) {
+	want := canonicalRepository(imageRepository(configured))
+	for _, rd := range repoDigests {
+		i := strings.LastIndex(rd, "@")
+		if i < 0 || !strings.HasPrefix(rd[i+1:], "sha256:") {
+			continue
+		}
+		if canonicalRepository(rd[:i]) == want {
+			return rd, true
+		}
+	}
+	return "", false
+}
+
 func resolveImage(configured string, pull bool) (LockEntry, error) {
 	if pull {
 		cmd := exec.Command("docker", "pull", configured)
@@ -2572,21 +2665,14 @@ func resolveImage(configured string, pull bool) (LockEntry, error) {
 	if len(lines) == 0 {
 		return LockEntry{}, fmt.Errorf("image %s has no RepoDigests; cannot lock it reproducibly", configured)
 	}
-	repo := imageRepository(configured)
-	resolved := ""
-	for _, rd := range lines {
-		if strings.HasPrefix(rd, repo+"@sha256:") {
-			resolved = rd
-			break
-		}
-	}
-	if resolved == "" {
-		resolved = lines[0]
+	resolved, ok := matchRepoDigest(configured, lines)
+	if !ok {
+		// Fail closed: silently locking a digest from a different repository
+		// (e.g. a locally re-tagged image) would record an identity the
+		// configured reference never had.
+		return LockEntry{}, fmt.Errorf("image %s has no RepoDigest for repository %q (locally tagged image?); pull it from its registry before locking", configured, imageRepository(configured))
 	}
 	i := strings.LastIndex(resolved, "@")
-	if i < 0 || !strings.HasPrefix(resolved[i+1:], "sha256:") {
-		return LockEntry{}, fmt.Errorf("unexpected RepoDigest %q for %s", resolved, configured)
-	}
 	return LockEntry{Configured: configured, Resolved: resolved, Digest: resolved[i+1:]}, nil
 }
 

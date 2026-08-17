@@ -500,3 +500,122 @@ func TestImageRepository(t *testing.T) {
 		}
 	}
 }
+
+func TestVersionDefaultIsDev(t *testing.T) {
+	// Release builds override this via -ldflags "-X main.version=vX.Y.Z".
+	if version != "dev" {
+		t.Fatalf("default version = %q, want \"dev\"", version)
+	}
+}
+
+func TestRejectDuplicateToolSections(t *testing.T) {
+	_, err := parseRegistryTOML(`[tools.jq]
+image = "a:1"
+provider = "stateless"
+
+[tools.jq]
+image = "b:1"
+provider = "stateless"
+`)
+	if err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("expected duplicate section rejection, got %v", err)
+	}
+}
+
+func TestReservedToolNames(t *testing.T) {
+	reserved := []string{"cb", "container-bin", "con", "prn", "aux", "nul", "com1", "com9", "lpt1", "lpt9"}
+	for _, name := range reserved {
+		if !reservedToolName(name) {
+			t.Fatalf("%q should be reserved", name)
+		}
+		if _, err := parseRegistryTOML("[tools." + name + "]\nimage = \"x:1\"\nprovider = \"stateless\"\n"); err == nil {
+			t.Fatalf("registry accepted reserved tool name %q", name)
+		}
+	}
+	for _, name := range []string{"python", "cowsay", "com", "lpt", "com0", "lpt0", "com10", "conx", "nul2"} {
+		if reservedToolName(name) {
+			t.Fatalf("%q should not be reserved", name)
+		}
+	}
+}
+
+func TestNormalizePathEqualsSplitAtEndKeptAsIs(t *testing.T) {
+	tool := Tool{Name: "terraform", PathEquals: []string{"-chdir"}}
+	in := []string{"validate", "-chdir="}
+	got := normalizeToolArgs(tool, in)
+	if !reflect.DeepEqual(got, in) {
+		t.Fatalf("normalizeToolArgs() = %#v, want unchanged %#v", got, in)
+	}
+}
+
+func TestCanonicalRepository(t *testing.T) {
+	cases := map[string]string{
+		"python":                       "python",
+		"library/python":               "python",
+		"docker.io/library/python":     "python",
+		"index.docker.io/library/node": "node",
+		"docker.io/mikefarah/yq":       "mikefarah/yq",
+		"ghcr.io/jqlang/jq":            "ghcr.io/jqlang/jq",
+		"registry.example:5000/a/b":    "registry.example:5000/a/b",
+		"lscr.io/linuxserver/ffmpeg":   "lscr.io/linuxserver/ffmpeg",
+	}
+	for in, want := range cases {
+		if got := canonicalRepository(in); got != want {
+			t.Fatalf("canonicalRepository(%q)=%q want %q", in, got, want)
+		}
+	}
+}
+
+func TestMatchRepoDigestNormalizesDockerHubRefs(t *testing.T) {
+	digests := []string{"python@sha256:" + strings.Repeat("a", 64)}
+	for _, configured := range []string{"python:3.13-slim", "library/python:3.13-slim", "docker.io/library/python:3.13-slim"} {
+		got, ok := matchRepoDigest(configured, digests)
+		if !ok || got != digests[0] {
+			t.Fatalf("matchRepoDigest(%q) = %q, %v; want %q, true", configured, got, ok, digests[0])
+		}
+	}
+}
+
+func TestMatchRepoDigestFailsClosedOnForeignRepo(t *testing.T) {
+	digests := []string{"someone/else@sha256:" + strings.Repeat("b", 64)}
+	if got, ok := matchRepoDigest("python:3.13-slim", digests); ok {
+		t.Fatalf("expected no match for foreign repo digest, got %q", got)
+	}
+	if _, ok := matchRepoDigest("python:3.13-slim", nil); ok {
+		t.Fatal("expected no match for empty digest list")
+	}
+	if _, ok := matchRepoDigest("python:3.13-slim", []string{"python@md5:oops", "garbage"}); ok {
+		t.Fatal("expected malformed digests to be ignored")
+	}
+}
+
+func TestInvokedNameIsCaseInsensitive(t *testing.T) {
+	// Bare names only: filepath.Base separator handling is OS-specific and
+	// dispatch only depends on the final path element anyway.
+	cases := map[string]string{
+		"python.exe":    "python",
+		"PYTHON.EXE":    "python",
+		"Cb.ExE":        "cb",
+		"cb":            "cb",
+		"terraform.exe": "terraform",
+		"cb-v1.0.0.exe": "cb-v1.0.0",
+	}
+	for in, want := range cases {
+		if got := invokedName(in); got != want {
+			t.Fatalf("invokedName(%q)=%q want %q", in, got, want)
+		}
+	}
+}
+
+func TestReservedCbVersionPrefixNames(t *testing.T) {
+	for _, name := range []string{"cb-v", "cb-vault", "cb-version"} {
+		if !reservedToolName(name) {
+			t.Fatalf("%q should be reserved (cb-v* never dispatches to a tool)", name)
+		}
+	}
+	for _, name := range []string{"cb-x", "cbv", "vault"} {
+		if reservedToolName(name) {
+			t.Fatalf("%q should not be reserved", name)
+		}
+	}
+}

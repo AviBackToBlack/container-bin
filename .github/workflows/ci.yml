@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Format, vet, test (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: gofmt
+        run: |
+          out="$(gofmt -l .)"
+          if [ -n "$out" ]; then
+            echo "gofmt needs to be run on:" >&2
+            echo "$out" >&2
+            exit 1
+          fi
+      - name: go vet
+        run: go vet ./...
+      - name: go test (race)
+        run: go test -race ./...
+      - name: Verify release-style version injection
+        run: |
+          # The binary MUST be named cb: argv[0] dispatch treats any other
+          # basename as a tool shim and refuses to run the management CLI.
+          go build -trimpath -ldflags "-X main.version=v0.0.0-citest" -o ./cb .
+          out="$(./cb version)"
+          echo "$out"
+          case "$out" in
+            *v0.0.0-citest*) ;;
+            *) echo "ldflags version injection failed" >&2; exit 1 ;;
+          esac
+
+  test-windows:
+    name: Test and build (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: go test
+        run: go test ./...
+      - name: Build cb.exe
+        run: go build -trimpath -o cb.exe .
+      - name: Smoke-test version output
+        run: |
+          $v = .\cb.exe version
+          Write-Host $v
+          if ($v -notmatch '^container-bin \S+') { exit 1 }
+        shell: pwsh
+
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          # govulncheck tooling tracks the latest Go toolchain, which can be
+          # newer than the module's minimum version in go.mod.
+          go-version: stable
+      - name: Install govulncheck
+        # Pinned like every other supply-chain input. Freshness of results is
+        # unaffected: govulncheck downloads the live vulnerability database at
+        # scan time regardless of the tool version. Bump the pin manually
+        # (Dependabot cannot track `go install` versions inside workflows).
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
+      - name: Run govulncheck
+        run: govulncheck ./...
