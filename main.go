@@ -776,7 +776,7 @@ func listTools(reg Registry, cfgPath string) {
 }
 
 func dockerOSTypeVerdict(raw string) (status, message string) {
-	normalized := strings.TrimSpace(strings.ReplaceAll(raw, "\r", ""))
+	normalized := strings.Join(strings.Fields(raw), " ")
 	switch strings.ToLower(normalized) {
 	case "linux":
 		return "ok", "docker is in Linux-container mode"

@@ -7,21 +7,20 @@ import (
 
 func TestDockerOSTypeVerdict(t *testing.T) {
 	cases := []struct {
-		raw    string
-		status string
+		name, raw, status string
 	}{
-		{"linux", "ok"},
-		{"linux\n", "ok"},
-		{"Linux\r\n", "ok"},
-		{"  linux  ", "ok"},
-		{"windows", "fail"},
-		{"Windows\r\n", "fail"},
-		{"", "warn"},
-		{"   \r\n", "warn"},
-		{"moby-something-unknown", "warn"},
+		{"linux", "linux", "ok"},
+		{"linux_with_newline", "linux\n", "ok"},
+		{"linux_crlf", "Linux\r\n", "ok"},
+		{"linux_padded", "  linux  ", "ok"},
+		{"windows", "windows", "fail"},
+		{"windows_crlf", "Windows\r\n", "fail"},
+		{"empty", "", "warn"},
+		{"whitespace_only", "   \r\n", "warn"},
+		{"unknown", "moby-something-unknown", "warn"},
 	}
 	for _, c := range cases {
-		t.Run(c.raw, func(t *testing.T) {
+		t.Run(c.name, func(t *testing.T) {
 			status, _ := dockerOSTypeVerdict(c.raw)
 			if status != c.status {
 				t.Errorf("dockerOSTypeVerdict(%q) status = %q, want %q", c.raw, status, c.status)
