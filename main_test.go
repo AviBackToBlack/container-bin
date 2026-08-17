@@ -194,7 +194,7 @@ provider = "stateless"
 	if _, ok := reg.Tools["jq2"]; !ok {
 		t.Fatal("custom jq2 was lost")
 	}
-	for _, name := range []string{"python3", "pip", "pip3", "jq", "yq", "terraform", "ffmpeg", "node", "npm", "npx"} {
+	for _, name := range []string{"python3", "pip", "pip3", "jq", "yq", "terraform", "ffmpeg", "node", "npm", "npx", "go", "gofmt"} {
 		if _, ok := reg.Tools[name]; !ok {
 			t.Fatalf("missing migrated tool %q", name)
 		}

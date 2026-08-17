@@ -174,7 +174,11 @@ command = ["go"]
 state_group = "go124"
 project_markers = ["go.mod", "go.work", ".git"]
 shared_volumes = ["gomodcache:/go/pkg/mod", "gobuild:/root/.cache/go-build", "gobin:/go/bin"]
-path_next = ["-o", "-C"]
+# No path_next: everything after 'go run PKG' is handed to the user's program, so
+# forcing the value after -o/-C would rewrite ordinary flags such as 'go run . -o json'
+# into container paths. Real output paths are already mapped by the general rules
+# (absolute and .\rel forms), and a bare name resolves against the container working
+# directory, which is the project.
 # Do not allowlist path-valued variables; Windows paths are meaningless inside the Linux container
 env_names = ["GOFLAGS", "GOPROXY", "GONOPROXY", "GOPRIVATE", "GOSUMDB", "GONOSUMDB", "GOINSECURE", "GOOS", "GOARCH", "GOARM", "CGO_ENABLED", "GOTOOLCHAIN", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"]
 

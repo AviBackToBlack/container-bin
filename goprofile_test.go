@@ -142,8 +142,17 @@ func TestGoPathMappingWindows(t *testing.T) {
 		}
 	}
 
-	// go build -o app.exe should force-map the output path but leave the -o flag.
-	assertMapped("go build -o app.exe", []string{"build", "-o", "app.exe"}, []string{"build", "-o", wr + "/app.exe"}, 0)
+	// No path_next on the go profile: a bare output name is left alone and resolves
+	// against the container working directory, which is the project root.
+	assertMapped("go build -o app.exe", []string{"build", "-o", "app.exe"}, []string{"build", "-o", "app.exe"}, 0)
+
+	// Everything after `go run PKG` belongs to the user's program and must survive
+	// untouched — this is what forcing -o would have corrupted.
+	assertMapped("go run . -o json", []string{"run", ".", "-o", "json"}, []string{"run", ".", "-o", "json"}, 0)
+
+	// Real output paths are still mapped by the general rules.
+	assertMapped("go build -o dot-relative", []string{"build", "-o", "./dist/app.exe"}, []string{"build", "-o", wr + "/dist/app.exe"}, 0)
+	assertMapped("go build -o <abs>", []string{"build", "-o", filepath.Join(root, "dist", "app.exe")}, []string{"build", "-o", wr + "/dist/app.exe"}, 0)
 
 	// go test ./... is a package pattern, not a path: the trailing "..." guard
 	// leaves it untouched so Go resolves it against the container working directory.
