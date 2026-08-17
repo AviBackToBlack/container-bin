@@ -189,7 +189,8 @@ command = ["gofmt"]
 state_group = "go124"
 project_markers = ["go.mod", "go.work", ".git"]
 shared_volumes = ["gomodcache:/go/pkg/mod", "gobuild:/root/.cache/go-build", "gobin:/go/bin"]
-path_last = true
+# No path_last: a bare final argument like the value of -r is not a file, and real
+# file operands are already mapped by the general path-shape rules.
 # Do not allowlist path-valued variables; Windows paths are meaningless inside the Linux container
 env_names = ["GOFLAGS", "GOPROXY", "GONOPROXY", "GOPRIVATE", "GOSUMDB", "GONOSUMDB", "GOINSECURE", "GOOS", "GOARCH", "GOARM", "CGO_ENABLED", "GOTOOLCHAIN", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"]
 `
