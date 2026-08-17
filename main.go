@@ -311,7 +311,7 @@ func main() {
 		fmt.Printf("container-bin %s\n", version)
 	default:
 		usage(cfgPath)
-		os.Exit(2)
+		osExit(exitUsage)
 	}
 }
 
@@ -1678,9 +1678,17 @@ func showEnv(reg Registry) error {
 	return nil
 }
 
+const (
+	exitUsage       = 2
+	exitCbFailure   = 120
+	exitInterrupted = 130
+)
+
+var osExit = os.Exit
+
 func fatalf(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "container-bin: "+format+"\n", args...)
-	os.Exit(1)
+	osExit(exitCbFailure)
 }
 
 type stateVolume struct {
@@ -2704,7 +2712,7 @@ func withMutationLock(cfgPath string, fn func() error) error {
 		select {
 		case <-c:
 			release()
-			os.Exit(1)
+			osExit(exitInterrupted)
 		case <-done:
 		}
 	}()
