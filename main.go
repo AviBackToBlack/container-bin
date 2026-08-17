@@ -1007,9 +1007,17 @@ func runTool(t Tool, userArgs []string) (int, error) {
 		args = append(args, "-t")
 	}
 	args = append(args, "--workdir", containerWD)
-	args = append(args, "--mount", mountSpec("bind", root, workspaceRoot))
+	rootSpec, err := mountSpec("bind", root, workspaceRoot)
+	if err != nil {
+		return 1, err
+	}
+	args = append(args, "--mount", rootSpec)
 	for _, m := range pathMounts {
-		args = append(args, "--mount", mountSpec("bind", m.Source, m.Target))
+		mount, err := mountSpec("bind", m.Source, m.Target)
+		if err != nil {
+			return 1, err
+		}
+		args = append(args, "--mount", mount)
 	}
 	for _, name := range selectedHostEnv(t) {
 		args = append(args, "-e", name)
@@ -1029,6 +1037,14 @@ func runTool(t Tool, userArgs []string) (int, error) {
 		} else {
 			pyLabels["cb.kind"] = "compat"
 		}
+		venvSpec, err := mountSpec("volume", envID, "/venv")
+		if err != nil {
+			return 1, err
+		}
+		pipCacheSpec, err := mountSpec("volume", "cb-pip-cache", "/root/.cache/pip")
+		if err != nil {
+			return 1, err
+		}
 		if err := ensureManagedVolume(envID, pyLabels); err != nil {
 			return 1, err
 		}
@@ -1036,8 +1052,8 @@ func runTool(t Tool, userArgs []string) (int, error) {
 			return 1, err
 		}
 		args = append(args,
-			"--mount", mountSpec("volume", envID, "/venv"),
-			"--mount", mountSpec("volume", "cb-pip-cache", "/root/.cache/pip"),
+			"--mount", venvSpec,
+			"--mount", pipCacheSpec,
 			"-e", "VIRTUAL_ENV=/venv",
 			"-e", "PATH=/venv/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin",
 		)
@@ -1056,11 +1072,15 @@ func runTool(t Tool, userArgs []string) (int, error) {
 				return 1, err
 			}
 			vol := statefulProjectVolumeID(t.StateGroup, name, root, found)
+			dst = statefulWorkspaceDestination(dst, workspaceRoot)
+			volSpec, err := mountSpec("volume", vol, dst)
+			if err != nil {
+				return 1, err
+			}
 			if err := ensureManagedVolume(vol, map[string]string{"cb.managed": "true", "cb.kind": "project", "cb.owner": t.StateGroup + "/" + name, "cb.project_path": root, "cb.project_hash": volumeHash(root)}); err != nil {
 				return 1, err
 			}
-			dst = statefulWorkspaceDestination(dst, workspaceRoot)
-			args = append(args, "--mount", mountSpec("volume", vol, dst))
+			args = append(args, "--mount", volSpec)
 		}
 		for _, spec := range t.SharedVolumes {
 			name, dst, err := parseVolumeBinding(spec)
@@ -1068,10 +1088,14 @@ func runTool(t Tool, userArgs []string) (int, error) {
 				return 1, err
 			}
 			vol := statefulSharedVolumeID(t.StateGroup, name)
+			volSpec, err := mountSpec("volume", vol, dst)
+			if err != nil {
+				return 1, err
+			}
 			if err := ensureManagedVolume(vol, map[string]string{"cb.managed": "true", "cb.kind": "shared", "cb.owner": t.StateGroup + "/" + name}); err != nil {
 				return 1, err
 			}
-			args = append(args, "--mount", mountSpec("volume", vol, dst))
+			args = append(args, "--mount", volSpec)
 		}
 		args = append(args, imageRef)
 		args = append(args, t.Command...)
@@ -1438,11 +1462,14 @@ func externalMountRoot(hostPath string) (string, error) {
 	}
 }
 
-func mountSpec(kind, src, dst string) string {
+func mountSpec(kind, src, dst string) (string, error) {
 	if strings.Contains(src, ",") {
-		fatalf("path/volume contains comma and cannot be represented safely in Docker --mount MVP: %s", src)
+		return "", fmt.Errorf("source path/volume contains a comma and cannot be represented safely in docker --mount syntax (values are comma-separated with no escaping): %s", src)
 	}
-	return fmt.Sprintf("type=%s,src=%s,dst=%s", kind, src, dst)
+	if strings.Contains(dst, ",") {
+		return "", fmt.Errorf("destination path contains a comma and cannot be represented safely in docker --mount syntax (values are comma-separated with no escaping): %s", dst)
+	}
+	return fmt.Sprintf("type=%s,src=%s,dst=%s", kind, src, dst), nil
 }
 
 func workspaceRootFor(t Tool, root string) string {
@@ -1920,7 +1947,11 @@ func discoverNPMGlobalBins(t Tool) ([]string, error) {
 		return nil, errors.New("npm profile has no npm-global shared volume")
 	}
 	script := `if [ -d /cb/npm-global/bin ]; then for f in /cb/npm-global/bin/*; do [ -e "$f" ] || continue; basename "$f"; done; fi`
-	cmd := exec.Command("docker", "run", "--rm", "--mount", mountSpec("volume", globalVol, "/cb/npm-global"), t.Image, "sh", "-lc", script)
+	mount, err := mountSpec("volume", globalVol, "/cb/npm-global")
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.Command("docker", "run", "--rm", "--mount", mount, t.Image, "sh", "-lc", script)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("inspect npm global bin: %w", err)
