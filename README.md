@@ -134,6 +134,11 @@ Unknown keys **fail validation** instead of being silently ignored, and a
 `schema_version` newer than the binary supports fails closed. Edit the file,
 then run `cb install` to reconcile shims.
 
+One exception applies to every path-forcing key (`path_next`, `path_equals`,
+`path_last`): a value whose final element is `...` is never rewritten, because
+Windows cannot represent such a directory and rewriting it would silently
+change which files the tool acts on. See [Windows path mapping](#windows-path-mapping).
+
 ## Windows path mapping
 
 ContainerBin translates Windows paths in arguments to container paths and
@@ -144,6 +149,8 @@ creates narrowly scoped bind mounts:
 - paths inside the project root map into the workspace mount;
 - paths outside it get their own narrow bind mounts (`ffmpeg -i "D:\Video\a.mkv"
   "D:\TEMP\b.mkv"` produces two separate mounts — never a whole drive);
+- an argument whose final element is `...` is never treated as a path, so tool
+  package patterns such as `./...` reach the tool unchanged;
 - **plain strings are never guessed to be paths.** FFmpeg's `-i` is not forced
   to be a path because valid inputs include URLs, pipes, devices and lavfi
   expressions. Tools that need forced path semantics declare them
