@@ -58,7 +58,7 @@ func TestNormalizeToolArgsEmptyPathEquals(t *testing.T) {
 
 func TestMapToolArgsNonWindowsContract(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		return
+		t.Skip("documents the non-windows early return in mapToolArgs")
 	}
 	tool := Tool{Name: "demo", PathEquals: []string{"--file"}}
 	in := []string{"--file=", "value", "rest"}
