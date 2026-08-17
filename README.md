@@ -236,8 +236,11 @@ cb restore BACKUP.zip --apply   # atomic replacement after validation
 `cb uninstall`, `cb lock` and `cb update` serialize through
 `container-bin.mutation.lock` next to `cb.exe`. A second concurrent
 mutation waits up to 5 seconds for the lock, then fails with a clear
-message if the holder is still active. If a `cb` process is killed while
-holding the lock, delete `container-bin.mutation.lock` manually before the
+message if the holder is still active.
+A `cb` process interrupted with Ctrl-C while holding the lock exits `130`
+and releases the lock automatically. A `cb` process that is hard-killed
+(e.g. by SIGKILL or the task manager) while holding the lock may leave a
+stale `container-bin.mutation.lock` behind; delete it manually before the
 next mutating command.
 
 ## Diagnostics
@@ -257,6 +260,16 @@ cb list
 
 `cb self-test` intentionally pulls nothing; it proves your existing locked
 setup works end to end, then cleans up its temporary project volumes.
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Success. |
+| tool's own code | The invoked tool's own exit status passes through unchanged. |
+| `2` | Usage error: unknown subcommand. |
+| `120` | cb infrastructure failure — registry, lock, doctor, or command errors; the message printed to stderr explains which; not distinguishable from a containerized tool that exits `120`. |
+| `130` | Interrupted — Ctrl-C while a mutating command holds the registry lock; not distinguishable from a containerized tool that exits `130`. |
 
 ## Troubleshooting
 
