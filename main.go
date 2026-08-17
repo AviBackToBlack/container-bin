@@ -190,22 +190,26 @@ func main() {
 	}
 	switch os.Args[1] {
 	case "install":
-		if err := ensureRegistryFile(cfgPath); err != nil {
-			fatalf("install registry: %v", err)
-		}
-		if err := appendMissingDefaultTools(cfgPath); err != nil {
-			fatalf("upgrade registry: %v", err)
-		}
-		// Reload in case the file was just created or upgraded.
-		reg, _, err = loadRegistry()
-		if err != nil {
-			fatalf("registry: %v", err)
-		}
-		if err := installShims(reg); err != nil {
+		if err := withMutationLock(cfgPath, func() error {
+			if err := ensureRegistryFile(cfgPath); err != nil {
+				return err
+			}
+			if err := appendMissingDefaultTools(cfgPath); err != nil {
+				return err
+			}
+			// Reload in case the file was just created or upgraded.
+			reg, _, err = loadRegistry()
+			if err != nil {
+				return err
+			}
+			return installShims(reg)
+		}); err != nil {
 			fatalf("install: %v", err)
 		}
 	case "setup":
-		if err := setupCommand(cfgPath); err != nil {
+		if err := withMutationLock(cfgPath, func() error {
+			return setupCommand(cfgPath)
+		}); err != nil {
 			fatalf("setup: %v", err)
 		}
 	case "doctor":
@@ -217,7 +221,9 @@ func main() {
 			fatalf("backup: %v", err)
 		}
 	case "restore":
-		if err := restoreCommand(cfgPath, os.Args[2:]); err != nil {
+		if err := withMutationLock(cfgPath, func() error {
+			return restoreCommand(cfgPath, os.Args[2:])
+		}); err != nil {
 			fatalf("restore: %v", err)
 		}
 	case "self-test":
@@ -247,23 +253,33 @@ func main() {
 			fatalf("gc: %v", err)
 		}
 	case "expose":
-		if err := exposeTool(reg, cfgPath, os.Args[2:]); err != nil {
+		if err := withMutationLock(cfgPath, func() error {
+			return exposeTool(reg, cfgPath, os.Args[2:])
+		}); err != nil {
 			fatalf("expose: %v", err)
 		}
 	case "unexpose":
-		if err := unexposeTools(reg, cfgPath, os.Args[2:]); err != nil {
+		if err := withMutationLock(cfgPath, func() error {
+			return unexposeTools(reg, cfgPath, os.Args[2:])
+		}); err != nil {
 			fatalf("unexpose: %v", err)
 		}
 	case "uninstall":
-		if err := uninstallTools(reg, cfgPath, os.Args[2:]); err != nil {
+		if err := withMutationLock(cfgPath, func() error {
+			return uninstallTools(reg, cfgPath, os.Args[2:])
+		}); err != nil {
 			fatalf("uninstall: %v", err)
 		}
 	case "lock":
-		if err := lockCommand(reg, cfgPath, os.Args[2:]); err != nil {
+		if err := withMutationLock(cfgPath, func() error {
+			return lockCommand(reg, cfgPath, os.Args[2:])
+		}); err != nil {
 			fatalf("lock: %v", err)
 		}
 	case "update":
-		if err := updateCommand(reg, cfgPath, os.Args[2:]); err != nil {
+		if err := withMutationLock(cfgPath, func() error {
+			return updateCommand(reg, cfgPath, os.Args[2:])
+		}); err != nil {
 			fatalf("update: %v", err)
 		}
 	case "config":
@@ -2567,6 +2583,71 @@ func selfTestCommand(reg Registry) error {
 	_ = removeDockerVolume(statefulProjectVolumeID("node24", "node-modules", root, true))
 	fmt.Println("\nSelf-test PASS (temporary project state cleaned)")
 	return nil
+}
+
+const (
+	mutationLockWait          = 5 * time.Second
+	mutationLockRetryInterval = 50 * time.Millisecond
+)
+
+func mutationLockPathForRegistry(cfgPath string) string {
+	return filepath.Join(filepath.Dir(cfgPath), "container-bin.mutation.lock")
+}
+
+func readMutationLockHolder(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "unknown holder"
+	}
+	line := strings.TrimSpace(string(data))
+	if line == "" {
+		return "unknown holder"
+	}
+	return line
+}
+
+func acquireMutationLock(cfgPath string, wait time.Duration) (func(), error) {
+	path := mutationLockPathForRegistry(cfgPath)
+	start := time.Now()
+	for {
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+		if err == nil {
+			line := fmt.Sprintf("pid=%d at %s", os.Getpid(), time.Now().Format(time.RFC3339))
+			if _, werr := f.WriteString(line); werr != nil {
+				_ = f.Close()
+				_ = os.Remove(path)
+				return nil, werr
+			}
+			if cerr := f.Close(); cerr != nil {
+				_ = os.Remove(path)
+				return nil, cerr
+			}
+			released := false
+			return func() {
+				if released {
+					return
+				}
+				released = true
+				_ = os.Remove(path)
+			}, nil
+		}
+		if !os.IsExist(err) {
+			return nil, err
+		}
+		if time.Since(start) >= wait {
+			return nil, fmt.Errorf("another cb command is mutating the registry (holder: %s); retry, or delete %s if no cb process is running", readMutationLockHolder(path), path)
+		}
+		time.Sleep(mutationLockRetryInterval)
+	}
+}
+
+func withMutationLock(cfgPath string, fn func() error) error {
+	release, err := acquireMutationLock(cfgPath, mutationLockWait)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return fn()
 }
 
 func lockPathForRegistry(cfgPath string) string {

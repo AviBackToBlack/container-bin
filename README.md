@@ -230,6 +230,16 @@ cb restore BACKUP.zip           # dry-run: validates and reports
 cb restore BACKUP.zip --apply   # atomic replacement after validation
 ```
 
+## Concurrency and the mutation lock
+
+`cb install`, `cb setup`, `cb restore`, `cb expose`, `cb unexpose`,
+`cb uninstall`, `cb lock` and `cb update` serialize through
+`container-bin.mutation.lock` next to `cb.exe`. A second concurrent
+mutation fails fast with a clear message instead of waiting, because
+commands such as `cb update --all` may run for minutes. If a `cb`
+process is killed while holding the lock, delete `container-bin.mutation.lock`
+manually before the next mutating command.
+
 ## Diagnostics
 
 ```powershell
@@ -287,8 +297,10 @@ entries, legacy Python compatibility state).
   locally (`cb lock` pulls them; `cb self-test` never pulls).
 - Container startup adds latency compared to native binaries (typically
   hundreds of milliseconds; interactive REPLs work but feel it).
-- Two `cb` processes mutating the registry simultaneously are not coordinated
-  (single-user tool; atomic writes keep the file consistent, last writer wins).
+- Concurrent `cb` commands that mutate the registry are serialized through
+  `container-bin.mutation.lock`; a second concurrent mutation fails fast
+  instead of waiting, and a lock file left by a killed process must be deleted
+  manually.
 - `cb expose` currently supports the npm global prefix only.
 
 ## Roadmap
