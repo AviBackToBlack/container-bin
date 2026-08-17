@@ -2118,7 +2118,7 @@ func recoverFromBackup(path string, validate func(backupPath string) error) (boo
 	bak := path + ".bak"
 	if _, err := os.Stat(bak); err == nil {
 		if err := validate(bak); err != nil {
-			return false, fmt.Errorf("container-bin: %s is missing and its backup %s is unusable: %w", path, bak, err)
+			return false, fmt.Errorf("%s is missing and its backup %s is unusable: %w", path, bak, err)
 		}
 		if err := os.Rename(bak, path); err != nil {
 			return false, err
