@@ -171,7 +171,7 @@ func main() {
 		fatalf("registry: %v", err)
 	}
 
-	invoked := strings.TrimSuffix(strings.ToLower(filepath.Base(os.Args[0])), filepath.Ext(os.Args[0]))
+	invoked := invokedName(os.Args[0])
 	if invoked != "cb" && invoked != "container-bin" && !strings.HasPrefix(invoked, "cb-v") {
 		tool, ok := reg.Tools[invoked]
 		if !ok {
@@ -274,6 +274,14 @@ func main() {
 		usage(cfgPath)
 		os.Exit(2)
 	}
+}
+
+// invokedName derives the dispatch name from argv[0]. Windows filenames are
+// case-insensitive, so both base and extension are lowered before trimming —
+// cmd.exe can hand us PYTHON.EXE, which must still dispatch as "python".
+func invokedName(argv0 string) string {
+	base := strings.ToLower(filepath.Base(argv0))
+	return strings.TrimSuffix(base, filepath.Ext(base))
 }
 
 func usage(cfg string) {
@@ -728,6 +736,11 @@ func validToolName(s string) bool {
 func reservedToolName(s string) bool {
 	switch s {
 	case "cb", "container-bin", "con", "prn", "aux", "nul":
+		return true
+	}
+	// main() treats any argv[0] starting with "cb-v" as the management CLI
+	// (versioned binary names), so such a shim could never dispatch to a tool.
+	if strings.HasPrefix(s, "cb-v") {
 		return true
 	}
 	if len(s) == 4 && (strings.HasPrefix(s, "com") || strings.HasPrefix(s, "lpt")) && s[3] >= '1' && s[3] <= '9' {

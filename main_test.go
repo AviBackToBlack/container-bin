@@ -588,3 +588,34 @@ func TestMatchRepoDigestFailsClosedOnForeignRepo(t *testing.T) {
 		t.Fatal("expected malformed digests to be ignored")
 	}
 }
+
+func TestInvokedNameIsCaseInsensitive(t *testing.T) {
+	// Bare names only: filepath.Base separator handling is OS-specific and
+	// dispatch only depends on the final path element anyway.
+	cases := map[string]string{
+		"python.exe":    "python",
+		"PYTHON.EXE":    "python",
+		"Cb.ExE":        "cb",
+		"cb":            "cb",
+		"terraform.exe": "terraform",
+		"cb-v1.0.0.exe": "cb-v1.0.0",
+	}
+	for in, want := range cases {
+		if got := invokedName(in); got != want {
+			t.Fatalf("invokedName(%q)=%q want %q", in, got, want)
+		}
+	}
+}
+
+func TestReservedCbVersionPrefixNames(t *testing.T) {
+	for _, name := range []string{"cb-v", "cb-vault", "cb-version"} {
+		if !reservedToolName(name) {
+			t.Fatalf("%q should be reserved (cb-v* never dispatches to a tool)", name)
+		}
+	}
+	for _, name := range []string{"cb-x", "cbv", "vault"} {
+		if reservedToolName(name) {
+			t.Fatalf("%q should not be reserved", name)
+		}
+	}
+}
