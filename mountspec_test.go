@@ -52,6 +52,29 @@ func TestMountSpecDestinationComma(t *testing.T) {
 	if got != "" {
 		t.Fatalf("mountSpec with comma in dst returned non-empty string: %q", got)
 	}
+	if !strings.Contains(err.Error(), dst) {
+		t.Fatalf("error does not contain offending dst %q: %v", dst, err)
+	}
+}
+
+// The two failures must be tellable apart: a caller staring at a malformed
+// mount needs to know which side carries the comma, and the messages are the
+// only signal it gets.
+func TestMountSpecCommaMessagesAreDistinguishable(t *testing.T) {
+	_, srcErr := mountSpec("bind", "/bad, src", "/clean/dst")
+	_, dstErr := mountSpec("bind", "/clean/src", "/bad, dst")
+	if srcErr == nil || dstErr == nil {
+		t.Fatalf("expected both to error: src=%v dst=%v", srcErr, dstErr)
+	}
+	if srcErr.Error() == dstErr.Error() {
+		t.Fatalf("src and dst errors are indistinguishable: %v", srcErr)
+	}
+	if !strings.Contains(srcErr.Error(), "source") {
+		t.Fatalf("src error does not name the source side: %v", srcErr)
+	}
+	if !strings.Contains(dstErr.Error(), "destination") {
+		t.Fatalf("dst error does not name the destination side: %v", dstErr)
+	}
 }
 
 func TestMountSpecBothCommas(t *testing.T) {
