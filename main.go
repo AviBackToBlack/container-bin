@@ -775,6 +775,21 @@ func listTools(reg Registry, cfgPath string) {
 	}
 }
 
+func dockerOSTypeVerdict(raw string) (status, message string) {
+	normalized := strings.Join(strings.Fields(raw), " ")
+	switch strings.ToLower(normalized) {
+	case "linux":
+		return "ok", "docker is in Linux-container mode"
+	case "windows":
+		return "fail", "docker is in Windows-container mode; ContainerBin runs Linux images only — switch to Linux containers from the Docker Desktop tray menu"
+	default:
+		if normalized == "" {
+			return "warn", "container mode could not be determined"
+		}
+		return "warn", "unrecognized container mode: " + normalized
+	}
+}
+
 func doctor(reg Registry, cfgPath string) error {
 	failures := 0
 	warnings := 0
@@ -793,6 +808,21 @@ func doctor(reg Registry, cfgPath string) error {
 			fail("Docker engine unreachable: %v", err)
 		} else {
 			ok("Docker engine: %s", strings.TrimSpace(string(out)))
+			cmd = exec.Command("docker", "info", "--format", "{{.OSType}}")
+			out, err = cmd.Output()
+			if err != nil {
+				warn("docker info failed: %v", err)
+			} else {
+				status, msg := dockerOSTypeVerdict(string(out))
+				switch status {
+				case "ok":
+					ok("%s", msg)
+				case "warn":
+					warn("%s", msg)
+				case "fail":
+					fail("%s", msg)
+				}
+			}
 		}
 	}
 
