@@ -145,8 +145,9 @@ func TestGoPathMappingWindows(t *testing.T) {
 	// go build -o app.exe should force-map the output path but leave the -o flag.
 	assertMapped("go build -o app.exe", []string{"build", "-o", "app.exe"}, []string{"build", "-o", wr + "/app.exe"}, 0)
 
-	// go test ./... is an explicit relative pattern; it maps into the workspace.
-	assertMapped("go test ./...", []string{"test", "./..."}, []string{"test", wr + "/..."}, 0)
+	// go test ./... is a package pattern, not a path: the trailing "..." guard
+	// leaves it untouched so Go resolves it against the container working directory.
+	assertMapped("go test ./...", []string{"test", "./..."}, []string{"test", "./..."}, 0)
 
 	// Package patterns and subcommand words that are not explicit paths stay unchanged.
 	assertMapped("go test pkg/...", []string{"test", "pkg/..."}, []string{"test", "pkg/..."}, 0)
