@@ -1462,6 +1462,15 @@ func resolveWindowsPathArg(cwd, arg string) (string, bool, error) {
 }
 
 func resolveWindowsPathArgMode(cwd, arg string, force bool) (string, bool, error) {
+	// Never treat a package-pattern wildcard as a path, even when force is true.
+	// Windows strips trailing dots from a path component, so C:\proj\... collapses
+	// to C:\proj and silently maps to the workspace root. Declining is safe:
+	// the container's working directory is the project, so an unmapped ./...
+	// resolves correctly inside the container. This also catches D:\proj\...
+	// deliberately: failing loudly beats silently running the wrong subset.
+	if hasPackagePatternSuffix(arg) {
+		return "", false, nil
+	}
 	if isWindowsAbsPath(arg) {
 		p, err := canonicalPath(arg)
 		if err != nil {
@@ -1491,6 +1500,14 @@ func resolveWindowsPathArgMode(cwd, arg string, force bool) (string, bool, error
 func isExplicitWindowsRelPath(s string) bool {
 	return strings.HasPrefix(s, `.\`) || strings.HasPrefix(s, `..\`) ||
 		strings.HasPrefix(s, "./") || strings.HasPrefix(s, "../")
+}
+
+func hasPackagePatternSuffix(s string) bool {
+	if !strings.HasSuffix(s, "...") {
+		return false
+	}
+	prefix := s[:len(s)-3]
+	return prefix == "" || strings.HasSuffix(prefix, "/") || strings.HasSuffix(prefix, `\`)
 }
 
 func isWindowsAbsPath(s string) bool {

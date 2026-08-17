@@ -144,6 +144,8 @@ creates narrowly scoped bind mounts:
 - paths inside the project root map into the workspace mount;
 - paths outside it get their own narrow bind mounts (`ffmpeg -i "D:\Video\a.mkv"
   "D:\TEMP\b.mkv"` produces two separate mounts — never a whole drive);
+- an argument whose final element is `...` is never treated as a path, so tool
+  package patterns such as `./...` reach the tool unchanged;
 - **plain strings are never guessed to be paths.** FFmpeg's `-i` is not forced
   to be a path because valid inputs include URLs, pipes, devices and lavfi
   expressions. Tools that need forced path semantics declare them

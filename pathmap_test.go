@@ -452,3 +452,72 @@ func TestMapToolArgsStatefulWorkspaceRoot(t *testing.T) {
 		t.Fatalf("B14: expected no mounts, got %#v", mounts)
 	}
 }
+
+func TestPackagePatternSuffix(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"...", true},
+		{"./...", true},
+		{"../...", true},
+		{`.\...`, true},
+		{"./cmd/...", true},
+		{`.\cmd\...`, true},
+		{`D:\proj\...`, true},
+		{"foo...", false},
+		{"..", false},
+		{".", false},
+		{"./cmd", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		got := hasPackagePatternSuffix(tc.in)
+		if got != tc.want {
+			t.Errorf("hasPackagePatternSuffix(%q) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestMapToolArgsPackagePattern(t *testing.T) {
+	root, ext := windowsFixtures(t)
+	demo := Tool{Name: "demo"}
+
+	cases := []struct {
+		name       string
+		tool       Tool
+		in         []string
+		want       []string
+		wantMounts int
+	}{
+		{"dotdotdot", demo, []string{"..."}, []string{"..."}, 0},
+		{"dot slash dotdotdot", demo, []string{"./..."}, []string{"./..."}, 0},
+		{"dotdot slash dotdotdot", demo, []string{"../..."}, []string{"../..."}, 0},
+		{"dot backslash dotdotdot", demo, []string{`.\...`}, []string{`.\...`}, 0},
+		{"dotdot backslash dotdotdot", demo, []string{`..\...`}, []string{`..\...`}, 0},
+		{"cmd slash dotdotdot", demo, []string{"./cmd/..."}, []string{"./cmd/..."}, 0},
+		{"cmd backslash dotdotdot", demo, []string{`.\cmd\...`}, []string{`.\cmd\...`}, 0},
+		{"path next still declines", Tool{Name: "demo", PathNext: []string{"-o"}}, []string{"-o", "./..."}, []string{"-o", "./..."}, 0},
+		{"regression subdir", demo, []string{`.\sub`}, []string{"/workspace/sub"}, 0},
+		{"regression absolute inside", demo, []string{filepath.Join(root, "sub", "a.txt")}, []string{"/workspace/sub/a.txt"}, 0},
+		{"regression absolute outside", demo, []string{filepath.Join(ext, "b.txt")}, []string{"/cb/mounts/0/b.txt"}, 1},
+		{"foo triple dot not wildcard", demo, []string{"foo..."}, []string{"foo..."}, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mapped, mounts, err := mapToolArgs(tc.tool, root, root, "/workspace", tc.in)
+			if err != nil {
+				t.Fatalf("PP %s: err=%v", tc.name, err)
+			}
+			if !reflect.DeepEqual(mapped, tc.want) {
+				t.Fatalf("PP %s: mapped=%#v, want %#v", tc.name, mapped, tc.want)
+			}
+			if len(mounts) != tc.wantMounts {
+				t.Fatalf("PP %s: len(mounts)=%d, want %d; mounts=%#v", tc.name, len(mounts), tc.wantMounts, mounts)
+			}
+			if tc.wantMounts == 1 && (mounts[0].Source != ext || mounts[0].Target != "/cb/mounts/0") {
+				t.Fatalf("PP %s: mounts=%#v", tc.name, mounts)
+			}
+		})
+	}
+}
