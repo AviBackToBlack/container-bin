@@ -445,7 +445,7 @@ func parseRegistryTOML(s string) (Registry, error) {
 				return reg, fmt.Errorf("line %d: invalid tool name %q", lineNo, name)
 			}
 			if reservedToolName(name) {
-				return reg, fmt.Errorf("line %d: tool name %q is reserved (would collide with cb itself or a Windows device name)", lineNo, name)
+				return reg, fmt.Errorf("line %d: tool name %q is reserved (would collide with cb itself or a Windows device name); rename or delete the [tools.%s] section in the registry file to recover", lineNo, name, name)
 			}
 			if _, dup := reg.Tools[name]; dup {
 				return reg, fmt.Errorf("line %d: duplicate [tools.%s] section", lineNo, name)
@@ -868,14 +868,12 @@ func doctor(reg Registry, cfgPath string) error {
 		} else {
 			warn("python does not resolve to container-bin first: %s", strings.TrimSpace(string(out)))
 		}
-		// Skip the first entry: entries behind it reveal what a shim outage
-		// would fall through to. lines may be empty when no python exists.
-		for i, line := range lines {
-			if i == 0 {
-				continue
-			}
+		// Scan every result: the alias warning matters most when the
+		// WindowsApps stub is the FIRST match (i.e. it wins over the shim).
+		for _, line := range lines {
 			if strings.Contains(strings.ToLower(line), `microsoft\windowsapps\python`) {
-				warn("Windows App Execution Alias for python is still present behind the shim")
+				warn("Windows App Execution Alias for python is present on PATH; disable it in Windows Settings > Apps > App execution aliases")
+				break
 			}
 		}
 	}

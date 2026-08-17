@@ -35,6 +35,15 @@ jobs:
         run: go vet ./...
       - name: go test (race)
         run: go test -race ./...
+      - name: Verify release-style version injection
+        run: |
+          go build -trimpath -ldflags "-X main.version=v0.0.0-citest" -o cb-citest .
+          out="$(./cb-citest version)"
+          echo "$out"
+          case "$out" in
+            *v0.0.0-citest*) ;;
+            *) echo "ldflags version injection failed" >&2; exit 1 ;;
+          esac
 
   test-windows:
     name: Test and build (Windows)
@@ -67,10 +76,10 @@ jobs:
           # newer than the module's minimum version in go.mod.
           go-version: stable
       - name: Install govulncheck
-        # Deliberately unpinned, unlike the SHA-pinned actions: a vulnerability
-        # scanner is only useful fresh, Dependabot cannot track `go install`
-        # pins inside workflows, and this job has read-only permissions and no
-        # secrets, so the blast radius of a compromised release is minimal.
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+        # Pinned like every other supply-chain input. Freshness of results is
+        # unaffected: govulncheck downloads the live vulnerability database at
+        # scan time regardless of the tool version. Bump the pin manually
+        # (Dependabot cannot track `go install` versions inside workflows).
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
       - name: Run govulncheck
         run: govulncheck ./...
