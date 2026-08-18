@@ -266,9 +266,10 @@ cb doctor     # Docker CLI/engine, container mode, registry schema,
               # lock completeness, PATH, shims, python resolution,
               # shim directory permissions, reparse points,
               # network storage, managed volumes
-cb self-test [--json]  # offline end-to-end test using already-local locked images;
+cb self-test [--json] [--release]  # offline end-to-end test using already-local locked images;
                        # reports every check instead of stopping at the first failure;
-                       # --json emits a machine-readable report for CI
+                       # --json emits a machine-readable report for CI;
+                       # --release adds host/environment facts to the report
                        # python /venv persistence, external path mapping, node project
                        # state, jq relative paths, terraform -chdir normalization
 cb trace ...  # dry-run argv/mount mapping for one command
@@ -304,6 +305,37 @@ change the meaning of an existing field, not for new additive fields.
   "ok": true
 }
 ```
+
+With `--release` (and only with `--release`), an `environment` array is added
+immediately after `checks`; with `--json` alone the key is omitted entirely, so
+plain `cb self-test --json` output is unchanged. Environment entries use the
+same `{ "id", "status", "message" }` shape and the same `pass`/`fail`/`skip`
+vocabulary as `checks`, but they are informational only: they never count toward
+`passed`, `failed`, `skipped`, or `ok`. The seven stable environment IDs, in
+order, are:
+
+1. `windows-version` — raw Windows build string (e.g. `Microsoft Windows NT 10.0.26200.0`). This does not distinguish "Windows 10" from "Windows 11" by name; only the build number differs (Windows 11 requires build ≥ 22000). A friendlier caption would need a slower WMI/CIM round-trip, so the raw build number is deliberate.
+2. `powershell-version` — PowerShell version string.
+3. `docker-engine-version` — the Docker Engine version reported by `docker version`; this is a Docker *Engine* version, not the separate Docker Desktop application version shown in Docker Desktop's Settings → About.
+4. `docker-os-type` — `docker info` OSType (`linux` passes; `windows` fails because ContainerBin runs Linux images only).
+5. `cwd-reparse-point` — whether the current working directory resolves through a junction/symlink.
+6. `shim-dir-network-storage` — whether the shim directory is on a fixed/removable/network/UNC drive.
+7. `cwd-network-storage` — whether the current working directory is on a fixed/removable/network/UNC drive.
+
+The four PowerShell-dependent entries (`windows-version`, `powershell-version`,
+`shim-dir-network-storage`, `cwd-network-storage`) are skipped on non-Windows
+hosts; `docker-engine-version`, `docker-os-type`, and `cwd-reparse-point` are
+not PowerShell-dependent and still run.
+
+A `skip` status covers two different situations that share the same status
+value but not the same message shape: a genuine "could not determine" (e.g.
+not on Windows, Docker unreachable) is always messaged `skipped: ...`, while
+a `warn` verdict from the reused `cb doctor` verdict functions — a real,
+actionable qualification finding such as a UNC/mapped-drive shim directory or
+a reparse-point-backed working directory — is messaged `warn: ...` instead.
+Both report as `skip` (this schema does not add a fourth status value), but a
+CI consumer that cares about the difference can distinguish them by the
+message prefix.
 
 Each entry in `checks` has `status` of `pass`, `fail`, or `skip`. A `skip`
 means a dependency of that check did not pass (e.g. `docker` itself failed,

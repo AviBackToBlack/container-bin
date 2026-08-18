@@ -259,15 +259,11 @@ func main() {
 			fatalf("restore: %v", err)
 		}
 	case "self-test":
-		jsonOut := false
-		switch {
-		case len(os.Args) == 2:
-		case len(os.Args) == 3 && os.Args[2] == "--json":
-			jsonOut = true
-		default:
-			fatalf("self-test: usage: cb self-test [--json]")
+		jsonOut, release, err := parseSelfTestArgs(os.Args[2:])
+		if err != nil {
+			fatalf("self-test: %v", err)
 		}
-		if err := selfTestCommand(reg, jsonOut); err != nil {
+		if err := selfTestCommand(reg, jsonOut, release); err != nil {
 			fatalf("self-test: %v", err)
 		}
 	case "list":
@@ -369,7 +365,7 @@ Commands:
   cb doctor    validate Docker, PATH, shims, registry, lock and managed volumes
   cb backup    back up registry + lock to a zip
   cb restore   validate/restore a backup (dry-run unless --apply)
-  cb self-test [--json] run offline end-to-end compatibility checks
+  cb self-test [--json] [--release] run offline end-to-end compatibility checks
   cb list      list configured tool profiles
   cb trace     show raw/normalized/mapped argv for a tool without running it
   cb env       show project root and Python environment selected for cwd
@@ -2789,6 +2785,7 @@ type selfTestReport struct {
 	CBVersion     string          `json:"cb_version"`
 	GeneratedAt   string          `json:"generated_at"` // RFC3339, UTC
 	Checks        []selfTestCheck `json:"checks"`
+	Environment   []selfTestCheck `json:"environment,omitempty"`
 	Passed        int             `json:"passed"`
 	Failed        int             `json:"failed"`
 	Skipped       int             `json:"skipped"`
@@ -2836,7 +2833,7 @@ var selfTestSteps = []selfTestStep{
 // fully populated by the caller (runSelfTestChecks always does), so this
 // function has a single source of truth for docker's outcome instead of a
 // second dockerAvailable flag that could disagree with it.
-func buildSelfTestReport(cbVersion string, now time.Time, dockerCheck selfTestCheck, toolOutcomes map[string]toolSelfTestOutcome) selfTestReport {
+func buildSelfTestReport(cbVersion string, now time.Time, dockerCheck selfTestCheck, toolOutcomes map[string]toolSelfTestOutcome, environment []selfTestCheck) selfTestReport {
 	checks := []selfTestCheck{dockerCheck}
 	checksByID := map[string]selfTestCheck{dockerCheck.ID: dockerCheck}
 
@@ -2879,6 +2876,7 @@ func buildSelfTestReport(cbVersion string, now time.Time, dockerCheck selfTestCh
 		CBVersion:     cbVersion,
 		GeneratedAt:   now.UTC().Format(time.RFC3339),
 		Checks:        checks,
+		Environment:   environment,
 	}
 	for _, c := range checks {
 		switch c.Status {
@@ -2917,13 +2915,193 @@ func passMessageFor(id string) string {
 	return "ok"
 }
 
-func selfTestCommand(reg Registry, jsonOut bool) error {
+func parseSelfTestArgs(args []string) (jsonOut, release bool, err error) {
+	for _, a := range args {
+		switch a {
+		case "--json":
+			jsonOut = true
+		case "--release":
+			release = true
+		default:
+			return false, false, fmt.Errorf("usage: cb self-test [--json] [--release]")
+		}
+	}
+	return jsonOut, release, nil
+}
+
+func dockerEngineVersionCheck(dockerCheck selfTestCheck) selfTestCheck {
+	if dockerCheck.Status != "pass" {
+		msg := dockerCheck.Message
+		if strings.HasPrefix(msg, "skipped: ") {
+			msg = strings.TrimPrefix(msg, "skipped: ")
+		}
+		return selfTestCheck{ID: "docker-engine-version", Status: "skip", Message: "skipped: " + msg}
+	}
+	return selfTestCheck{ID: "docker-engine-version", Status: "pass", Message: dockerCheck.Message}
+}
+
+func windowsHostVersionInfo() (string, error) {
+	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command",
+		`"windows=$([System.Environment]::OSVersion.VersionString)"; "powershell=$($PSVersionTable.PSVersion.ToString())"`)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+func parseWindowsHostVersionInfo(raw string) (windowsVersion, powershellVersion string) {
+	for _, line := range strings.Split(strings.ReplaceAll(raw, "\r", ""), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		key, val, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		val = strings.TrimSpace(val)
+		switch key {
+		case "windows":
+			windowsVersion = val
+		case "powershell":
+			powershellVersion = val
+		}
+	}
+	return
+}
+
+func envCheckFromVerdict(id, status, message string) selfTestCheck {
+	check := selfTestCheck{ID: id}
+	switch status {
+	case "ok":
+		check.Status = "pass"
+		check.Message = message
+	case "warn":
+		// A "warn" verdict is still mapped to this report's "skip" status (no
+		// new status value — see the schema-stability note on
+		// selfTestReport.Environment), but unlike a genuine "could not
+		// determine" skip (always messaged "skipped: ..."), a warn can be a
+		// real, actionable qualification finding — a UNC/mapped-drive shim
+		// directory, a reparse-point cwd. The "warn: " prefix makes the two
+		// distinguishable by a CI consumer without demanding a new enum
+		// value in an already-shipped, versioned schema.
+		check.Status = "skip"
+		check.Message = "warn: " + message
+	case "fail":
+		check.Status = "fail"
+		check.Message = message
+	}
+	return check
+}
+
+func networkStorageCheck(id, subject, path string) selfTestCheck {
+	driveType := ""
+	if path != "" && !strings.HasPrefix(path, `\\`) {
+		if dt, err := windowsDriveType(filepath.VolumeName(path)); err == nil {
+			driveType = dt
+		}
+	}
+	status, msg := networkStorageVerdict(subject, path, driveType)
+	return envCheckFromVerdict(id, status, msg)
+}
+
+func dockerOSTypeCheck(dockerCheck selfTestCheck) selfTestCheck {
+	// Matches doctor()'s and dockerEngineVersionCheck's own precedent: don't
+	// shell out to `docker info` when `docker version` already failed — the
+	// call would just fail (or hang) a second time for the same reason.
+	if dockerCheck.Status != "pass" {
+		return selfTestCheck{ID: "docker-os-type", Status: "skip", Message: "skipped: docker unavailable"}
+	}
+	out, err := exec.Command("docker", "info", "--format", "{{.OSType}}").Output()
+	if err != nil {
+		return selfTestCheck{ID: "docker-os-type", Status: "skip", Message: "skipped: could not determine container mode"}
+	}
+	status, msg := dockerOSTypeVerdict(strings.TrimSpace(string(out)))
+	return envCheckFromVerdict("docker-os-type", status, msg)
+}
+
+func buildEnvironmentChecks(dockerCheck selfTestCheck, cwd string) []selfTestCheck {
+	var env []selfTestCheck
+
+	if runtime.GOOS == "windows" {
+		raw, err := windowsHostVersionInfo()
+		if err != nil {
+			env = append(env, selfTestCheck{ID: "windows-version", Status: "skip", Message: "skipped: could not determine"})
+			env = append(env, selfTestCheck{ID: "powershell-version", Status: "skip", Message: "skipped: could not determine"})
+		} else {
+			winVer, psVer := parseWindowsHostVersionInfo(raw)
+			if winVer == "" {
+				env = append(env, selfTestCheck{ID: "windows-version", Status: "skip", Message: "skipped: could not determine"})
+			} else {
+				env = append(env, selfTestCheck{ID: "windows-version", Status: "pass", Message: winVer})
+			}
+			if psVer == "" {
+				env = append(env, selfTestCheck{ID: "powershell-version", Status: "skip", Message: "skipped: could not determine"})
+			} else {
+				env = append(env, selfTestCheck{ID: "powershell-version", Status: "pass", Message: psVer})
+			}
+		}
+	} else {
+		env = append(env, selfTestCheck{ID: "windows-version", Status: "skip", Message: "skipped: not running on Windows"})
+		env = append(env, selfTestCheck{ID: "powershell-version", Status: "skip", Message: "skipped: not running on Windows"})
+	}
+
+	env = append(env, dockerEngineVersionCheck(dockerCheck))
+
+	env = append(env, dockerOSTypeCheck(dockerCheck))
+
+	absCwd, cwdErr := filepath.Abs(cwd)
+	if cwdErr != nil {
+		env = append(env, selfTestCheck{ID: "cwd-reparse-point", Status: "skip", Message: "skipped: could not determine current directory"})
+	} else if resolved, evalErr := filepath.EvalSymlinks(absCwd); evalErr != nil {
+		env = append(env, selfTestCheck{ID: "cwd-reparse-point", Status: "skip", Message: "skipped: could not determine whether current directory sits behind a reparse point"})
+	} else {
+		status, msg := reparsePointVerdict("current directory", absCwd, resolved)
+		env = append(env, envCheckFromVerdict("cwd-reparse-point", status, msg))
+	}
+
+	if runtime.GOOS == "windows" {
+		exe, exeErr := os.Executable()
+		if exeErr == nil {
+			exe, exeErr = filepath.Abs(exe)
+		}
+		if exeErr != nil {
+			// Unlike doctor() (which never changes directory), self-test has
+			// already chdir'd into its temp scratch project by this point —
+			// silently discarding this error the way doctor() does would let
+			// filepath.Dir("") resolve against that temp directory instead of
+			// the real shim directory, reporting a misleading "ok" for the
+			// wrong path rather than a harmless no-op.
+			env = append(env, selfTestCheck{ID: "shim-dir-network-storage", Status: "skip", Message: "skipped: could not determine shim directory"})
+		} else {
+			shimDir := filepath.Dir(exe)
+			env = append(env, networkStorageCheck("shim-dir-network-storage", "shim directory", shimDir))
+		}
+		if cwdErr != nil {
+			env = append(env, selfTestCheck{ID: "cwd-network-storage", Status: "skip", Message: "skipped: could not determine current directory"})
+		} else {
+			env = append(env, networkStorageCheck("cwd-network-storage", "current directory", absCwd))
+		}
+	} else {
+		env = append(env, selfTestCheck{ID: "shim-dir-network-storage", Status: "skip", Message: "skipped: not running on Windows"})
+		env = append(env, selfTestCheck{ID: "cwd-network-storage", Status: "skip", Message: "skipped: not running on Windows"})
+	}
+
+	return env
+}
+
+func selfTestCommand(reg Registry, jsonOut, release bool) error {
 	tmp, err := os.MkdirTemp("", "cb-selftest-")
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(tmp)
-	old, _ := os.Getwd()
+	old, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("cannot determine current directory: %w", err)
+	}
 	defer os.Chdir(old)
 	project := filepath.Join(tmp, "project")
 	external := filepath.Join(tmp, "external")
@@ -2943,7 +3121,7 @@ func selfTestCommand(reg Registry, jsonOut bool) error {
 		return err
 	}
 
-	report, err := runSelfTestChecksAndCleanup(reg, project, external, jsonOut)
+	report, err := runSelfTestChecksAndCleanup(reg, project, external, jsonOut, release, old)
 	if err != nil {
 		return err
 	}
@@ -2957,6 +3135,12 @@ func selfTestCommand(reg Registry, jsonOut bool) error {
 	} else {
 		for _, c := range report.Checks {
 			fmt.Printf("%-9s%s: %s\n", strings.ToUpper(c.Status), c.ID, c.Message)
+		}
+		if release && len(report.Environment) > 0 {
+			fmt.Println("\nEnvironment:")
+			for _, c := range report.Environment {
+				fmt.Printf("%-9s%s: %s\n", strings.ToUpper(c.Status), c.ID, c.Message)
+			}
 		}
 		hasLocal := false
 		for _, c := range report.Checks {
@@ -2977,7 +3161,7 @@ func selfTestCommand(reg Registry, jsonOut bool) error {
 	return nil
 }
 
-func runSelfTestChecksAndCleanup(reg Registry, project, external string, jsonOut bool) (selfTestReport, error) {
+func runSelfTestChecksAndCleanup(reg Registry, project, external string, jsonOut, release bool, cwd string) (selfTestReport, error) {
 	// Redirect process-level stdout/stderr around the check-and-cleanup phase so
 	// that tools whose containers write to stdout (jq, terraform) and the
 	// docker volume rm cleanup output cannot corrupt a --json report. cb runs
@@ -3001,7 +3185,7 @@ func runSelfTestChecksAndCleanup(reg Registry, project, external string, jsonOut
 	defer removeDockerVolumeQuiet(pythonEnvID(root, true))
 	defer removeDockerVolumeQuiet(statefulProjectVolumeID("node24", "node-modules", root, true))
 
-	return runSelfTestChecks(reg, project, external)
+	return runSelfTestChecks(reg, project, external, release, cwd)
 }
 
 // removeDockerVolumeQuiet is a best-effort cleanup helper for self-test's own
@@ -3015,7 +3199,7 @@ func removeDockerVolumeQuiet(name string) {
 	_ = exec.Command("docker", "volume", "rm", name).Run()
 }
 
-func runSelfTestChecks(reg Registry, project, external string) (selfTestReport, error) {
+func runSelfTestChecks(reg Registry, project, external string, release bool, cwd string) (selfTestReport, error) {
 	dockerCheck := selfTestCheck{ID: "docker"}
 	dockerAvailable := false
 	out, err := exec.Command("docker", "version", "--format", "{{.Server.Version}}").Output()
@@ -3037,7 +3221,12 @@ func runSelfTestChecks(reg Registry, project, external string) (selfTestReport, 
 		}
 	}
 
-	return buildSelfTestReport(version, time.Now(), dockerCheck, toolOutcomes), nil
+	var env []selfTestCheck
+	if release {
+		env = buildEnvironmentChecks(dockerCheck, cwd)
+	}
+
+	return buildSelfTestReport(version, time.Now(), dockerCheck, toolOutcomes, env), nil
 }
 
 func runSelfTestTool(t Tool, name, project, external string) toolSelfTestOutcome {
