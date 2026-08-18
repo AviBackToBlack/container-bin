@@ -1,6 +1,7 @@
 package main
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -211,6 +212,179 @@ func TestShimDirACLVerdict(t *testing.T) {
 	for _, msg := range allMessages {
 		if strings.Contains(msg, "%") {
 			t.Errorf("message contains %%: %q", msg)
+		}
+	}
+}
+
+func TestReparsePointVerdict(t *testing.T) {
+	cases := []struct {
+		name         string
+		literal      string
+		resolved     string
+		wantStatus   string
+		wantContains []string
+	}{
+		{
+			name:         "identical",
+			literal:      `C:/Proj`,
+			resolved:     `C:/Proj`,
+			wantStatus:   "ok",
+			wantContains: []string{"does not sit behind a reparse point"},
+		},
+		{
+			name:         "case_difference_only",
+			literal:      `C:/Proj`,
+			resolved:     `c:/proj`,
+			wantStatus:   "ok",
+			wantContains: []string{"does not sit behind a reparse point"},
+		},
+		{
+			name:         "trailing_separator_normalized",
+			literal:      `C:/Proj/`,
+			resolved:     `C:/Proj`,
+			wantStatus:   "ok",
+			wantContains: []string{"does not sit behind a reparse point"},
+		},
+		{
+			name:     "dotdot_normalized",
+			literal:  `C:/Proj/sub/../..`,
+			resolved: `C:/`,
+			// The literal C:/Proj/sub/../.. cleans to C:/, not C:/Proj, so both
+			// forms match after Clean. This still exercises Clean normalization.
+			wantStatus:   "ok",
+			wantContains: []string{"does not sit behind a reparse point"},
+		},
+		{
+			name:       "different_resolved_paths",
+			literal:    `C:/link/proj`,
+			resolved:   `C:/real/proj`,
+			wantStatus: "warn",
+			wantContains: []string{
+				"does not resolve to itself",
+				"P1",
+				"P3",
+				"supported",
+				"do not traverse from inside the container",
+			},
+		},
+	}
+
+	var allMessages []string
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			status, msg := reparsePointVerdict("current directory", c.literal, c.resolved)
+			if status != c.wantStatus {
+				t.Errorf("reparsePointVerdict status = %q, want %q", status, c.wantStatus)
+			}
+			for _, want := range c.wantContains {
+				if !strings.Contains(strings.ToLower(msg), strings.ToLower(want)) {
+					t.Errorf("reparsePointVerdict message %q does not contain %q", msg, want)
+				}
+			}
+			if c.wantStatus == "warn" {
+				wantLiteral := filepath.Clean(c.literal)
+				wantResolved := filepath.Clean(c.resolved)
+				if !strings.Contains(msg, wantLiteral) {
+					t.Errorf("reparsePointVerdict message %q does not contain literal form %q", msg, wantLiteral)
+				}
+				if !strings.Contains(msg, wantResolved) {
+					t.Errorf("reparsePointVerdict message %q does not contain resolved form %q", msg, wantResolved)
+				}
+			}
+		})
+		_, msg := reparsePointVerdict("current directory", c.literal, c.resolved)
+		allMessages = append(allMessages, msg)
+	}
+
+	for _, msg := range allMessages {
+		if strings.Contains(msg, "%") {
+			t.Errorf("reparsePointVerdict message contains %%: %q", msg)
+		}
+	}
+}
+
+func TestNetworkStorageVerdict(t *testing.T) {
+	cases := []struct {
+		name         string
+		path         string
+		driveType    string
+		wantStatus   string
+		wantContains []string
+	}{
+		{
+			name:         "unc_ignores_drive_type",
+			path:         `\\server\share\proj`,
+			driveType:    "Fixed",
+			wantStatus:   "warn",
+			wantContains: []string{`\\server\share\proj`, "P8", "UNC"},
+		},
+		{
+			name:         "fixed_drive",
+			path:         `C:/proj`,
+			driveType:    "Fixed",
+			wantStatus:   "ok",
+			wantContains: []string{"Fixed"},
+		},
+		{
+			name:         "network_drive",
+			path:         `Z:/proj`,
+			driveType:    "Network",
+			wantStatus:   "warn",
+			wantContains: []string{"Z:/proj", "P10", "mapped network drive"},
+		},
+		{
+			name:         "removable_drive",
+			path:         `D:/proj`,
+			driveType:    "Removable",
+			wantStatus:   "ok",
+			wantContains: []string{"Removable"},
+		},
+		{
+			name:         "empty_drive_type",
+			path:         `C:/proj`,
+			driveType:    "",
+			wantStatus:   "warn",
+			wantContains: []string{"could not determine"},
+		},
+		{
+			// DriveInfo's own admission that it could not classify the drive is
+			// the same "the probe did not succeed" situation as an empty result
+			// and must not fall through to the ok branch.
+			name:         "unknown_drive_type",
+			path:         `C:/proj`,
+			driveType:    "Unknown",
+			wantStatus:   "warn",
+			wantContains: []string{"could not determine"},
+		},
+		{
+			name:         "no_root_directory_drive_type",
+			path:         `C:/proj`,
+			driveType:    "NoRootDirectory",
+			wantStatus:   "warn",
+			wantContains: []string{"could not determine"},
+		},
+	}
+
+	var allMessages []string
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			status, msg := networkStorageVerdict("current directory", c.path, c.driveType)
+			if status != c.wantStatus {
+				t.Errorf("networkStorageVerdict status = %q, want %q", status, c.wantStatus)
+			}
+			for _, want := range c.wantContains {
+				if !strings.Contains(msg, want) {
+					t.Errorf("networkStorageVerdict message %q does not contain %q", msg, want)
+				}
+			}
+		})
+		_, msg := networkStorageVerdict("current directory", c.path, c.driveType)
+		allMessages = append(allMessages, msg)
+	}
+
+	for _, msg := range allMessages {
+		if strings.Contains(msg, "%") {
+			t.Errorf("networkStorageVerdict message contains %%: %q", msg)
 		}
 	}
 }

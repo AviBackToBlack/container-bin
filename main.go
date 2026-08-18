@@ -925,6 +925,43 @@ func shimDirACLVerdict(raw string, currentUserSID string) (status, message strin
 	return "warn", fmt.Sprintf("shim directory is writable by other principal(s): %s; a local attacker could replace container-bin.toml or an installed shim — restrict permissions to your account and Administrators", strings.Join(sids, ", "))
 }
 
+func reparsePointVerdict(subject, literalPath, resolvedPath string) (status, message string) {
+	literalPath = filepath.Clean(literalPath)
+	resolvedPath = filepath.Clean(resolvedPath)
+	if strings.EqualFold(literalPath, resolvedPath) {
+		return "ok", fmt.Sprintf("%s does not sit behind a reparse point", subject)
+	}
+	return "warn", fmt.Sprintf("%s does not resolve to itself (literal: %s, resolved: %s); if this is a junction or symlink, that is supported (see docs/windows-paths.md P1), but links inside the tree do not traverse from inside the container (P3) — filepath.EvalSymlinks can also produce a different form for reasons other than a reparse point (e.g. expanding an 8.3 short name), so this may be informational only", subject, literalPath, resolvedPath)
+}
+
+func networkStorageVerdict(subject, path, driveType string) (status, message string) {
+	if strings.HasPrefix(path, `\\`) {
+		return "warn", fmt.Sprintf("%s is on a UNC path (%s); Docker Desktop cannot bind-mount a UNC source; see docs/windows-paths.md P8", subject, path)
+	}
+	if driveType == "" || driveType == "Unknown" || driveType == "NoRootDirectory" {
+		// "Unknown"/"NoRootDirectory" are DriveInfo's own admission that it could
+		// not classify the drive — that is the same "the probe did not actually
+		// succeed" situation as an empty lookup result, not a confident answer of
+		// any kind, so it must not fall through to the ok branch below.
+		return "warn", fmt.Sprintf("could not determine whether %s is on network storage", subject)
+	}
+	if driveType == "Network" {
+		return "warn", fmt.Sprintf("%s is on a mapped network drive (%s); Docker Desktop cannot reliably bind-mount a mapped network drive; see docs/windows-paths.md P10", subject, path)
+	}
+	return "ok", fmt.Sprintf("%s is on a %s drive (%s)", subject, driveType, path)
+}
+
+func windowsDriveType(driveLetter string) (string, error) {
+	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command",
+		`try { [System.IO.DriveInfo]::new($env:CB_DOCTOR_DRIVE).DriveType } catch { '' }`)
+	cmd.Env = append(os.Environ(), "CB_DOCTOR_DRIVE="+driveLetter)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 func doctor(reg Registry, cfgPath string) error {
 	failures := 0
 	warnings := 0
@@ -1053,6 +1090,48 @@ func doctor(reg Registry, cfgPath string) error {
 			} else {
 				warn("%s", msg)
 			}
+		}
+	}
+
+	cwd, cwdErr := os.Getwd()
+	if cwdErr == nil {
+		cwd, cwdErr = filepath.Abs(cwd)
+	}
+	if cwdErr != nil {
+		warn("could not determine current directory: %v", cwdErr)
+	} else if resolved, evalErr := filepath.EvalSymlinks(cwd); evalErr != nil {
+		// Report an unsuccessful resolution as indeterminate, not as an ok "no
+		// reparse point" pass — an unresolved path proves nothing either way,
+		// matching how every other unsuccessful probe in this function is
+		// reported (docker info, the ACL probe, etc.).
+		warn("could not determine whether current directory sits behind a reparse point: %v", evalErr)
+	} else {
+		status, msg := reparsePointVerdict("current directory", cwd, resolved)
+		if status == "ok" {
+			ok("%s", msg)
+		} else {
+			warn("%s", msg)
+		}
+	}
+
+	if runtime.GOOS == "windows" {
+		checkNetworkStorage := func(subject, path string) {
+			driveType := ""
+			if !strings.HasPrefix(path, `\\`) {
+				if dt, err := windowsDriveType(filepath.VolumeName(path)); err == nil {
+					driveType = dt
+				}
+			}
+			status, msg := networkStorageVerdict(subject, path, driveType)
+			if status == "ok" {
+				ok("%s", msg)
+			} else {
+				warn("%s", msg)
+			}
+		}
+		checkNetworkStorage("shim directory", dir)
+		if cwdErr == nil {
+			checkNetworkStorage("current directory", cwd)
 		}
 	}
 
