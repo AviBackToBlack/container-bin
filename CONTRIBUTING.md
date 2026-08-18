@@ -45,7 +45,8 @@ classification, argv normalization, volume naming. They do **not** prove
 end-to-end behavior against Docker Desktop. For that, build `cb.exe`, run
 `cb setup`, and then `cb self-test` on a real Windows machine with Docker
 Desktop in Linux-container mode. Mention in your PR which of the two levels
-of validation you performed.
+of validation you performed. For the full release-qualification procedure
+and matrix, see [docs/release-matrix.md](docs/release-matrix.md).
 
 ## Pull requests
 

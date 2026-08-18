@@ -442,3 +442,7 @@ Release binaries are built by a tag-triggered GitHub Actions workflow with
 ```powershell
 gh attestation verify cb.exe --repo AviBackToBlack/container-bin
 ```
+
+The manual Windows/Docker Desktop release-qualification matrix that
+complements the automated build is documented in
+[docs/release-matrix.md](docs/release-matrix.md).
