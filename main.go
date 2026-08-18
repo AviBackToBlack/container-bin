@@ -931,14 +931,18 @@ func reparsePointVerdict(subject, literalPath, resolvedPath string) (status, mes
 	if strings.EqualFold(literalPath, resolvedPath) {
 		return "ok", fmt.Sprintf("%s does not sit behind a reparse point", subject)
 	}
-	return "warn", fmt.Sprintf("%s resolves through a reparse point (literal: %s, resolved: %s); this is supported (see docs/windows-paths.md P1), but links inside the tree do not traverse from inside the container (P3)", subject, literalPath, resolvedPath)
+	return "warn", fmt.Sprintf("%s does not resolve to itself (literal: %s, resolved: %s); if this is a junction or symlink, that is supported (see docs/windows-paths.md P1), but links inside the tree do not traverse from inside the container (P3) — filepath.EvalSymlinks can also produce a different form for reasons other than a reparse point (e.g. expanding an 8.3 short name), so this may be informational only", subject, literalPath, resolvedPath)
 }
 
 func networkStorageVerdict(subject, path, driveType string) (status, message string) {
 	if strings.HasPrefix(path, `\\`) {
 		return "warn", fmt.Sprintf("%s is on a UNC path (%s); Docker Desktop cannot bind-mount a UNC source; see docs/windows-paths.md P8", subject, path)
 	}
-	if driveType == "" {
+	if driveType == "" || driveType == "Unknown" || driveType == "NoRootDirectory" {
+		// "Unknown"/"NoRootDirectory" are DriveInfo's own admission that it could
+		// not classify the drive — that is the same "the probe did not actually
+		// succeed" situation as an empty lookup result, not a confident answer of
+		// any kind, so it must not fall through to the ok branch below.
 		return "warn", fmt.Sprintf("could not determine whether %s is on network storage", subject)
 	}
 	if driveType == "Network" {
@@ -1095,11 +1099,13 @@ func doctor(reg Registry, cfgPath string) error {
 	}
 	if cwdErr != nil {
 		warn("could not determine current directory: %v", cwdErr)
+	} else if resolved, evalErr := filepath.EvalSymlinks(cwd); evalErr != nil {
+		// Report an unsuccessful resolution as indeterminate, not as an ok "no
+		// reparse point" pass — an unresolved path proves nothing either way,
+		// matching how every other unsuccessful probe in this function is
+		// reported (docker info, the ACL probe, etc.).
+		warn("could not determine whether current directory sits behind a reparse point: %v", evalErr)
 	} else {
-		resolved := cwd
-		if r, err := filepath.EvalSymlinks(cwd); err == nil {
-			resolved = r
-		}
 		status, msg := reparsePointVerdict("current directory", cwd, resolved)
 		if status == "ok" {
 			ok("%s", msg)

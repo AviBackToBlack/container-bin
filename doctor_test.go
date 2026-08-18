@@ -260,7 +260,7 @@ func TestReparsePointVerdict(t *testing.T) {
 			resolved:   `C:/real/proj`,
 			wantStatus: "warn",
 			wantContains: []string{
-				"resolves through a reparse point",
+				"does not resolve to itself",
 				"P1",
 				"P3",
 				"supported",
@@ -343,6 +343,23 @@ func TestNetworkStorageVerdict(t *testing.T) {
 			name:         "empty_drive_type",
 			path:         `C:/proj`,
 			driveType:    "",
+			wantStatus:   "warn",
+			wantContains: []string{"could not determine"},
+		},
+		{
+			// DriveInfo's own admission that it could not classify the drive is
+			// the same "the probe did not succeed" situation as an empty result
+			// and must not fall through to the ok branch.
+			name:         "unknown_drive_type",
+			path:         `C:/proj`,
+			driveType:    "Unknown",
+			wantStatus:   "warn",
+			wantContains: []string{"could not determine"},
+		},
+		{
+			name:         "no_root_directory_drive_type",
+			path:         `C:/proj`,
+			driveType:    "NoRootDirectory",
 			wantStatus:   "warn",
 			wantContains: []string{"could not determine"},
 		},
