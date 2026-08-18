@@ -12,8 +12,8 @@ that claim is pinned — either by a test name, an existing test, or the words
 
 | ID | Path form | Classification | What happens today | How it is proven |
 |---|---|---|---|---|
-| P1 | A junction or symlink on the way *to* the project root or to an argument | **Supported** | `canonicalPath` resolves it (`EvalSymlinks`) for both `cwd` and every classified argument, so root and arguments are compared and mounted as resolved real paths | `TestPathFormP1JunctionToRoot` |
-| P2 | A junction or symlink *inside* the project root whose target is outside it | **Supported** | The argument resolves outside `root`, `pathWithin` fails, and it gets its own narrow `/cb/mounts/N` bind mount | `TestPathFormP2JunctionEscapesRoot` |
+| P1 | A junction or symlink on the way *to* the project root or to an argument | **Supported** | `canonicalPath` resolves it (`EvalSymlinks`) for both `cwd` and every classified argument, so root and arguments are compared and mounted as resolved real paths | `TestPathFormP1JunctionToRoot` — skips where the runner cannot create a directory symlink |
+| P2 | A junction or symlink *inside* the project root whose target is outside it | **Supported** | The argument resolves outside `root`, `pathWithin` fails, and it gets its own narrow `/cb/mounts/N` bind mount | `TestPathFormP2JunctionEscapesRoot` — skips where the runner cannot create a directory symlink |
 | P3 | Traversing such a link from *inside* the container | **Documented as unsupported** | Docker Desktop bind mounts do not follow host reparse points, so a junction inside the mounted project tree is not usable from the container | documentation only — not covered by CI |
 | P4 | A reparse point `EvalSymlinks` cannot resolve (cloud-storage placeholders, dedup reparse points, app-execution aliases) | **Documented as unsupported, best-effort** | `canonicalPath` ignores the `EvalSymlinks` error and keeps the unresolved absolute path; mapping proceeds against that path | documentation only — not covered by CI |
 | P5 | Case-insensitive equivalence | **Supported** | `canonicalPath` lowercases on Windows; `mapArg` lowercases the external-mount dedup key; `volumeHash` lowercases before hashing | `TestPathFormP5CaseInsensitiveEquivalence`; see also `TestMapToolArgsExternalDedupCaseInsensitive` |
@@ -35,6 +35,14 @@ that claim is pinned — either by a test name, an existing test, or the words
 upward, and it is called on every argument that the classifier accepts. That
 covers both the project root and the argument: a user working through
 `D:\link\proj` sees the real directory mounted and compared.
+
+The P1 and P2 tests need a real reparse point, which they create with
+`os.Symlink`. Creating a directory symlink on Windows can require privilege or
+developer mode, so both tests skip rather than fail when it is unavailable —
+meaning these two rows are proven only on runners where that succeeds. If the
+CI runner ever loses that ability, the rows quietly become documentation
+rather than tests; the alternative, failing the build on an environment
+capability, would be worse.
 
 ### P2 — Junction or symlink inside the root whose target is outside it
 
