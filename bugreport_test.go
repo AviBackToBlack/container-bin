@@ -70,8 +70,14 @@ func TestRedactSecrets(t *testing.T) {
 		},
 		{
 			name: "github_token",
-			in:   fmt.Sprintf("token=%s", githubToken),
-			want: "token=«redacted»",
+			// Deliberately not "token=<value>" here: "token" is itself in the
+			// KV allowlist, so a KV-shaped input would be redacted by that
+			// pattern before the GitHub-specific one ever runs, and this case
+			// would keep passing even if githubTokenPattern were broken or
+			// removed. Phrasing it as prose without a "token=" assignment
+			// isolates the GitHub pattern instead.
+			in:   fmt.Sprintf("found a leaked token in logs: %s", githubToken),
+			want: "found a leaked token in logs: «redacted»",
 		},
 		{
 			name: "bearer_token",
