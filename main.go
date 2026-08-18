@@ -858,7 +858,7 @@ func dockerOSTypeVerdict(raw string) (status, message string) {
 }
 
 func shimDirACLVerdict(raw string, currentUserSID string) (status, message string) {
-	writeRights := []string{"FullControl", "Modify", "Write", "CreateFiles", "AppendData"}
+	writeRights := []string{"FullControl", "Modify", "Write", "CreateFiles", "AppendData", "Delete", "TakeOwnership", "ChangePermissions"}
 	isWriteCapable := func(rights string) bool {
 		for _, r := range writeRights {
 			if strings.Contains(rights, r) {
@@ -868,7 +868,7 @@ func shimDirACLVerdict(raw string, currentUserSID string) (status, message strin
 		return false
 	}
 	isTrusted := func(sid string) bool {
-		if sid == currentUserSID {
+		if sid != "" && sid == currentUserSID {
 			return true
 		}
 		switch sid {
@@ -1027,26 +1027,32 @@ func doctor(reg Registry, cfgPath string) error {
 		fail("%d registry shim(s) missing; run `cb install`", shimProblems)
 	}
 
-	currentUserSID := ""
-	if u, err := user.Current(); err == nil {
-		currentUserSID = u.Uid
-	}
-	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command",
-		`$acl = Get-Acl -LiteralPath $env:CB_DOCTOR_ACL_DIR; `+
-			`$acl.Access | ForEach-Object { `+
-			`$sid = $_.IdentityReference.Value; `+
-			`try { $sid = $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch {}; `+
-			`"$sid|$($_.AccessControlType)|$($_.FileSystemRights)" }`)
-	cmd.Env = append(os.Environ(), "CB_DOCTOR_ACL_DIR="+dir)
-	out, err := cmd.Output()
-	if err != nil {
-		warn("could not inspect shim directory permissions: %v", err)
-	} else {
-		status, msg := shimDirACLVerdict(string(out), currentUserSID)
-		if status == "ok" {
-			ok("%s", msg)
+	// NTFS ACLs and PowerShell's Get-Acl are Windows-specific concepts, unlike the
+	// Docker/registry/shim checks above — gate this the same way the python-alias
+	// check below is gated, so a non-Windows run does not report a spurious
+	// "could not inspect" warning for a probe that could never have succeeded there.
+	if runtime.GOOS == "windows" {
+		currentUserSID := ""
+		if u, err := user.Current(); err == nil {
+			currentUserSID = u.Uid
+		}
+		cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command",
+			`$acl = Get-Acl -LiteralPath $env:CB_DOCTOR_ACL_DIR; `+
+				`$acl.Access | ForEach-Object { `+
+				`$sid = $_.IdentityReference.Value; `+
+				`try { $sid = $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch {}; `+
+				`"$sid|$($_.AccessControlType)|$($_.FileSystemRights)" }`)
+		cmd.Env = append(os.Environ(), "CB_DOCTOR_ACL_DIR="+dir)
+		out, err := cmd.Output()
+		if err != nil {
+			warn("could not inspect shim directory permissions: %v", err)
 		} else {
-			warn("%s", msg)
+			status, msg := shimDirACLVerdict(string(out), currentUserSID)
+			if status == "ok" {
+				ok("%s", msg)
+			} else {
+				warn("%s", msg)
+			}
 		}
 	}
 

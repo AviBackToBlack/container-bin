@@ -97,6 +97,38 @@ func TestShimDirACLVerdict(t *testing.T) {
 			wantContains:   []string{"S-1-5-32-545"},
 		},
 		{
+			name:           "untrusted_delete_subdirectories_and_files",
+			raw:            "S-1-1-0|Allow|ReadAndExecute, DeleteSubdirectoriesAndFiles, Synchronize",
+			currentUserSID: currentUser,
+			wantStatus:     "warn",
+			wantContains:   []string{"S-1-1-0"},
+		},
+		{
+			name:           "untrusted_take_ownership",
+			raw:            "S-1-1-0|Allow|TakeOwnership",
+			currentUserSID: currentUser,
+			wantStatus:     "warn",
+			wantContains:   []string{"S-1-1-0"},
+		},
+		{
+			name:           "untrusted_change_permissions",
+			raw:            "S-1-1-0|Allow|ChangePermissions",
+			currentUserSID: currentUser,
+			wantStatus:     "warn",
+			wantContains:   []string{"S-1-1-0"},
+		},
+		{
+			// If user.Current() fails, currentUserSID is "". An ACE whose SID field
+			// also renders empty must still be treated as untrusted, not silently
+			// matched to the empty currentUserSID fallback (main.go isTrusted guards
+			// this with `sid != "" && sid == currentUserSID`).
+			name:           "empty_sid_field_never_matches_empty_current_user_sid",
+			raw:            "|Allow|FullControl",
+			currentUserSID: "",
+			wantStatus:     "warn",
+			wantContains:   []string{"writable by other principal"},
+		},
+		{
 			name: "deny_overrides_allow",
 			raw: "S-1-1-0|Allow|FullControl\n" +
 				"S-1-1-0|Deny|Write",
