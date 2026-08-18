@@ -59,14 +59,17 @@ of validation you performed.
 
 ## Reporting bugs
 
-Use the bug report issue template. It asks for `cb version`, `cb doctor`
-output, Windows/Docker Desktop/PowerShell versions, and a reproducible
-command.
+Use the bug report issue template. Running `cb bugreport` will gather `cb
+version`, `cb doctor` output, Windows and PowerShell versions (on Windows) and
+a compact registry inventory into one paste-ready block with best-effort
+secret redaction; add the result to the issue. You may still need to provide
+Docker Desktop and shell versions separately.
 
 **Never paste secrets.** Registry snippets, `cb inspect` output and
 environment listings can contain tokens (cloud credentials passed via
-`env_prefixes`, proxy URLs with passwords, private registry hosts). Sanitize
-before posting.
+`env_prefixes`, proxy URLs with passwords, private registry hosts). `cb
+bugreport` redacts a few common patterns, but that is a convenience aid, not a
+substitute for your own review — sanitize before posting.
 
 ## Security issues
 
