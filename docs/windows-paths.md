@@ -19,7 +19,7 @@ that claim is pinned — either by a test name, an existing test, or the words
 | P5 | Case-insensitive equivalence | **Supported** | `canonicalPath` lowercases on Windows; `mapArg` lowercases the external-mount dedup key; `volumeHash` lowercases before hashing | `TestPathFormP5CaseInsensitiveEquivalence`; see also `TestMapToolArgsExternalDedupCaseInsensitive` |
 | P6 | The container-side workspace basename is lowercased for stateful tools | **Supported, user-visible** | `root` is lowercased, so `workspaceRootFor` sees a lowercased basename (`My-App` becomes `my-app`) | `TestPathFormP6WorkspaceBasenameLowercased` |
 | P7 | A UNC path as an argument (`\\server\share\x`) | **Documented as unsupported** | `isWindowsAbsPath` requires a drive letter, so the UNC string is not recognized as a path and reaches the container unmapped | `TestPathFormP7UNCArgumentDeclined` |
-| P8 | A UNC path as the project root / current directory | **Documented as unsupported** | `root` is handed verbatim to `mountSpec`; Docker Desktop cannot bind-mount a UNC source | documentation only — not covered by CI |
+| P8 | A UNC path as the project root / current directory | **Documented as unsupported** | `root` reaches `mountSpec` as the canonicalized UNC path; Docker Desktop cannot bind-mount a UNC source | documentation only — not covered by CI |
 | P9 | Long-path / extended-length syntax (`\\?\C:\...`, `\\?\UNC\...`) | **Documented as unsupported** | Same mechanism as P7: the leading backslash defeats `isWindowsAbsPath` | `TestPathFormP9LongPathSyntaxDeclined` |
 | P10 | `subst` drives and mapped network drives (`S:\`, `Z:\`) | **Documented as unsupported** | Indistinguishable from a fixed drive at the string level; cb maps them and hands Docker a source it cannot share | documentation only — not covered by CI |
 | P11 | Trailing dots or spaces in a path component (`.\foo.`, `.\foo `) | **Supported** | `filepath.Abs` uses `GetFullPathNameW`, which strips trailing dots and spaces from the component, so cb acts on `foo` | `TestPathFormP11TrailingDotsAndSpaces` |
@@ -90,8 +90,10 @@ user must notice the absence rather than being told.
 ### P8 — UNC project root or current directory
 
 If `cwd` or the found project root is a UNC path, `mountSpec("bind", root,
-workspaceRoot)` is called with that string. Docker Desktop cannot bind-mount a
-UNC source, and the resulting error is loud but comes from Docker, not cb.
+workspaceRoot)` is called with it. `canonicalPath` has already lowercased and
+cleaned the string by then, but nothing rewrites the UNC form itself. Docker
+Desktop cannot bind-mount a UNC source, and the resulting error is loud but
+comes from Docker, not cb.
 Turning that into an actionable cb-side diagnostic is chartered as **RM-5c**
 (`cb doctor` filesystem/path diagnostics), not this task.
 

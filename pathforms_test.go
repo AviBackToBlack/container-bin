@@ -178,41 +178,44 @@ func TestPathFormP9LongPathSyntaxDeclined(t *testing.T) {
 }
 
 func TestPathFormP11TrailingDotsAndSpaces(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("windows path-mapping semantics")
+	root, _ := windowsFixtures(t)
+	mustWriteFile(t, filepath.Join(root, "foo"), []byte{})
+	plain := mustCanonical(t, filepath.Join(root, "foo"))
+
+	// filepath.Abs goes through GetFullPathNameW on Windows for absolute and
+	// relative inputs alike, so no chdir is needed to exercise the stripping.
+	cases := []struct {
+		name string
+		arg  string
+	}{
+		{"trailing dot", filepath.Join(root, "foo.")},
+		{"trailing space", filepath.Join(root, "foo ")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := canonicalPath(tc.arg)
+			if err != nil {
+				t.Fatalf("P11 %s: canonicalPath(%q): %v", tc.name, tc.arg, err)
+			}
+			if got != plain {
+				t.Fatalf("P11 %s: canonical=%q, want %q", tc.name, got, plain)
+			}
+		})
 	}
 
-	dir := t.TempDir()
-	mustWriteFile(t, filepath.Join(dir, "foo"), []byte{})
-
-	prev, err := os.Getwd()
+	// End to end, in the explicit-relative shape a user actually types: the
+	// argument reaches the tool as the stripped name, not as a literal.
+	tool := Tool{Name: "demo"}
+	in := []string{`.\foo.`}
+	mapped, mounts, err := mapToolArgs(tool, root, root, "/workspace", in)
 	if err != nil {
-		t.Fatalf("P11 Getwd: %v", err)
+		t.Fatalf("P11 end-to-end: err=%v", err)
 	}
-	if err := os.Chdir(dir); err != nil {
-		t.Fatalf("P11 Chdir: %v", err)
+	if !reflect.DeepEqual(mapped, []string{"/workspace/foo"}) {
+		t.Fatalf("P11 end-to-end: mapped=%#v, want %#v", mapped, []string{"/workspace/foo"})
 	}
-	defer func() {
-		_ = os.Chdir(prev)
-	}()
-
-	plain, err := canonicalPath(`.\foo`)
-	if err != nil {
-		t.Fatalf("P11 canonicalPath(`.\\foo`): %v", err)
-	}
-	dotted, err := canonicalPath(`.\foo.`)
-	if err != nil {
-		t.Fatalf("P11 canonicalPath(`.\\foo.`): %v", err)
-	}
-	if dotted != plain {
-		t.Fatalf("P11: dotted canonical=%q, want %q", dotted, plain)
-	}
-	spaced, err := canonicalPath(`.\foo `)
-	if err != nil {
-		t.Fatalf("P11 canonicalPath(`.\\foo `): %v", err)
-	}
-	if spaced != plain {
-		t.Fatalf("P11: spaced canonical=%q, want %q", spaced, plain)
+	if len(mounts) != 0 {
+		t.Fatalf("P11 end-to-end: expected no mounts, got %#v", mounts)
 	}
 }
 
