@@ -134,13 +134,19 @@ func TestRootBindMountCommaFailsClosedOnSrc(t *testing.T) {
 	if got != "" {
 		t.Fatalf("mountSpec(root, workspaceRoot) with a comma-named project returned non-empty string: %q", got)
 	}
-	// The src check runs first in mountSpec, so this is the error a user
-	// actually sees -- not a destination/workspace-root complaint.
-	if !strings.Contains(err.Error(), "source path") {
-		t.Fatalf("expected the source-path error (src check fires first), got: %v", err)
+	// The src check runs first in mountSpec, so the error a user actually
+	// sees names root (the offending src), not workspaceRoot -- checking the
+	// offending path string itself, like the sibling tests above, ties this
+	// to mountSpec's behavior rather than to its message prose.
+	if !strings.Contains(err.Error(), root) {
+		t.Fatalf("error does not contain the offending src %q: %v", root, err)
 	}
-	if strings.Contains(err.Error(), "destination path") {
-		t.Fatalf("did not expect the destination-path error to fire here: %v", err)
+	// If the dst branch had fired instead, the message would name
+	// workspaceRoot (mountSpec's dst error includes the offending dst
+	// string) -- absence of that confirms the src branch is what actually
+	// fired, without depending on either message's wording.
+	if strings.Contains(err.Error(), workspaceRoot) {
+		t.Fatalf("did not expect the error to name workspaceRoot %q (would mean the dst branch fired): %v", workspaceRoot, err)
 	}
 }
 
