@@ -76,6 +76,9 @@ declarations:
 2. explicit relatives (`.\x`, `..\x`, `./x`, `../x`),
 3. bare relatives that **already exist** on the host (`data\foo.json`).
 
+The authoritative classification of supported, rejected, and deliberately
+unsupported Windows path forms is in [docs/windows-paths.md](windows-paths.md).
+
 Paths inside the project root map into the workspace bind mount. Paths outside
 it get dedicated narrow mounts under `/cb/mounts/N` — mounting a whole drive
 because one argument referenced `D:\Video\a.mkv` would be wildly excessive.

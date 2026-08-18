@@ -70,6 +70,10 @@ readable, and dangerous to let others edit.
   Desktop updated.
 - **Anything with local write access** to the registry, lockfile, or shim
   directory (see trust boundary).
+- **TOCTOU path re-pointing.** A path whose target is re-pointed between
+  classification and `docker run` is mounted as re-pointed; this is inside the
+  local-write-access boundary and is stated explicitly so it reads as a
+  decision rather than an omission.
 
 ## Practical guidance
 
