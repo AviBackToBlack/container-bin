@@ -19,7 +19,7 @@ NAME.exe (hardlink to cb.exe)
 
 The shell/process contract for these stages (argv, stdio, TTY, signals,
 working directory, and environment) is documented in
-[docs/shell-contract.md](docs/shell-contract.md).
+[docs/shell-contract.md](shell-contract.md).
 
 `cb.exe` invoked as `cb` (or `container-bin`) is the management CLI; invoked
 under any other name it is a shim and dispatches to the tool of that name.

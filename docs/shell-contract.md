@@ -59,7 +59,7 @@ The scope is deliberately narrow: this is not a general PowerShell-quoting or
 argument-joining emulation layer. It fixes one specific, registry-declared shape
 so that declared options such as `terraform -chdir=...` reach `docker run` as a
 single argument. See
-[docs/architecture.md](docs/architecture.md#why-powershell-argv-repair-exists)
+[docs/architecture.md](architecture.md#why-powershell-argv-repair-exists)
 for the design rationale.
 
 ## 3. cmd.exe behavior
@@ -127,8 +127,8 @@ otherwise.
 `runTool` derives the container working directory as follows:
 
 1. `os.Getwd()` (`main.go:1377`) gets the host process cwd.
-2. `canonicalPath(cwd)` (`main.go:1381`) resolves to a cleaned, lowercase,
-   symlink-resolved absolute path.
+2. `canonicalPath(cwd)` (`main.go:1381`) resolves to a cleaned, symlink-resolved
+   absolute path, lowercased when `runtime.GOOS == "windows"` (`main.go:1990`).
 3. `findProjectRoot(cwd, projectMarkersFor(t))` (`main.go:1385`) walks upward
    looking for declared markers.
 4. If no root is found, `root = cwd` (`main.go:1387`).
@@ -140,7 +140,7 @@ Because `containerWD` is always computed from the root that is also bind-mounted
 as `/workspace`, the container's cwd is always inside that bind-mounted project
 root (or the workspace root when no project marker is found). It is never an
 arbitrary host path outside the mounted tree. See
-[docs/architecture.md](docs/architecture.md#project-roots-and-volume-naming) for
+[docs/architecture.md](architecture.md#project-roots-and-volume-naming) for
 the project-root discovery and volume-naming rationale.
 
 ## 7. Signal handling and Ctrl-C
@@ -168,7 +168,7 @@ go func() {
 `exitInterrupted` is the constant `130` (`main.go:2032`). This is the cited,
 tested behavior: a `cb` process interrupted with Ctrl-C while holding the
 mutation lock exits `130` and releases the lock. The authoritative exit-code
-meaning is in [README.md's `## Exit codes`](README.md#exit-codes); see that
+meaning is in [README.md's `## Exit codes`](../README.md#exit-codes); see that
 section for the table rather than restating it here.
 
 ### Tool-run path
