@@ -163,3 +163,72 @@ func TestGoPathMappingWindows(t *testing.T) {
 	assertMapped("go build", []string{"build"}, []string{"build"}, 0)
 	assertMapped("go vet", []string{"vet"}, []string{"vet"}, 0)
 }
+
+// Both profiles deliberately declare no forced path semantics. Forcing is
+// positionally blind, so it would rewrite arguments the tool never treats as
+// paths: the value after "go run PKG -o", and the trailing rewrite rule of
+// "gofmt -r". Real paths are still handled by the general shape rules.
+func TestGoProfilesDeclareNoForcedPathSemantics(t *testing.T) {
+	reg, err := parseRegistryTOML(defaultRegistryTOML)
+	if err != nil {
+		t.Fatal(err)
+	}
+	goTool := reg.Tools["go"]
+	if len(goTool.PathNext) != 0 {
+		t.Fatalf("go must not declare path_next, got %#v", goTool.PathNext)
+	}
+	if len(goTool.PathEquals) != 0 || goTool.PathLast {
+		t.Fatalf("go must not declare forced path semantics: %+v", goTool)
+	}
+	gofmtTool := reg.Tools["gofmt"]
+	if gofmtTool.PathLast {
+		t.Fatal("gofmt must not declare path_last; it would force the -r rewrite rule through path mapping")
+	}
+	if len(gofmtTool.PathNext) != 0 || len(gofmtTool.PathEquals) != 0 {
+		t.Fatalf("gofmt must not declare forced path semantics: %+v", gofmtTool)
+	}
+}
+
+func TestGofmtPathMappingWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("windows path-mapping semantics")
+	}
+
+	rootRaw := filepath.Join(t.TempDir(), "myproj")
+	if err := os.MkdirAll(rootRaw, 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	root := mustCanonical(t, rootRaw)
+	reg, err := parseRegistryTOML(defaultRegistryTOML)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool := reg.Tools["gofmt"]
+	wr := workspaceRootFor(tool, root)
+
+	check := func(name string, in, want []string) {
+		t.Helper()
+		mapped, mounts, err := mapToolArgs(tool, root, root, wr, in)
+		if err != nil {
+			t.Fatalf("%s: err=%v", name, err)
+		}
+		if !reflect.DeepEqual(mapped, want) {
+			t.Fatalf("%s: mapped=%#v, want %#v", name, mapped, want)
+		}
+		if len(mounts) != 0 {
+			t.Fatalf("%s: expected no mounts, got %#v", name, mounts)
+		}
+	}
+
+	// A trailing rewrite rule must survive: with path_last it would have been
+	// turned into a container path and gofmt would reject it.
+	check("gofmt -r rule", []string{"-r", "a[b:len(a)] -> a[b:]"}, []string{"-r", "a[b:len(a)] -> a[b:]"})
+
+	// "." and bare file names resolve against the container working directory,
+	// which is the project root, so they need no rewriting.
+	check("gofmt -l .", []string{"-l", "."}, []string{"-l", "."})
+	check("gofmt -w main.go", []string{"-w", "main.go"}, []string{"-w", "main.go"})
+
+	// Explicit relative operands are still mapped by the general rules.
+	check("gofmt -w ./pkg/x.go", []string{"-w", "./pkg/x.go"}, []string{"-w", wr + "/pkg/x.go"})
+}
