@@ -140,16 +140,16 @@ That proves the following, and no more:
   documentation describes `windows-latest` as a Windows Server runner image,
   not a Windows 11 client install.
 - The only shell-dependent step uses `pwsh` (PowerShell 7.x / PowerShell Core).
-    It does not exercise **Windows PowerShell 5.1** (`powershell.exe`) or
+  It does not exercise **Windows PowerShell 5.1** (`powershell.exe`) or
   **`cmd.exe`**.
 - It has **no Docker Desktop** and makes **no `docker run` call**. `go test ./...`
-    on Windows exercises pure logic and any `runtime.GOOS == "windows"`-gated
-    unit tests — `docs/windows-paths.md` notes that its Windows-gated tests are
-    what runs here — not an actual containerized tool invocation.
+  on Windows exercises pure logic and any `runtime.GOOS == "windows"`-gated
+  unit tests — `docs/windows-paths.md` notes that its Windows-gated tests are
+  what runs here — not an actual containerized tool invocation.
 - The "Smoke-test version output" step only proves the binary starts and
-    dispatches `cb version`; it never reaches `runTool` or `docker run`.
+  dispatches `cb version`; it never reaches `runTool` or `docker run`.
 - It does not vary Docker Desktop version, the Linux-versus-Windows-containers
-    mode switch, or real bind-mount/volume behavior.
+  mode switch, or real bind-mount/volume behavior.
 
 So CI validates compilation and pure/unit logic on a GitHub-hosted Windows
 runner. The matrix is what validates the `docs/shell-contract.md` semantics on a

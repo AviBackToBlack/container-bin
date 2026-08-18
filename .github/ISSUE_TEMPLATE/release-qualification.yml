@@ -7,7 +7,7 @@ body:
     attributes:
       value: |
         Use this template to record the manual Windows/Docker Desktop
-        release-qualification matrix. See [docs/release-matrix.md](../../docs/release-matrix.md)
+        release-qualification matrix. See [docs/release-matrix.md](https://github.com/AviBackToBlack/container-bin/blob/main/docs/release-matrix.md)
         for the full procedure, the grid, and the per-cell steps.
   - type: input
     id: version
