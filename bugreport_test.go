@@ -85,6 +85,14 @@ func TestRedactSecrets(t *testing.T) {
 			want: "Authorization: Bearer «redacted»",
 		},
 		{
+			// The pattern is case-insensitive so it catches "bearer" too, but
+			// the replacement must preserve the source's own casing rather
+			// than silently normalizing it to "Bearer".
+			name: "bearer_token_lowercase_preserved",
+			in:   fmt.Sprintf("authorization: bearer %s", bearerToken),
+			want: "authorization: bearer «redacted»",
+		},
+		{
 			name: "no_false_positive_password_substring",
 			in:   "setting up a passwordless-auth-flow is recommended",
 			want: "setting up a passwordless-auth-flow is recommended",

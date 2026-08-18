@@ -1222,7 +1222,7 @@ var (
 	kvSecretPattern    = regexp.MustCompile(`(?i)\b(password|passwd|pwd|secret|token|api_key|apikey|access_key|accesskey|auth|credential|private_key|privatekey|client_secret)\b\s*[:=]\s*\S+`)
 	awsKeyPattern      = regexp.MustCompile(`\bAKIA[A-Z0-9]{16}\b`)
 	githubTokenPattern = regexp.MustCompile(`\bgh[pours]_[A-Za-z0-9]{36,}\b`)
-	bearerTokenPattern = regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+\b`)
+	bearerTokenPattern = regexp.MustCompile(`(?i)\b(Bearer)\s+[A-Za-z0-9._~+/=-]+\b`)
 )
 
 // redactSecrets applies a small, fixed set of best-effort redactions to text
@@ -1234,7 +1234,11 @@ func redactSecrets(text string) string {
 	text = kvSecretPattern.ReplaceAllString(text, "$1=«redacted»")
 	text = awsKeyPattern.ReplaceAllString(text, "«redacted»")
 	text = githubTokenPattern.ReplaceAllString(text, "«redacted»")
-	text = bearerTokenPattern.ReplaceAllString(text, "Bearer «redacted»")
+	// $1 preserves the matched text's own casing ("Bearer"/"bearer"/"BEARER")
+	// instead of normalizing it — the pattern is case-insensitive so it
+	// catches all of them, but the replacement shouldn't silently rewrite
+	// the source text's casing for a keyword that isn't itself the secret.
+	text = bearerTokenPattern.ReplaceAllString(text, "$1 «redacted»")
 	return text
 }
 
