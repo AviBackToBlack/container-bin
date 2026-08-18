@@ -18,7 +18,7 @@ that claim is pinned — either by a test name, an existing test, or the words
 | P4 | A reparse point `EvalSymlinks` cannot resolve (cloud-storage placeholders, dedup reparse points, app-execution aliases) | **Documented as unsupported, best-effort** | `canonicalPath` ignores the `EvalSymlinks` error and keeps the unresolved absolute path; mapping proceeds against that path | documentation only — not covered by CI |
 | P5 | Case-insensitive equivalence | **Supported** | `canonicalPath` lowercases on Windows; `mapArg` lowercases the external-mount dedup key; `volumeHash` lowercases before hashing | `TestPathFormP5CaseInsensitiveEquivalence`; see also `TestMapToolArgsExternalDedupCaseInsensitive` |
 | P6 | The container-side workspace basename is lowercased for stateful tools | **Supported, user-visible** | `root` is lowercased, so `workspaceRootFor` sees a lowercased basename (`My-App` becomes `my-app`) | `TestPathFormP6WorkspaceBasenameLowercased` |
-| P7 | A UNC path as an argument (`\\server\share\x`) | **Documented as unsupported** | `isWindowsAbsPath` requires a drive letter, so the UNC string is not recognized as a path and reaches the container unmapped | `TestPathFormP7UNCArgumentDeclined` |
+| P7 | A UNC path as an argument (`\\server\share\x`) | **Documented as unsupported** | `isWindowsAbsPath` requires a drive letter, so the string is not recognized as absolute and normally reaches the container unmapped — but see the sharp edge below: the existing-relative probe can match a coincidental `server\share\x` subtree under `cwd` | `TestPathFormP7UNCArgumentDeclined`, `TestPathFormP7UNCCoincidentalSubtreeIsMapped` |
 | P8 | A UNC path as the project root / current directory | **Documented as unsupported** | `root` reaches `mountSpec` as the canonicalized UNC path; Docker Desktop cannot bind-mount a UNC source | documentation only — not covered by CI |
 | P9 | Long-path / extended-length syntax (`\\?\C:\...`, `\\?\UNC\...`) | **Documented as unsupported** | Same mechanism as P7: the leading backslash defeats `isWindowsAbsPath` | `TestPathFormP9LongPathSyntaxDeclined` |
 | P10 | `subst` drives and mapped network drives (`S:\`, `Z:\`) | **Documented as unsupported** | Indistinguishable from a fixed drive at the string level; cb maps them and hands Docker a source it cannot share | documentation only — not covered by CI |
@@ -81,9 +81,18 @@ basename (npm) see the lowercase form.
 
 `isWindowsAbsPath` requires `drive-letter + colon + separator`. A UNC path
 starts with a backslash, so it is not recognized as absolute. It is not an
-explicit relative either, and the third branch joins it onto `cwd` and stats
-the result; that cannot match an existing host path. So it is declined and
+explicit relative either, so it falls to the third branch, which joins it onto
+`cwd` and stats the result. Normally nothing is there, so it is declined and
 reaches the container verbatim.
+
+**The sharp edge:** that last step is a real filesystem probe, not a shape
+test. `filepath.Join` collapses the leading separators, so `\\server\share\x`
+probes `<cwd>\server\share\x` — and if a subtree of that name happens to exist,
+the argument *is* classified as a path and mapped to it. A UNC argument would
+then silently act on an unrelated local directory. It requires a coincidence to
+trigger, but "requires a coincidence" is not "cannot happen", and
+`TestPathFormP7UNCCoincidentalSubtreeIsMapped` pins the behavior so it is
+rediscovered by a reader rather than by a user.
 
 Why not reject it explicitly? To reject a string, cb would first have to assert
 that it *is* a path — the same guess in the opposite direction — and would
@@ -110,6 +119,11 @@ Turning that into an actionable cb-side diagnostic is chartered as **RM-5c**
 `\\?\C:\...` and `\\?\UNC\server\share\...` start with a backslash, so
 `isWindowsAbsPath` returns false for the same reason as P7. They are declined
 and pass through unmapped.
+
+Unlike P7, this one is structurally safe rather than merely unlikely: the
+existing-relative probe would have to stat `<cwd>\?\C:\Windows`, and `?` is a
+reserved character that cannot name a directory on Windows. The coincidental
+subtree that makes P7's edge reachable therefore cannot exist here.
 
 ### P10 — `subst` and mapped network drives
 

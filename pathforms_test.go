@@ -143,6 +143,31 @@ func TestPathFormP7UNCArgumentDeclined(t *testing.T) {
 	}
 }
 
+// The decline in TestPathFormP7UNCArgumentDeclined is not solely due to
+// isWindowsAbsPath. The third classifier branch joins any backslash-containing
+// argument onto cwd and stats it, and filepath.Join collapses the leading
+// separators, so `\\server\share\x` probes `<cwd>\server\share\x`. Where that
+// subtree happens to exist the argument *is* mapped -- to an unrelated local
+// directory. Far-fetched, but it is the real behavior, so it is pinned here
+// rather than left to be rediscovered.
+func TestPathFormP7UNCCoincidentalSubtreeIsMapped(t *testing.T) {
+	root, _ := windowsFixtures(t)
+	mustWriteFile(t, filepath.Join(root, "server", "share", "x"), []byte{})
+
+	tool := Tool{Name: "demo"}
+	mapped, mounts, err := mapToolArgs(tool, root, root, "/workspace", []string{`\\server\share\x`})
+	if err != nil {
+		t.Fatalf("P7 coincidental: err=%v", err)
+	}
+	want := []string{"/workspace/server/share/x"}
+	if !reflect.DeepEqual(mapped, want) {
+		t.Fatalf("P7 coincidental: mapped=%#v, want %#v", mapped, want)
+	}
+	if len(mounts) != 0 {
+		t.Fatalf("P7 coincidental: expected no mounts, got %#v", mounts)
+	}
+}
+
 func TestPathFormP9LongPathSyntaxDeclined(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("windows path-mapping semantics")
