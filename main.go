@@ -166,6 +166,33 @@ shared_volumes = ["npm-cache:/root/.npm", "npm-global:/cb/npm-global"]
 env_set = ["NPM_CONFIG_PREFIX=/cb/npm-global"]
 env_prefixes = ["NPM_CONFIG_"]
 env_names = ["NODE_ENV", "NODE_OPTIONS", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"]
+
+[tools.go]
+image = "golang:1.24"
+provider = "stateful"
+command = ["go"]
+state_group = "go124"
+project_markers = ["go.mod", "go.work", ".git"]
+shared_volumes = ["gomodcache:/go/pkg/mod", "gobuild:/root/.cache/go-build", "gobin:/go/bin"]
+# No path_next: everything after 'go run PKG' is handed to the user's program, so
+# forcing the value after -o/-C would rewrite ordinary flags such as 'go run . -o json'
+# into container paths. Real output paths are already mapped by the general rules
+# (absolute and .\rel forms), and a bare name resolves against the container working
+# directory, which is the project.
+# Do not allowlist path-valued variables; Windows paths are meaningless inside the Linux container
+env_names = ["GOFLAGS", "GOPROXY", "GONOPROXY", "GOPRIVATE", "GOSUMDB", "GONOSUMDB", "GOINSECURE", "GOOS", "GOARCH", "GOARM", "CGO_ENABLED", "GOTOOLCHAIN", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"]
+
+[tools.gofmt]
+image = "golang:1.24"
+provider = "stateful"
+command = ["gofmt"]
+state_group = "go124"
+project_markers = ["go.mod", "go.work", ".git"]
+shared_volumes = ["gomodcache:/go/pkg/mod", "gobuild:/root/.cache/go-build", "gobin:/go/bin"]
+# No path_last: a bare final argument like the value of -r is not a file, and real
+# file operands are already mapped by the general path-shape rules.
+# Do not allowlist path-valued variables; Windows paths are meaningless inside the Linux container
+env_names = ["GOFLAGS", "GOPROXY", "GONOPROXY", "GOPRIVATE", "GOSUMDB", "GONOSUMDB", "GOINSECURE", "GOOS", "GOARCH", "GOARM", "CGO_ENABLED", "GOTOOLCHAIN", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"]
 `
 
 func main() {

@@ -43,8 +43,8 @@ func TestParseDefaultRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(reg.Tools) != 11 {
-		t.Fatalf("expected 11 tools, got %d", len(reg.Tools))
+	if len(reg.Tools) != 13 {
+		t.Fatalf("expected 13 tools, got %d", len(reg.Tools))
 	}
 	jq := reg.Tools["jq"]
 	if jq.Provider != "stateless" || jq.Image != "ghcr.io/jqlang/jq:latest" {
@@ -146,7 +146,7 @@ func TestDefaultRegistryHasV06Tools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"python", "pip", "jq", "yq", "terraform", "ffmpeg", "node", "npm", "npx"} {
+	for _, name := range []string{"python", "pip", "jq", "yq", "terraform", "ffmpeg", "node", "npm", "npx", "go", "gofmt"} {
 		if _, ok := reg.Tools[name]; !ok {
 			t.Fatalf("missing default tool %q", name)
 		}
@@ -158,7 +158,7 @@ func TestDefaultRegistryHasV06Tools(t *testing.T) {
 
 func TestDefaultToolSections(t *testing.T) {
 	sections := defaultToolSections()
-	for _, name := range []string{"python", "yq", "terraform", "ffmpeg", "node", "npm", "npx"} {
+	for _, name := range []string{"python", "yq", "terraform", "ffmpeg", "node", "npm", "npx", "go", "gofmt"} {
 		if !strings.Contains(sections[name], "[tools."+name+"]") {
 			t.Fatalf("bad section for %s: %q", name, sections[name])
 		}
@@ -194,7 +194,7 @@ provider = "stateless"
 	if _, ok := reg.Tools["jq2"]; !ok {
 		t.Fatal("custom jq2 was lost")
 	}
-	for _, name := range []string{"python3", "pip", "pip3", "jq", "yq", "terraform", "ffmpeg", "node", "npm", "npx"} {
+	for _, name := range []string{"python3", "pip", "pip3", "jq", "yq", "terraform", "ffmpeg", "node", "npm", "npx", "go", "gofmt"} {
 		if _, ok := reg.Tools[name]; !ok {
 			t.Fatalf("missing migrated tool %q", name)
 		}
