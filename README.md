@@ -266,9 +266,11 @@ cb doctor     # Docker CLI/engine, container mode, registry schema,
               # lock completeness, PATH, shims, python resolution,
               # shim directory permissions, reparse points,
               # network storage, managed volumes
-cb self-test  # offline end-to-end test using already-local locked images:
-              # python /venv persistence, external path mapping, node project
-              # state, jq relative paths, terraform -chdir normalization
+cb self-test [--json]  # offline end-to-end test using already-local locked images;
+                       # reports every check instead of stopping at the first failure;
+                       # --json emits a machine-readable report for CI
+                       # python /venv persistence, external path mapping, node project
+                       # state, jq relative paths, terraform -chdir normalization
 cb trace ...  # dry-run argv/mount mapping for one command
 cb inspect TOOL
 cb env

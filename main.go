@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -258,7 +259,15 @@ func main() {
 			fatalf("restore: %v", err)
 		}
 	case "self-test":
-		if err := selfTestCommand(reg); err != nil {
+		jsonOut := false
+		switch {
+		case len(os.Args) == 2:
+		case len(os.Args) == 3 && os.Args[2] == "--json":
+			jsonOut = true
+		default:
+			fatalf("self-test: usage: cb self-test [--json]")
+		}
+		if err := selfTestCommand(reg, jsonOut); err != nil {
 			fatalf("self-test: %v", err)
 		}
 	case "list":
@@ -360,7 +369,7 @@ Commands:
   cb doctor    validate Docker, PATH, shims, registry, lock and managed volumes
   cb backup    back up registry + lock to a zip
   cb restore   validate/restore a backup (dry-run unless --apply)
-  cb self-test run offline end-to-end compatibility checks
+  cb self-test [--json] run offline end-to-end compatibility checks
   cb list      list configured tool profiles
   cb trace     show raw/normalized/mapped argv for a tool without running it
   cb env       show project root and Python environment selected for cwd
@@ -2769,17 +2778,149 @@ func ensureImageLocalForTool(t Tool) error {
 	return nil
 }
 
-func selfTestCommand(reg Registry) error {
-	if exec.Command("docker", "version", "--format", "{{.Server.Version}}").Run() != nil {
-		return errors.New("Docker engine unavailable")
+type selfTestCheck struct {
+	ID      string `json:"id"`
+	Status  string `json:"status"` // "pass", "fail", or "skip"
+	Message string `json:"message"`
+}
+
+type selfTestReport struct {
+	SchemaVersion int             `json:"schema_version"`
+	CBVersion     string          `json:"cb_version"`
+	GeneratedAt   string          `json:"generated_at"` // RFC3339, UTC
+	Checks        []selfTestCheck `json:"checks"`
+	Passed        int             `json:"passed"`
+	Failed        int             `json:"failed"`
+	Skipped       int             `json:"skipped"`
+	OK            bool            `json:"ok"`
+}
+
+type toolSelfTestOutcome struct {
+	ImageLocalErr   *string
+	PersistWriteErr *string
+	PersistReadErr  *string
+	ExternalPathErr *string
+	ModulesWriteErr *string
+	ModulesReadErr  *string
+	RelativePathErr *string
+	ChdirErr        *string
+}
+
+type selfTestStep struct {
+	id      string
+	tool    string
+	depID   string
+	errFunc func(toolSelfTestOutcome) *string
+}
+
+var selfTestSteps = []selfTestStep{
+	{id: "python-image-local", tool: "python", depID: "docker", errFunc: func(o toolSelfTestOutcome) *string { return o.ImageLocalErr }},
+	{id: "python-persist-write", tool: "python", depID: "python-image-local", errFunc: func(o toolSelfTestOutcome) *string { return o.PersistWriteErr }},
+	{id: "python-persist-read", tool: "python", depID: "python-persist-write", errFunc: func(o toolSelfTestOutcome) *string { return o.PersistReadErr }},
+	{id: "python-external-path", tool: "python", depID: "python-image-local", errFunc: func(o toolSelfTestOutcome) *string { return o.ExternalPathErr }},
+	{id: "node-image-local", tool: "node", depID: "docker", errFunc: func(o toolSelfTestOutcome) *string { return o.ImageLocalErr }},
+	{id: "node-modules-write", tool: "node", depID: "node-image-local", errFunc: func(o toolSelfTestOutcome) *string { return o.ModulesWriteErr }},
+	{id: "node-modules-read", tool: "node", depID: "node-modules-write", errFunc: func(o toolSelfTestOutcome) *string { return o.ModulesReadErr }},
+	{id: "jq-image-local", tool: "jq", depID: "docker", errFunc: func(o toolSelfTestOutcome) *string { return o.ImageLocalErr }},
+	{id: "jq-relative-path", tool: "jq", depID: "jq-image-local", errFunc: func(o toolSelfTestOutcome) *string { return o.RelativePathErr }},
+	{id: "terraform-image-local", tool: "terraform", depID: "docker", errFunc: func(o toolSelfTestOutcome) *string { return o.ImageLocalErr }},
+	{id: "terraform-chdir", tool: "terraform", depID: "terraform-image-local", errFunc: func(o toolSelfTestOutcome) *string { return o.ChdirErr }},
+}
+
+func buildSelfTestReport(cbVersion string, now time.Time, dockerAvailable bool, dockerCheck selfTestCheck, toolOutcomes map[string]toolSelfTestOutcome) selfTestReport {
+	docker := dockerCheck
+	if docker.ID == "" {
+		docker.ID = "docker"
 	}
-	for _, name := range []string{"python", "node", "jq", "terraform"} {
-		if t, ok := reg.Tools[name]; ok {
-			if err := ensureImageLocalForTool(t); err != nil {
-				return fmt.Errorf("%s prerequisite: %w", name, err)
-			}
+	if docker.Status == "" {
+		if dockerAvailable {
+			docker.Status = "pass"
+		} else {
+			docker.Status = "fail"
 		}
 	}
+	if docker.Message == "" {
+		if docker.Status == "pass" {
+			docker.Message = "docker available"
+		} else {
+			docker.Message = "docker unavailable"
+		}
+	}
+
+	checks := []selfTestCheck{docker}
+	checksByID := map[string]selfTestCheck{docker.ID: docker}
+
+	for _, step := range selfTestSteps {
+		dep := checksByID[step.depID]
+		check := selfTestCheck{ID: step.id}
+		switch {
+		case docker.Status != "pass":
+			check.Status = "skip"
+			check.Message = skipMessage(docker)
+		case dep.Status != "pass":
+			check.Status = "skip"
+			check.Message = skipMessage(dep)
+		default:
+			outcome, ok := toolOutcomes[step.tool]
+			if !ok {
+				check.Status = "skip"
+				check.Message = fmt.Sprintf("skipped: %s not registered in container-bin.toml", step.tool)
+			} else if errPtr := step.errFunc(outcome); errPtr != nil {
+				check.Status = "fail"
+				check.Message = *errPtr
+			} else {
+				check.Status = "pass"
+				check.Message = passMessageFor(step.id)
+			}
+		}
+		checks = append(checks, check)
+		checksByID[step.id] = check
+	}
+
+	report := selfTestReport{
+		SchemaVersion: 1,
+		CBVersion:     cbVersion,
+		GeneratedAt:   now.UTC().Format(time.RFC3339),
+		Checks:        checks,
+	}
+	for _, c := range checks {
+		switch c.Status {
+		case "pass":
+			report.Passed++
+		case "fail":
+			report.Failed++
+		case "skip":
+			report.Skipped++
+		}
+	}
+	report.OK = report.Failed == 0
+	return report
+}
+
+func skipMessage(dep selfTestCheck) string {
+	if dep.Status == "skip" && strings.HasPrefix(dep.Message, "skipped: ") {
+		return dep.Message
+	}
+	if dep.Status == "fail" {
+		if dep.ID == "docker" {
+			return "skipped: docker unavailable"
+		}
+		return "skipped: " + dep.ID + " failed"
+	}
+	if dep.Status == "skip" {
+		return "skipped: " + dep.ID + " skipped"
+	}
+	return "skipped: " + dep.ID + " " + dep.Status
+}
+
+func passMessageFor(id string) string {
+	if strings.HasSuffix(id, "-image-local") {
+		return "image present"
+	}
+	return "ok"
+}
+
+func selfTestCommand(reg Registry, jsonOut bool) error {
 	tmp, err := os.MkdirTemp("", "cb-selftest-")
 	if err != nil {
 		return err
@@ -2804,47 +2945,151 @@ func selfTestCommand(reg Registry) error {
 	if err := os.Chdir(project); err != nil {
 		return err
 	}
-	run := func(name string, args ...string) error {
-		t, ok := reg.Tools[name]
-		if !ok {
-			return fmt.Errorf("tool %s missing", name)
-		}
-		code, err := runTool(t, args)
+
+	report, err := runSelfTestChecksAndCleanup(reg, project, external, jsonOut)
+	if err != nil {
+		return err
+	}
+
+	if jsonOut {
+		data, err := json.MarshalIndent(report, "", "  ")
 		if err != nil {
 			return err
 		}
-		if code != 0 {
-			return fmt.Errorf("%s exited %d", name, code)
+		fmt.Println(string(data))
+	} else {
+		for _, c := range report.Checks {
+			fmt.Printf("%-9s%s: %s\n", strings.ToUpper(c.Status), c.ID, c.Message)
 		}
-		fmt.Printf("PASS     %s %s\n", name, strings.Join(args, " "))
-		return nil
+		hasLocal := false
+		for _, c := range report.Checks {
+			if strings.HasSuffix(c.ID, "-image-local") && c.Status == "pass" {
+				hasLocal = true
+				break
+			}
+		}
+		if hasLocal {
+			fmt.Printf("\nSelf-test: %d passed, %d failed, %d skipped (temporary project state cleaned)\n", report.Passed, report.Failed, report.Skipped)
+		} else {
+			fmt.Printf("\nSelf-test: %d passed, %d failed, %d skipped\n", report.Passed, report.Failed, report.Skipped)
+		}
 	}
-	if err := run("python", "-c", "open('/venv/.cb-selftest','w').write('ok')"); err != nil {
-		return err
+	if report.Failed > 0 {
+		return fmt.Errorf("%d check(s) failed", report.Failed)
 	}
-	if err := run("python", "-c", "assert open('/venv/.cb-selftest').read()=='ok'"); err != nil {
-		return err
-	}
-	if err := run("python", filepath.Join(external, "outside.py")); err != nil {
-		return err
-	}
-	if err := run("node", "-e", "require('fs').mkdirSync('node_modules',{recursive:true}); require('fs').writeFileSync('node_modules/.cb-selftest','ok')"); err != nil {
-		return err
-	}
-	if err := run("node", "-e", "if(require('fs').readFileSync('node_modules/.cb-selftest','utf8')!=='ok')process.exit(9)"); err != nil {
-		return err
-	}
-	if err := run("jq", ".", `.\data.json`); err != nil {
-		return err
-	}
-	if err := run("terraform", `-chdir=.\tf`, "validate"); err != nil {
-		return err
-	}
-	root, _ := canonicalPath(project)
-	_ = removeDockerVolume(pythonEnvID(root, true))
-	_ = removeDockerVolume(statefulProjectVolumeID("node24", "node-modules", root, true))
-	fmt.Println("\nSelf-test PASS (temporary project state cleaned)")
 	return nil
+}
+
+func runSelfTestChecksAndCleanup(reg Registry, project, external string, jsonOut bool) (selfTestReport, error) {
+	// Redirect process-level stdout/stderr around the check-and-cleanup phase so
+	// that tools whose containers write to stdout (jq, terraform) and the
+	// docker volume rm cleanup output cannot corrupt a --json report. cb runs
+	// self-test serially from main(), so this process-global mutation is safe.
+	if jsonOut {
+		devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+		if err != nil {
+			return selfTestReport{}, err
+		}
+		realStdout, realStderr := os.Stdout, os.Stderr
+		os.Stdout, os.Stderr = devNull, devNull
+		// Register the restore first so it runs last; any cleanup defers
+		// registered after it still execute while stdout/stderr are redirected.
+		defer func() {
+			os.Stdout, os.Stderr = realStdout, realStderr
+			devNull.Close()
+		}()
+	}
+
+	root, _ := canonicalPath(project)
+	defer func() { _ = removeDockerVolume(pythonEnvID(root, true)) }()
+	defer func() { _ = removeDockerVolume(statefulProjectVolumeID("node24", "node-modules", root, true)) }()
+
+	return runSelfTestChecks(reg, project, external)
+}
+
+func runSelfTestChecks(reg Registry, project, external string) (selfTestReport, error) {
+	dockerCheck := selfTestCheck{ID: "docker"}
+	dockerAvailable := false
+	out, err := exec.Command("docker", "version", "--format", "{{.Server.Version}}").Output()
+	if err != nil {
+		dockerCheck.Status = "fail"
+		dockerCheck.Message = "docker unavailable"
+	} else {
+		dockerAvailable = true
+		dockerCheck.Status = "pass"
+		dockerCheck.Message = "docker " + strings.TrimSpace(string(out))
+	}
+
+	toolOutcomes := map[string]toolSelfTestOutcome{}
+	if dockerAvailable {
+		for _, name := range []string{"python", "node", "jq", "terraform"} {
+			if t, ok := reg.Tools[name]; ok {
+				toolOutcomes[name] = runSelfTestTool(t, name, project, external)
+			}
+		}
+	}
+
+	return buildSelfTestReport(version, time.Now(), dockerAvailable, dockerCheck, toolOutcomes), nil
+}
+
+func runSelfTestTool(t Tool, name, project, external string) toolSelfTestOutcome {
+	o := toolSelfTestOutcome{}
+	if err := ensureImageLocalForTool(t); err != nil {
+		s := err.Error()
+		o.ImageLocalErr = &s
+		return o
+	}
+	switch name {
+	case "python":
+		code, err := runTool(t, []string{"-c", "open('/venv/.cb-selftest','w').write('ok')"})
+		if err != nil || code != 0 {
+			s := selfTestRunError(name, err, code)
+			o.PersistWriteErr = &s
+		} else {
+			code, err = runTool(t, []string{"-c", "assert open('/venv/.cb-selftest').read()=='ok'"})
+			if err != nil || code != 0 {
+				s := selfTestRunError(name, err, code)
+				o.PersistReadErr = &s
+			}
+		}
+		code, err = runTool(t, []string{filepath.Join(external, "outside.py")})
+		if err != nil || code != 0 {
+			s := selfTestRunError(name, err, code)
+			o.ExternalPathErr = &s
+		}
+	case "node":
+		code, err := runTool(t, []string{"-e", "require('fs').mkdirSync('node_modules',{recursive:true}); require('fs').writeFileSync('node_modules/.cb-selftest','ok')"})
+		if err != nil || code != 0 {
+			s := selfTestRunError(name, err, code)
+			o.ModulesWriteErr = &s
+		} else {
+			code, err = runTool(t, []string{"-e", "if(require('fs').readFileSync('node_modules/.cb-selftest','utf8')!=='ok')process.exit(9)"})
+			if err != nil || code != 0 {
+				s := selfTestRunError(name, err, code)
+				o.ModulesReadErr = &s
+			}
+		}
+	case "jq":
+		code, err := runTool(t, []string{".", `.\data.json`})
+		if err != nil || code != 0 {
+			s := selfTestRunError(name, err, code)
+			o.RelativePathErr = &s
+		}
+	case "terraform":
+		code, err := runTool(t, []string{`-chdir=.\tf`, "validate"})
+		if err != nil || code != 0 {
+			s := selfTestRunError(name, err, code)
+			o.ChdirErr = &s
+		}
+	}
+	return o
+}
+
+func selfTestRunError(name string, err error, code int) string {
+	if err != nil {
+		return err.Error()
+	}
+	return fmt.Sprintf("%s exited %d", name, code)
 }
 
 const (
