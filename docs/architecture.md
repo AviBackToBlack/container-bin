@@ -17,6 +17,10 @@ NAME.exe (hardlink to cb.exe)
   → docker run --rm ...         stdio passthrough, exit code preserved
 ```
 
+The shell/process contract for these stages (argv, stdio, TTY, signals,
+working directory, and environment) is documented in
+[docs/shell-contract.md](shell-contract.md).
+
 `cb.exe` invoked as `cb` (or `container-bin`) is the management CLI; invoked
 under any other name it is a shim and dispatches to the tool of that name.
 Hardlinks make every shim byte-identical to `cb.exe` at zero disk cost, and
