@@ -266,6 +266,9 @@ cb doctor     # Docker CLI/engine, container mode, registry schema,
               # lock completeness, PATH, shims, python resolution,
               # shim directory permissions, reparse points,
               # network storage, managed volumes
+cb bugreport  # version, Windows/PowerShell version, registry inventory,
+              # doctor output and docker/lock state in one paste-ready block,
+              # with best-effort secret redaction (review before posting)
 cb self-test [--json] [--release]  # offline end-to-end test using already-local locked images;
                        # reports every check instead of stopping at the first failure;
                        # --json emits a machine-readable report for CI;
@@ -277,6 +280,15 @@ cb inspect TOOL
 cb env
 cb list
 ```
+
+`cb bugreport` assembles `cb version`, the Windows and PowerShell versions
+(on Windows), a compact registry inventory and `cb doctor` output into one
+block that is easy to paste into an issue. It applies a small, fixed set of
+best-effort redactions (KV-style secrets, AWS access key IDs, GitHub tokens
+and `Bearer` tokens) as defense-in-depth, but the real safety property comes
+from the inputs: it never dumps `os.Environ()`, raw `PATH` values, lockfile
+contents or per-tool inspect detail. Review the report before posting it
+publicly — redaction is best-effort, not a general secret scanner.
 
 `cb self-test` intentionally pulls nothing; it proves your existing locked
 setup works end to end, then cleans up its temporary project volumes. It now

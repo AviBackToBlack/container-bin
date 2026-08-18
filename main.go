@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"os/user"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -248,6 +249,10 @@ func main() {
 		if err := doctor(reg, cfgPath); err != nil {
 			fatalf("doctor: %v", err)
 		}
+	case "bugreport":
+		if err := bugreportCommand(reg, cfgPath); err != nil {
+			fatalf("bugreport: %v", err)
+		}
 	case "backup":
 		if err := backupCommand(cfgPath, os.Args[2:]); err != nil {
 			fatalf("backup: %v", err)
@@ -363,6 +368,7 @@ Commands:
   cb setup     initialize/upgrade registry, install shims, then run doctor
   cb install   create/update shims from the tool registry
   cb doctor    validate Docker, PATH, shims, registry, lock and managed volumes
+  cb bugreport assemble a paste-ready diagnostic report with best-effort redaction
   cb backup    back up registry + lock to a zip
   cb restore   validate/restore a backup (dry-run unless --apply)
   cb self-test [--json] [--release] run offline end-to-end compatibility checks
@@ -1176,6 +1182,115 @@ func doctor(reg Registry, cfgPath string) error {
 	if failures > 0 {
 		return fmt.Errorf("%d critical check(s) failed", failures)
 	}
+	return nil
+}
+
+// captureStdout redirects the process's real os.Stdout to a temp file for
+// the duration of fn, then restores it and returns everything fn wrote.
+// Safe only because cb calls this serially with no concurrent os.Stdout
+// writers — same precondition RM-5d's --json redirect documents at its own
+// call site, restated here because this is a different function.
+//
+// fn's returned error is intentionally discarded: this helper's purpose is to
+// capture output, and its own error return is reserved for I/O problems
+// creating, closing or reading the temp file.
+func captureStdout(fn func() error) (string, error) {
+	f, err := os.CreateTemp("", "cb-bugreport-")
+	if err != nil {
+		return "", err
+	}
+	tmpPath := f.Name()
+	defer os.Remove(tmpPath)
+
+	real := os.Stdout
+	os.Stdout = f
+	defer func() { os.Stdout = real }()
+
+	_ = fn()
+
+	if cerr := f.Close(); cerr != nil {
+		return "", cerr
+	}
+	data, rerr := os.ReadFile(tmpPath)
+	if rerr != nil {
+		return "", rerr
+	}
+	return string(data), nil
+}
+
+var (
+	kvSecretPattern    = regexp.MustCompile(`(?i)\b(password|passwd|pwd|secret|token|api_key|apikey|access_key|accesskey|auth|credential|private_key|privatekey|client_secret)\b\s*[:=]\s*\S+`)
+	awsKeyPattern      = regexp.MustCompile(`\bAKIA[A-Z0-9]{16}\b`)
+	githubTokenPattern = regexp.MustCompile(`\bgh[pours]_[A-Za-z0-9]{36,}\b`)
+	bearerTokenPattern = regexp.MustCompile(`(?i)\b(Bearer)\s+[A-Za-z0-9._~+/=-]+\b`)
+)
+
+// redactSecrets applies a small, fixed set of best-effort redactions to text
+// that is expected to be safe-by-construction (curated diagnostic output).
+// It is not a general secret scanner and must not be documented as one.
+// Pattern order is intentional and documented in the handoff: KV-style
+// assignments, AWS access key IDs, GitHub tokens, then Bearer tokens.
+func redactSecrets(text string) string {
+	text = kvSecretPattern.ReplaceAllString(text, "$1=«redacted»")
+	text = awsKeyPattern.ReplaceAllString(text, "«redacted»")
+	text = githubTokenPattern.ReplaceAllString(text, "«redacted»")
+	// $1 preserves the matched text's own casing ("Bearer"/"bearer"/"BEARER")
+	// instead of normalizing it — the pattern is case-insensitive so it
+	// catches all of them, but the replacement shouldn't silently rewrite
+	// the source text's casing for a keyword that isn't itself the secret.
+	text = bearerTokenPattern.ReplaceAllString(text, "$1 «redacted»")
+	return text
+}
+
+// bugreportCommand assembles a paste-ready diagnostic block. It returns nil
+// when the report is successfully assembled and printed, even if doctor()
+// found failures — that signal is in the captured text itself. Only genuine
+// capture or assembly errors are returned as bugreportCommand's own error.
+func bugreportCommand(reg Registry, cfgPath string) error {
+	var b strings.Builder
+	b.WriteString("container-bin bugreport\n")
+	b.WriteString(fmt.Sprintf("generated: %s\n", time.Now().UTC().Format(time.RFC3339)))
+	b.WriteString(fmt.Sprintf("cb version: %s\n", version))
+
+	b.WriteString("\nHost:\n")
+	if runtime.GOOS == "windows" {
+		raw, err := windowsHostVersionInfo()
+		if err != nil {
+			b.WriteString("  windows:    could not determine\n")
+			b.WriteString("  powershell: could not determine\n")
+		} else {
+			winVer, psVer := parseWindowsHostVersionInfo(raw)
+			if winVer == "" {
+				b.WriteString("  windows:    could not determine\n")
+			} else {
+				b.WriteString(fmt.Sprintf("  windows:    %s\n", winVer))
+			}
+			if psVer == "" {
+				b.WriteString("  powershell: could not determine\n")
+			} else {
+				b.WriteString(fmt.Sprintf("  powershell: %s\n", psVer))
+			}
+		}
+	} else {
+		b.WriteString("  platform: not running on Windows\n")
+	}
+
+	registryText, err := captureStdout(func() error { listTools(reg, cfgPath); return nil })
+	if err != nil {
+		return fmt.Errorf("capture registry: %w", err)
+	}
+	b.WriteString("\nRegistry:\n")
+	b.WriteString(registryText)
+
+	doctorText, err := captureStdout(func() error { return doctor(reg, cfgPath) })
+	if err != nil {
+		return fmt.Errorf("capture doctor: %w", err)
+	}
+	b.WriteString("\nDoctor:\n")
+	b.WriteString(doctorText)
+
+	fmt.Print(redactSecrets(b.String()))
+	fmt.Println("\nredaction is best-effort; review this report before posting it publicly")
 	return nil
 }
 
