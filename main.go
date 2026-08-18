@@ -1585,6 +1585,13 @@ func externalMountRoot(hostPath string) (string, error) {
 }
 
 func mountSpec(kind, src, dst string) (string, error) {
+	// src is checked before dst deliberately: for the project-root bind
+	// mount, dst (workspaceRoot) is always derived from a substring of src
+	// (root), so this ordering is what makes a comma-named project fail on
+	// the source path rather than the destination -- see docs/windows-paths.md
+	// row P15 and TestRootBindMountCommaFailsClosedOnSrc. Swapping the checks
+	// would not change whether the mount is rejected, but would change which
+	// message the row and test depend on.
 	if strings.Contains(src, ",") {
 		return "", fmt.Errorf("source path/volume contains a comma and cannot be represented safely in docker --mount syntax (values are comma-separated with no escaping): %s", src)
 	}
