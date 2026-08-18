@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -856,6 +857,74 @@ func dockerOSTypeVerdict(raw string) (status, message string) {
 	}
 }
 
+func shimDirACLVerdict(raw string, currentUserSID string) (status, message string) {
+	writeRights := []string{"FullControl", "Modify", "Write", "CreateFiles", "AppendData", "Delete", "TakeOwnership", "ChangePermissions"}
+	isWriteCapable := func(rights string) bool {
+		for _, r := range writeRights {
+			if strings.Contains(rights, r) {
+				return true
+			}
+		}
+		return false
+	}
+	isTrusted := func(sid string) bool {
+		if sid != "" && sid == currentUserSID {
+			return true
+		}
+		switch sid {
+		case "S-1-5-18", "S-1-5-32-544":
+			return true
+		}
+		return false
+	}
+
+	untrusted := map[string]bool{}
+	denied := map[string]bool{}
+	hasValidLine := false
+	for _, line := range strings.Split(strings.ReplaceAll(raw, "\r", ""), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.Split(line, "|")
+		if len(parts) != 3 {
+			continue
+		}
+		sid := strings.TrimSpace(parts[0])
+		accessType := strings.TrimSpace(parts[1])
+		rights := strings.TrimSpace(parts[2])
+		if accessType != "Allow" && accessType != "Deny" {
+			continue
+		}
+		hasValidLine = true
+		if isTrusted(sid) || !isWriteCapable(rights) {
+			continue
+		}
+		if accessType == "Allow" {
+			untrusted[sid] = true
+		} else {
+			denied[sid] = true
+		}
+	}
+	for sid := range denied {
+		delete(untrusted, sid)
+	}
+
+	if !hasValidLine {
+		return "warn", "could not determine shim directory permissions"
+	}
+	if len(untrusted) == 0 {
+		return "ok", "shim directory is not writable by other users"
+	}
+
+	sids := make([]string, 0, len(untrusted))
+	for sid := range untrusted {
+		sids = append(sids, sid)
+	}
+	sort.Strings(sids)
+	return "warn", fmt.Sprintf("shim directory is writable by other principal(s): %s; a local attacker could replace container-bin.toml or an installed shim — restrict permissions to your account and Administrators", strings.Join(sids, ", "))
+}
+
 func doctor(reg Registry, cfgPath string) error {
 	failures := 0
 	warnings := 0
@@ -956,6 +1025,35 @@ func doctor(reg Registry, cfgPath string) error {
 		ok("all %d registry shims exist", len(reg.Tools))
 	} else {
 		fail("%d registry shim(s) missing; run `cb install`", shimProblems)
+	}
+
+	// NTFS ACLs and PowerShell's Get-Acl are Windows-specific concepts, unlike the
+	// Docker/registry/shim checks above — gate this the same way the python-alias
+	// check below is gated, so a non-Windows run does not report a spurious
+	// "could not inspect" warning for a probe that could never have succeeded there.
+	if runtime.GOOS == "windows" {
+		currentUserSID := ""
+		if u, err := user.Current(); err == nil {
+			currentUserSID = u.Uid
+		}
+		cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command",
+			`$acl = Get-Acl -LiteralPath $env:CB_DOCTOR_ACL_DIR; `+
+				`$acl.Access | ForEach-Object { `+
+				`$sid = $_.IdentityReference.Value; `+
+				`try { $sid = $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch {}; `+
+				`"$sid|$($_.AccessControlType)|$($_.FileSystemRights)" }`)
+		cmd.Env = append(os.Environ(), "CB_DOCTOR_ACL_DIR="+dir)
+		out, err := cmd.Output()
+		if err != nil {
+			warn("could not inspect shim directory permissions: %v", err)
+		} else {
+			status, msg := shimDirACLVerdict(string(out), currentUserSID)
+			if status == "ok" {
+				ok("%s", msg)
+			} else {
+				warn("%s", msg)
+			}
+		}
 	}
 
 	if runtime.GOOS == "windows" {
