@@ -278,7 +278,43 @@ cb list
 ```
 
 `cb self-test` intentionally pulls nothing; it proves your existing locked
-setup works end to end, then cleans up its temporary project volumes.
+setup works end to end, then cleans up its temporary project volumes. It now
+runs every check and reports all of them, instead of stopping at the first
+failure.
+
+### `cb self-test --json` report format
+
+`--json` prints one JSON document to stdout and nothing else (no progress
+output, no interleaved tool output) — safe to pipe into a script or CI step.
+`schema_version` is `1`; future additions will increment it only if they
+change the meaning of an existing field, not for new additive fields.
+
+```json
+{
+  "schema_version": 1,
+  "cb_version": "v1.2.3",
+  "generated_at": "2026-08-18T12:00:00Z",
+  "checks": [
+    { "id": "docker", "status": "pass", "message": "docker 27.0.0" },
+    { "id": "python-image-local", "status": "pass", "message": "image present" }
+  ],
+  "passed": 12,
+  "failed": 0,
+  "skipped": 0,
+  "ok": true
+}
+```
+
+Each entry in `checks` has `status` of `pass`, `fail`, or `skip`. A `skip`
+means a dependency of that check did not pass (e.g. `docker` itself failed,
+or the tool isn't registered) — `message` names the reason. A tool missing
+from `container-bin.toml` reports its own check as `fail`, not `skip`: an
+unconfigured tool was never actually verified, so `ok` cannot be `true` while
+one is missing. The `checks` array always contains exactly these 12 IDs, in
+this order: `docker`, `python-image-local`, `python-persist-write`,
+`python-persist-read`, `python-external-path`, `node-image-local`,
+`node-modules-write`, `node-modules-read`, `jq-image-local`,
+`jq-relative-path`, `terraform-image-local`, `terraform-chdir`.
 
 ## Exit codes
 

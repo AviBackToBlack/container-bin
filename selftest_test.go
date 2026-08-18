@@ -37,7 +37,6 @@ func TestBuildSelfTestReport(t *testing.T) {
 	cases := []struct {
 		name         string
 		docker       selfTestCheck
-		dockerAvail  bool
 		outcomes     map[string]toolSelfTestOutcome
 		wantOK       bool
 		wantPassed   int
@@ -49,7 +48,6 @@ func TestBuildSelfTestReport(t *testing.T) {
 		{
 			name:        "all_pass",
 			docker:      passDocker,
-			dockerAvail: true,
 			outcomes:    allPass,
 			wantOK:      true,
 			wantPassed:  12,
@@ -73,7 +71,6 @@ func TestBuildSelfTestReport(t *testing.T) {
 		{
 			name:        "docker_fails",
 			docker:      failDocker,
-			dockerAvail: false,
 			outcomes:    map[string]toolSelfTestOutcome{},
 			wantOK:      false,
 			wantPassed:  0,
@@ -85,9 +82,8 @@ func TestBuildSelfTestReport(t *testing.T) {
 			},
 		},
 		{
-			name:        "python_image_local_fails_others_pass",
-			docker:      passDocker,
-			dockerAvail: true,
+			name:   "python_image_local_fails_others_pass",
+			docker: passDocker,
 			outcomes: map[string]toolSelfTestOutcome{
 				"python":    {ImageLocalErr: ptr("required image is not local: python:3.13 (run `cb lock`/`cb update` first)")},
 				"node":      {},
@@ -111,9 +107,8 @@ func TestBuildSelfTestReport(t *testing.T) {
 			},
 		},
 		{
-			name:        "python_persist_write_fails",
-			docker:      passDocker,
-			dockerAvail: true,
+			name:   "python_persist_write_fails",
+			docker: passDocker,
 			outcomes: map[string]toolSelfTestOutcome{
 				"python":    {PersistWriteErr: ptr("python exited 1")},
 				"node":      {},
@@ -136,32 +131,37 @@ func TestBuildSelfTestReport(t *testing.T) {
 			},
 		},
 		{
-			name:        "node_not_registered",
-			docker:      passDocker,
-			dockerAvail: true,
+			// A tool missing from the registry must NOT read as an overall
+			// pass: the pre-refactor self-test failed outright the moment it
+			// reached a missing tool ("tool %s missing"), and this report
+			// must preserve that fail-closed guarantee even though the
+			// per-check reporting is now far more granular. See the Devin
+			// Review finding on PR #21 that caught this.
+			name:   "node_not_registered",
+			docker: passDocker,
 			outcomes: map[string]toolSelfTestOutcome{
 				"python":    {},
 				"jq":        {},
 				"terraform": {},
 			},
-			wantOK:      true,
+			wantOK:      false,
 			wantPassed:  9, // docker + python(4) + jq(2) + terraform(2)
-			wantFailed:  0,
-			wantSkipped: 3, // node checks
+			wantFailed:  1, // node-image-local
+			wantSkipped: 2, // node-modules-write, node-modules-read
 			wantStatus: map[string]string{
-				"node-image-local":   "skip",
+				"node-image-local":   "fail",
 				"node-modules-write": "skip",
 				"node-modules-read":  "skip",
 			},
 			wantContains: map[string]string{
-				"node-image-local":  "not registered",
-				"node-modules-read": "not registered",
+				"node-image-local":   "not registered",
+				"node-modules-write": "node-image-local",
+				"node-modules-read":  "node-image-local",
 			},
 		},
 		{
 			name:        "metadata_from_params",
 			docker:      passDocker,
-			dockerAvail: true,
 			outcomes:    allPass,
 			wantOK:      true,
 			wantPassed:  12,
@@ -169,25 +169,27 @@ func TestBuildSelfTestReport(t *testing.T) {
 			wantSkipped: 0,
 		},
 		{
-			name:        "counts_mixed",
-			docker:      passDocker,
-			dockerAvail: true,
+			name:   "counts_mixed",
+			docker: passDocker,
 			outcomes: map[string]toolSelfTestOutcome{
 				"python": {ImageLocalErr: ptr("image missing")},
-				// node absent => 3 skips
+				// node absent => node-image-local fails, its 2 dependents skip
 				"jq":        {},
 				"terraform": {ChdirErr: ptr("terraform exited 1")},
 			},
 			wantOK:      false,
 			wantPassed:  4, // docker + jq(2) + terraform-image-local
-			wantFailed:  2, // python-image-local, terraform-chdir
-			wantSkipped: 6, // python persist(3) + node(3)
+			wantFailed:  3, // python-image-local, node-image-local, terraform-chdir
+			wantSkipped: 5, // python persist(3) + node-modules(2)
+			wantStatus: map[string]string{
+				"node-image-local": "fail",
+			},
 		},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			r := buildSelfTestReport(version, fixedTime, c.dockerAvail, c.docker, c.outcomes)
+			r := buildSelfTestReport(version, fixedTime, c.docker, c.outcomes)
 
 			if r.OK != c.wantOK {
 				t.Errorf("OK = %v, want %v", r.OK, c.wantOK)
@@ -269,7 +271,7 @@ func TestBuildSelfTestReportJSONRoundTrip(t *testing.T) {
 		"jq":        {},
 		"terraform": {},
 	}
-	report := buildSelfTestReport("dev", ts, true, docker, outcomes)
+	report := buildSelfTestReport("dev", ts, docker, outcomes)
 
 	data, err := json.Marshal(report)
 	if err != nil {
@@ -294,5 +296,23 @@ func TestBuildSelfTestReportJSONRoundTrip(t *testing.T) {
 		if !strings.Contains(raw, "\""+k+"\"") {
 			t.Errorf("JSON output missing key %q", k)
 		}
+	}
+}
+
+// TestSelfTestStepsDependencyOrder pins the ordering invariant documented on
+// selfTestSteps: every step's depID must be "docker" or the id of an earlier
+// step in the slice. buildSelfTestReport looks dependencies up in a map that
+// is populated in this slice's order, so a step listed before its own
+// dependency would silently see a zero-value selfTestCheck (empty ID/Status)
+// instead of the real dependency's status — this test makes that reordering
+// a build failure instead of a silent, hard-to-notice bug (raised by Devin
+// Review on PR #21).
+func TestSelfTestStepsDependencyOrder(t *testing.T) {
+	seen := map[string]bool{"docker": true}
+	for i, step := range selfTestSteps {
+		if !seen[step.depID] {
+			t.Fatalf("selfTestSteps[%d] (%s) depends on %q, which has not appeared earlier in the slice", i, step.id, step.depID)
+		}
+		seen[step.id] = true
 	}
 }

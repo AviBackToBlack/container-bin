@@ -2813,6 +2813,11 @@ type selfTestStep struct {
 	errFunc func(toolSelfTestOutcome) *string
 }
 
+// selfTestSteps must list every step's dependency (depID) before the step
+// itself — buildSelfTestReport looks dependencies up in checksByID, which is
+// populated in this slice's order, so a step whose depID has not been
+// inserted yet would see a zero-value selfTestCheck instead of the real
+// dependency's status. TestSelfTestStepsDependencyOrder pins this invariant.
 var selfTestSteps = []selfTestStep{
 	{id: "python-image-local", tool: "python", depID: "docker", errFunc: func(o toolSelfTestOutcome) *string { return o.ImageLocalErr }},
 	{id: "python-persist-write", tool: "python", depID: "python-image-local", errFunc: func(o toolSelfTestOutcome) *string { return o.PersistWriteErr }},
@@ -2827,44 +2832,36 @@ var selfTestSteps = []selfTestStep{
 	{id: "terraform-chdir", tool: "terraform", depID: "terraform-image-local", errFunc: func(o toolSelfTestOutcome) *string { return o.ChdirErr }},
 }
 
-func buildSelfTestReport(cbVersion string, now time.Time, dockerAvailable bool, dockerCheck selfTestCheck, toolOutcomes map[string]toolSelfTestOutcome) selfTestReport {
-	docker := dockerCheck
-	if docker.ID == "" {
-		docker.ID = "docker"
-	}
-	if docker.Status == "" {
-		if dockerAvailable {
-			docker.Status = "pass"
-		} else {
-			docker.Status = "fail"
-		}
-	}
-	if docker.Message == "" {
-		if docker.Status == "pass" {
-			docker.Message = "docker available"
-		} else {
-			docker.Message = "docker unavailable"
-		}
-	}
-
-	checks := []selfTestCheck{docker}
-	checksByID := map[string]selfTestCheck{docker.ID: docker}
+// buildSelfTestReport is the pure decision point: dockerCheck must already be
+// fully populated by the caller (runSelfTestChecks always does), so this
+// function has a single source of truth for docker's outcome instead of a
+// second dockerAvailable flag that could disagree with it.
+func buildSelfTestReport(cbVersion string, now time.Time, dockerCheck selfTestCheck, toolOutcomes map[string]toolSelfTestOutcome) selfTestReport {
+	checks := []selfTestCheck{dockerCheck}
+	checksByID := map[string]selfTestCheck{dockerCheck.ID: dockerCheck}
 
 	for _, step := range selfTestSteps {
 		dep := checksByID[step.depID]
 		check := selfTestCheck{ID: step.id}
 		switch {
-		case docker.Status != "pass":
+		case dockerCheck.Status != "pass":
 			check.Status = "skip"
-			check.Message = skipMessage(docker)
+			check.Message = skipMessage(dockerCheck)
 		case dep.Status != "pass":
 			check.Status = "skip"
 			check.Message = skipMessage(dep)
 		default:
 			outcome, ok := toolOutcomes[step.tool]
 			if !ok {
-				check.Status = "skip"
-				check.Message = fmt.Sprintf("skipped: %s not registered in container-bin.toml", step.tool)
+				// A tool absent from the registry is a configuration gap, not
+				// a benign skip: the previous (pre-JSON-report) self-test
+				// failed outright the moment it reached a missing tool's
+				// first check ("tool %s missing"). Reporting this as "fail"
+				// instead of "skip" preserves that fail-closed guarantee —
+				// self-test's own OK/exit-code cannot go green while one of
+				// the tools it claims to verify was never actually tested.
+				check.Status = "fail"
+				check.Message = fmt.Sprintf("%s not registered in container-bin.toml", step.tool)
 			} else if errPtr := step.errFunc(outcome); errPtr != nil {
 				check.Status = "fail"
 				check.Message = *errPtr
@@ -3001,10 +2998,21 @@ func runSelfTestChecksAndCleanup(reg Registry, project, external string, jsonOut
 	}
 
 	root, _ := canonicalPath(project)
-	defer func() { _ = removeDockerVolume(pythonEnvID(root, true)) }()
-	defer func() { _ = removeDockerVolume(statefulProjectVolumeID("node24", "node-modules", root, true)) }()
+	defer removeDockerVolumeQuiet(pythonEnvID(root, true))
+	defer removeDockerVolumeQuiet(statefulProjectVolumeID("node24", "node-modules", root, true))
 
 	return runSelfTestChecks(reg, project, external)
+}
+
+// removeDockerVolumeQuiet is a best-effort cleanup helper for self-test's own
+// temporary volumes only — unlike removeDockerVolume (shared with cb gc/
+// uninstall, which intentionally show their output), a self-test cleanup call
+// commonly targets a volume that was never created (e.g. because an earlier
+// check failed before python/node ever wrote to it), so "no such volume" is
+// an expected, uninteresting outcome in both plain-text and --json mode, not
+// something worth printing to the user.
+func removeDockerVolumeQuiet(name string) {
+	_ = exec.Command("docker", "volume", "rm", name).Run()
 }
 
 func runSelfTestChecks(reg Registry, project, external string) (selfTestReport, error) {
@@ -3029,7 +3037,7 @@ func runSelfTestChecks(reg Registry, project, external string) (selfTestReport, 
 		}
 	}
 
-	return buildSelfTestReport(version, time.Now(), dockerAvailable, dockerCheck, toolOutcomes), nil
+	return buildSelfTestReport(version, time.Now(), dockerCheck, toolOutcomes), nil
 }
 
 func runSelfTestTool(t Tool, name, project, external string) toolSelfTestOutcome {
