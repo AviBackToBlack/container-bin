@@ -122,7 +122,10 @@ func TestPathNormalizationCorpus(t *testing.T) {
 		},
 		// Forward-slash UNC-shaped argument (P7 contrast): unlike the
 		// backslash form, this never reaches the existing-relative filesystem
-		// probe at all (see section 1.1) -- declined by shape, unconditionally.
+		// probe at all -- resolveWindowsPathArgMode's fourth branch only
+		// triggers on an argument containing a backslash, and this one has
+		// none (see the P7 rationale in docs/windows-paths.md). Declined by
+		// shape, unconditionally.
 		{
 			name:          "forward_slash_unc_declined_unconditionally",
 			arg:           "//server/share/x",
