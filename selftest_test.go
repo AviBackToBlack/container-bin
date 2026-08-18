@@ -437,6 +437,26 @@ func TestDockerEngineVersionCheck(t *testing.T) {
 	}
 }
 
+// TestDockerOSTypeCheckSkipsWhenDockerUnavailable pins the early-return
+// branch that avoids a second, redundant `docker info` call (and its
+// associated subprocess latency) when the base `docker` check has already
+// failed — this branch never reaches exec.Command, so it's exercisable
+// without a real docker binary; the exec.Command("docker", "info", ...) path
+// itself remains untested here, matching this project's established pattern
+// for thin I/O call sites (see the coverage note on runSelfTestChecks).
+func TestDockerOSTypeCheckSkipsWhenDockerUnavailable(t *testing.T) {
+	got := dockerOSTypeCheck(selfTestCheck{ID: "docker", Status: "fail", Message: "docker unavailable"})
+	if got.ID != "docker-os-type" {
+		t.Errorf("ID = %q, want %q", got.ID, "docker-os-type")
+	}
+	if got.Status != "skip" {
+		t.Errorf("Status = %q, want %q", got.Status, "skip")
+	}
+	if !strings.Contains(got.Message, "docker unavailable") {
+		t.Errorf("Message = %q, want it to contain %q", got.Message, "docker unavailable")
+	}
+}
+
 func TestEnvCheckFromVerdict(t *testing.T) {
 	cases := []struct {
 		status  string
@@ -444,7 +464,7 @@ func TestEnvCheckFromVerdict(t *testing.T) {
 		want    selfTestCheck
 	}{
 		{"ok", "all good", selfTestCheck{ID: "test-id", Status: "pass", Message: "all good"}},
-		{"warn", "be careful", selfTestCheck{ID: "test-id", Status: "skip", Message: "be careful"}},
+		{"warn", "be careful", selfTestCheck{ID: "test-id", Status: "skip", Message: "warn: be careful"}},
 		{"fail", "bad", selfTestCheck{ID: "test-id", Status: "fail", Message: "bad"}},
 	}
 	for _, c := range cases {

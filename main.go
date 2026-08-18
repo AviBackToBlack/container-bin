@@ -2979,8 +2979,16 @@ func envCheckFromVerdict(id, status, message string) selfTestCheck {
 		check.Status = "pass"
 		check.Message = message
 	case "warn":
+		// A "warn" verdict is still mapped to this report's "skip" status (no
+		// new status value — see the schema-stability note on
+		// selfTestReport.Environment), but unlike a genuine "could not
+		// determine" skip (always messaged "skipped: ..."), a warn can be a
+		// real, actionable qualification finding — a UNC/mapped-drive shim
+		// directory, a reparse-point cwd. The "warn: " prefix makes the two
+		// distinguishable by a CI consumer without demanding a new enum
+		// value in an already-shipped, versioned schema.
 		check.Status = "skip"
-		check.Message = message
+		check.Message = "warn: " + message
 	case "fail":
 		check.Status = "fail"
 		check.Message = message
@@ -2999,7 +3007,13 @@ func networkStorageCheck(id, subject, path string) selfTestCheck {
 	return envCheckFromVerdict(id, status, msg)
 }
 
-func dockerOSTypeCheck() selfTestCheck {
+func dockerOSTypeCheck(dockerCheck selfTestCheck) selfTestCheck {
+	// Matches doctor()'s and dockerEngineVersionCheck's own precedent: don't
+	// shell out to `docker info` when `docker version` already failed — the
+	// call would just fail (or hang) a second time for the same reason.
+	if dockerCheck.Status != "pass" {
+		return selfTestCheck{ID: "docker-os-type", Status: "skip", Message: "skipped: docker unavailable"}
+	}
 	out, err := exec.Command("docker", "info", "--format", "{{.OSType}}").Output()
 	if err != nil {
 		return selfTestCheck{ID: "docker-os-type", Status: "skip", Message: "skipped: could not determine container mode"}
@@ -3036,7 +3050,7 @@ func buildEnvironmentChecks(dockerCheck selfTestCheck, cwd string) []selfTestChe
 
 	env = append(env, dockerEngineVersionCheck(dockerCheck))
 
-	env = append(env, dockerOSTypeCheck())
+	env = append(env, dockerOSTypeCheck(dockerCheck))
 
 	absCwd, cwdErr := filepath.Abs(cwd)
 	if cwdErr != nil {
@@ -3049,10 +3063,22 @@ func buildEnvironmentChecks(dockerCheck selfTestCheck, cwd string) []selfTestChe
 	}
 
 	if runtime.GOOS == "windows" {
-		exe, _ := os.Executable()
-		exe, _ = filepath.Abs(exe)
-		shimDir := filepath.Dir(exe)
-		env = append(env, networkStorageCheck("shim-dir-network-storage", "shim directory", shimDir))
+		exe, exeErr := os.Executable()
+		if exeErr == nil {
+			exe, exeErr = filepath.Abs(exe)
+		}
+		if exeErr != nil {
+			// Unlike doctor() (which never changes directory), self-test has
+			// already chdir'd into its temp scratch project by this point —
+			// silently discarding this error the way doctor() does would let
+			// filepath.Dir("") resolve against that temp directory instead of
+			// the real shim directory, reporting a misleading "ok" for the
+			// wrong path rather than a harmless no-op.
+			env = append(env, selfTestCheck{ID: "shim-dir-network-storage", Status: "skip", Message: "skipped: could not determine shim directory"})
+		} else {
+			shimDir := filepath.Dir(exe)
+			env = append(env, networkStorageCheck("shim-dir-network-storage", "shim directory", shimDir))
+		}
 		if cwdErr != nil {
 			env = append(env, selfTestCheck{ID: "cwd-network-storage", Status: "skip", Message: "skipped: could not determine current directory"})
 		} else {

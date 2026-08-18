@@ -322,7 +322,20 @@ order, are:
 6. `shim-dir-network-storage` — whether the shim directory is on a fixed/removable/network/UNC drive.
 7. `cwd-network-storage` — whether the current working directory is on a fixed/removable/network/UNC drive.
 
-The three PowerShell-dependent entries are skipped on non-Windows hosts.
+The four PowerShell-dependent entries (`windows-version`, `powershell-version`,
+`shim-dir-network-storage`, `cwd-network-storage`) are skipped on non-Windows
+hosts; `docker-engine-version`, `docker-os-type`, and `cwd-reparse-point` are
+not PowerShell-dependent and still run.
+
+A `skip` status covers two different situations that share the same status
+value but not the same message shape: a genuine "could not determine" (e.g.
+not on Windows, Docker unreachable) is always messaged `skipped: ...`, while
+a `warn` verdict from the reused `cb doctor` verdict functions — a real,
+actionable qualification finding such as a UNC/mapped-drive shim directory or
+a reparse-point-backed working directory — is messaged `warn: ...` instead.
+Both report as `skip` (this schema does not add a fourth status value), but a
+CI consumer that cares about the difference can distinguish them by the
+message prefix.
 
 Each entry in `checks` has `status` of `pass`, `fail`, or `skip`. A `skip`
 means a dependency of that check did not pass (e.g. `docker` itself failed,
