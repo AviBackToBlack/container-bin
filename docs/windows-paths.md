@@ -8,6 +8,8 @@ row the table states the verdict, what the code actually does today, and how
 that claim is pinned — either by a test name, an existing test, or the words
 "documentation only".
 
+These rows are also exercised together in `pathnormalization_test.go`, a table-driven corpus that runs combinations of these shapes end-to-end through `mapToolArgs` and is Windows-gated the same way the P-row tests are.
+
 ## Classification table
 
 | ID | Path form | Classification | What happens today | How it is proven |
