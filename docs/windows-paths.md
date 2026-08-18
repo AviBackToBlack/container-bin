@@ -28,6 +28,7 @@ These rows are also exercised together in `pathnormalization_test.go`, a table-d
 | P12 | An argument whose final path element is `...` (package pattern) | **Rejected** | `hasPackagePatternSuffix` declines it before any other classification; it is never treated as a path | `TestPackagePatternSuffix`, `TestMapToolArgsPackagePattern` |
 | P13 | Separator normalization of a declined argument | **Never done** | Declined arguments pass byte-for-byte unchanged; backslashes and other characters are not rewritten | `TestPathFormP13DeclinedArgumentsPassByteForByte` |
 | P14 | The target of a path changes between classification and `docker run` (TOCTOU) | **Out of scope by design** | cb resolves, then invokes `docker run`; a re-pointed path is mounted as re-pointed | documentation only — by design |
+| P15 | A comma anywhere in the project root's path (`D:\My, Project\...`) | **Rejected** | `mountSpec`'s `src` check fails closed on `root` itself, unconditionally, for every provider — before any container-side sanitization could matter | `TestRootBindMountCommaFailsClosedOnSrc` |
 
 ## Per-row rationale
 
@@ -187,6 +188,37 @@ alongside the registry, the lockfile and the shim directory. Closing it would
 require holding handles across the `docker run` and would still not be
 airtight. This is recorded explicitly so a future reader finds a decision
 rather than an oversight.
+
+### P15 — Comma anywhere in the project root's path
+
+Every tool invocation builds a `bind` mount for the project root:
+`mountSpec("bind", root, workspaceRoot)`, where `workspaceRoot` is
+`workspaceRootFor(t, root)`. `mountSpec` checks `src` for a comma before it
+checks `dst`, and `workspaceRootFor`'s output can only contain a comma when
+`root`'s own basename does — the container-side path is built from a
+substring of the host path, never an independent string. So a comma anywhere
+in `root` fails the `src` check first, for every provider, before
+`workspaceRoot`'s content is ever examined.
+
+This closes out an item the roadmap originally scoped as "sanitize
+`workspaceRootFor` so comma-named project directories work" (tracked as
+RM-6c). That fix cannot deliver what it promised: sanitizing the
+container-side basename does not change which mountSpec branch fires, because
+the same call already fails on `src` first. Docker's `--mount` syntax has no
+escape for a literal comma in a field value, and `src` must be the real host
+path — there is no string to sanitize on that side without pointing Docker at
+the wrong directory. Making this genuinely work would need a different
+mechanism entirely, such as bind-mounting a comma-free alias of the real
+directory (a Windows 8.3 short path, where available) — a materially larger
+change than a documentation task, and not undertaken here.
+
+`TestMountSpecWorkspaceRootComposition` in `mountspec_test.go` predates this
+finding and pairs a comma-carrying workspace root with an artificially clean
+`src` — a combination that cannot occur at the real call site. It is kept as
+a unit-level check of `mountSpec`'s `dst` branch, now labeled as such;
+`TestRootBindMountCommaFailsClosedOnSrc` pins the real call site and asserts
+that the error a user actually sees names the *source* path, not the
+destination.
 
 ## Guidance for profile authors
 

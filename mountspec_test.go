@@ -93,20 +93,54 @@ func TestMountSpecBothCommas(t *testing.T) {
 	}
 }
 
+// TestMountSpecWorkspaceRootComposition is a unit-level check of mountSpec's
+// dst branch only: it pairs a comma-carrying workspace root with a src that
+// does NOT share that comma. It does not, by itself, prove anything about
+// what happens for a real comma-named project directory -- see
+// TestRootBindMountCommaFailsClosedOnSrc below for that, and RM-6c in
+// docs/windows-paths.md (row P15) for why the two scenarios are not the same.
 func TestMountSpecWorkspaceRootComposition(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "My, Project")
 	tool := Tool{Provider: "stateful"}
 	workspaceRoot := workspaceRootFor(tool, root)
 
-	// The generated workspace root carries the comma from the project name and
-	// therefore cannot be used as a Docker --mount dst, even when the src is
-	// otherwise clean. This pins the real-world stateful project-directory case.
 	got, err := mountSpec("bind", "/clean/src", workspaceRoot)
 	if err == nil {
 		t.Fatalf("mountSpec with workspace root containing comma returned nil error; got %q", got)
 	}
 	if got != "" {
 		t.Fatalf("mountSpec with workspace root containing comma returned non-empty string: %q", got)
+	}
+}
+
+// TestRootBindMountCommaFailsClosedOnSrc pins the real call site (main.go,
+// the "bind" mount that runTool builds for every provider's project root):
+// src and the input to workspaceRootFor are the SAME root variable, so
+// workspaceRoot's comma -- when it has one -- is always a substring of
+// root's own characters, and root is passed as mountSpec's src. That means
+// the src check (which mountSpec evaluates first) fails closed before the
+// dst check for workspaceRoot could ever matter. This is RM-6c's finding
+// (docs/windows-paths.md, row P15): no sanitization of workspaceRootFor's
+// basename changes this outcome, because the failure never reaches dst.
+func TestRootBindMountCommaFailsClosedOnSrc(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "My, Project")
+	tool := Tool{Provider: "stateful"}
+	workspaceRoot := workspaceRootFor(tool, root) // same root as below, exactly like runTool
+
+	got, err := mountSpec("bind", root, workspaceRoot)
+	if err == nil {
+		t.Fatalf("mountSpec(root, workspaceRoot) with a comma-named project returned nil error; got %q", got)
+	}
+	if got != "" {
+		t.Fatalf("mountSpec(root, workspaceRoot) with a comma-named project returned non-empty string: %q", got)
+	}
+	// The src check runs first in mountSpec, so this is the error a user
+	// actually sees -- not a destination/workspace-root complaint.
+	if !strings.Contains(err.Error(), "source path") {
+		t.Fatalf("expected the source-path error (src check fires first), got: %v", err)
+	}
+	if strings.Contains(err.Error(), "destination path") {
+		t.Fatalf("did not expect the destination-path error to fire here: %v", err)
 	}
 }
 
