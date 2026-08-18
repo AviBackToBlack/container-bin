@@ -282,6 +282,13 @@ func TestMapToolArgsDistinctExternalRoots(t *testing.T) {
 	mustWriteFile(t, filepath.Join(ext2Raw, "x2.txt"), []byte{})
 	ext2 := mustCanonical(t, ext2Raw)
 
+	if _, ok := pathWithin(root, ext1); ok {
+		t.Fatalf("precondition: ext %q must not be under root %q", ext1, root)
+	}
+	if _, ok := pathWithin(root, ext2); ok {
+		t.Fatalf("precondition: ext %q must not be under root %q", ext2, root)
+	}
+
 	tool := Tool{Name: "demo"}
 	in := []string{filepath.Join(ext1, "x1.txt"), filepath.Join(ext2, "x2.txt")}
 	mapped, mounts, err := mapToolArgs(tool, root, root, "/workspace", in)

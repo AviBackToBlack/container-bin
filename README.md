@@ -157,6 +157,14 @@ creates narrowly scoped bind mounts:
   expressions. Tools that need forced path semantics declare them
   (`path_equals = ["-chdir"]` for Terraform).
 
+Several Windows path forms are **not** supported, for different reasons: UNC
+paths (`\\server\share\...`) and `\\?\` long-path prefixes are not recognized
+as paths and pass through unmapped; `subst` drives and mapped network drives
+*are* mapped like any other drive letter, but Docker Desktop cannot share them;
+and a junction inside the mounted project tree is not traversable from inside
+the container, because bind mounts do not follow reparse points. See
+[docs/windows-paths.md](docs/windows-paths.md) for the full classification.
+
 PowerShell natively splits `terraform -chdir=.\tf validate` into
 `-chdir=`, `.\tf`, `validate` before the process ever sees it. ContainerBin
 detects this for declared `path_equals` options and rejoins the argv —
