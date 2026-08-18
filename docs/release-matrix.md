@@ -24,9 +24,10 @@ does not scope, design, or commit to a self-hosted Windows runner.
 
 Linux-containers mode is a **precondition**, not a matrix axis. The README
 [Platform support](../README.md#platform-support) table already lists Windows
-containers as "not supported", and `cb doctor`'s `docker-os-type` check fails if
-Docker Desktop is in Windows-containers mode. Every cell below assumes Linux
-containers; there is nothing to vary.
+containers as "not supported", and `cb doctor` fails its Docker OS-type check if
+Docker Desktop is in Windows-containers mode (the same verdict logic reports as
+the `docker-os-type` ID in `cb self-test --release`'s environment facts). Every
+cell below assumes Linux containers; there is nothing to vary.
 
 ### Host OS
 

@@ -9,6 +9,11 @@ body:
         Use this template to record the manual Windows/Docker Desktop
         release-qualification matrix. See [docs/release-matrix.md](https://github.com/AviBackToBlack/container-bin/blob/main/docs/release-matrix.md)
         for the full procedure, the grid, and the per-cell steps.
+
+        **Sanitize everything you paste** — `cb doctor` output, registry
+        snippets and environment output can contain credentials (cloud
+        tokens passed via `env_prefixes`, proxy URLs with passwords, private
+        registry hosts).
   - type: input
     id: version
     attributes:
@@ -21,64 +26,34 @@ body:
     attributes:
       label: Windows PowerShell 5.1 — current stable Docker Desktop
       description: Docker Desktop version, `cb doctor` output (sanitized), `cb self-test --release` result, and any smoke-test commands.
-      placeholder: |
-        Docker Desktop version:
-        cb doctor:
-        cb self-test --release:
-        Smoke tests:
       render: text
   - type: textarea
     id: cell-powershell51-previous
     attributes:
       label: Windows PowerShell 5.1 — previous major Docker Desktop
       description: Docker Desktop version, `cb doctor` output (sanitized), `cb self-test --release` result, and any smoke-test commands.
-      placeholder: |
-        Docker Desktop version:
-        cb doctor:
-        cb self-test --release:
-        Smoke tests:
       render: text
   - type: textarea
     id: cell-pwsh-current
     attributes:
       label: PowerShell 7.x — current stable Docker Desktop
       description: Docker Desktop version, `cb doctor` output (sanitized), `cb self-test --release` result, and any smoke-test commands.
-      placeholder: |
-        Docker Desktop version:
-        cb doctor:
-        cb self-test --release:
-        Smoke tests:
       render: text
   - type: textarea
     id: cell-pwsh-previous
     attributes:
       label: PowerShell 7.x — previous major Docker Desktop
       description: Docker Desktop version, `cb doctor` output (sanitized), `cb self-test --release` result, and any smoke-test commands.
-      placeholder: |
-        Docker Desktop version:
-        cb doctor:
-        cb self-test --release:
-        Smoke tests:
       render: text
   - type: textarea
     id: cell-cmd-current
     attributes:
       label: cmd.exe — current stable Docker Desktop
       description: Docker Desktop version, `cb doctor` output (sanitized), `cb self-test --release` result, and any smoke-test commands.
-      placeholder: |
-        Docker Desktop version:
-        cb doctor:
-        cb self-test --release:
-        Smoke tests:
       render: text
   - type: textarea
     id: cell-cmd-previous
     attributes:
       label: cmd.exe — previous major Docker Desktop
       description: Docker Desktop version, `cb doctor` output (sanitized), `cb self-test --release` result, and any smoke-test commands.
-      placeholder: |
-        Docker Desktop version:
-        cb doctor:
-        cb self-test --release:
-        Smoke tests:
       render: text
