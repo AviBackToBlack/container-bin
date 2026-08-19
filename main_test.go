@@ -385,27 +385,6 @@ provider = "stateless"
 	}
 }
 
-func TestAtomicWriteFile(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "x.txt")
-	if err := os.WriteFile(path, []byte("old"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := atomicWriteFile(path, []byte("new"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(b) != "new" {
-		t.Fatalf("got %q", b)
-	}
-	if _, err := os.Stat(path + ".bak"); !os.IsNotExist(err) {
-		t.Fatalf("backup unexpectedly remains: %v", err)
-	}
-}
-
 func TestRegistrySchemaVersion(t *testing.T) {
 	reg, err := parseRegistryTOML("schema_version = 1\n\n[tools.x]\nimage = \"x:1\"\nprovider = \"stateless\"\n")
 	if err != nil {

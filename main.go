@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AviBackToBlack/container-bin/internal/atomicio"
 	"github.com/AviBackToBlack/container-bin/internal/toml"
 )
 
@@ -419,7 +420,7 @@ func ensureRegistryFile(path string) error {
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	return atomicWriteFile(path, []byte(defaultRegistryTOML), 0644)
+	return atomicio.WriteFile(path, []byte(defaultRegistryTOML), 0644)
 }
 
 // appendMissingDefaultTools upgrades an existing registry non-destructively.
@@ -454,7 +455,7 @@ func appendMissingDefaultTools(path string) error {
 	for _, name := range names {
 		b.WriteString(defaults[name])
 	}
-	return atomicWriteFile(path, []byte(b.String()), 0644)
+	return atomicio.WriteFile(path, []byte(b.String()), 0644)
 }
 
 func defaultToolSections() map[string]string {
@@ -489,7 +490,7 @@ func loadRegistry() (Registry, string, error) {
 	}
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		rec, err := recoverFromBackup(path, validateRegistryBackup)
+		rec, err := atomicio.RecoverFromBackup(path, validateRegistryBackup)
 		if err != nil {
 			return Registry{}, path, err
 		}
@@ -2366,7 +2367,7 @@ func exposeTool(reg Registry, cfgPath string, args []string) error {
 	if _, err := parseRegistryTOML(string(combined)); err != nil {
 		return fmt.Errorf("refusing registry update: %w", err)
 	}
-	if err := atomicWriteFile(cfgPath, combined, 0644); err != nil {
+	if err := atomicio.WriteFile(cfgPath, combined, 0644); err != nil {
 		return err
 	}
 	newReg, _, err := loadRegistry()
@@ -2392,67 +2393,6 @@ func ensureManagedVolume(name string, labels map[string]string) error {
 		return fmt.Errorf("ensure volume %s: %w: %s", name, err, strings.TrimSpace(string(out)))
 	}
 	return nil
-}
-
-func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".container-bin-*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	cleanup := func() { _ = os.Remove(tmpName) }
-	defer cleanup()
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Chmod(tmpName, perm); err != nil {
-		return err
-	}
-	// Windows cannot rename over an existing file reliably, so keep a tiny backup window.
-	bak := path + ".bak"
-	_ = os.Remove(bak)
-	if _, err := os.Stat(path); err == nil {
-		if err := os.Rename(path, bak); err != nil {
-			return err
-		}
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		_ = os.Rename(bak, path)
-		return err
-	}
-	_ = os.Remove(bak)
-	return nil
-}
-
-func recoverFromBackup(path string, validate func(backupPath string) error) (bool, error) {
-	if _, err := os.Stat(path); err == nil {
-		return false, nil
-	} else if !os.IsNotExist(err) {
-		return false, err
-	}
-	bak := path + ".bak"
-	if _, err := os.Stat(bak); err == nil {
-		if err := validate(bak); err != nil {
-			return false, fmt.Errorf("%s is missing and its backup %s is unusable: %w; remove the backup to fall back to defaults, or repair it and retry", path, bak, err)
-		}
-		if err := os.Rename(bak, path); err != nil {
-			return false, err
-		}
-		fmt.Fprintf(os.Stderr, "container-bin: recovered %s from %s after an interrupted write\n", path, bak)
-		return true, nil
-	} else if !os.IsNotExist(err) {
-		return false, err
-	}
-	return false, nil
 }
 
 func validateRegistryBackup(bak string) error {
@@ -2565,7 +2505,7 @@ func rewriteRegistryWithoutTools(cfgPath string, remove map[string]bool) error {
 	if _, err := parseRegistryTOML(out.String()); err != nil {
 		return fmt.Errorf("refusing registry rewrite: %w", err)
 	}
-	return atomicWriteFile(cfgPath, []byte(out.String()), 0644)
+	return atomicio.WriteFile(cfgPath, []byte(out.String()), 0644)
 }
 
 func removeShim(name string) error {
@@ -2758,12 +2698,12 @@ func restoreCommand(cfgPath string, args []string) error {
 		fmt.Println("\nDry run only. Re-run with --apply to restore registry/lock.")
 		return nil
 	}
-	if err := atomicWriteFile(cfgPath, cfg, 0644); err != nil {
+	if err := atomicio.WriteFile(cfgPath, cfg, 0644); err != nil {
 		return err
 	}
 	lockPath := lockPathForRegistry(cfgPath)
 	if b, ok := files["container-bin.lock"]; ok {
-		if err := atomicWriteFile(lockPath, b, 0644); err != nil {
+		if err := atomicio.WriteFile(lockPath, b, 0644); err != nil {
 			return err
 		}
 	} else {
@@ -3425,7 +3365,7 @@ func loadLockFileForRegistry() (*LockFile, string, error) {
 func loadLockFile(path string) (*LockFile, error) {
 	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		rec, err := recoverFromBackup(path, func(bak string) error {
+		rec, err := atomicio.RecoverFromBackup(path, func(bak string) error {
 			_, err := loadLockFile(bak)
 			return err
 		})
@@ -3665,7 +3605,7 @@ func writeLockFile(path string, lf *LockFile) error {
 	if err != nil {
 		return fmt.Errorf("generated lockfile failed validation: %w", err)
 	}
-	return atomicWriteFile(path, data, 0644)
+	return atomicio.WriteFile(path, data, 0644)
 }
 
 func lockCommand(reg Registry, cfgPath string, args []string) error {
