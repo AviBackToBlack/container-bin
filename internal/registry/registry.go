@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -35,6 +36,7 @@ type Tool struct {
 	StateGroup     string   // stable namespace shared by related stateful tools
 	ProjectVolumes []string // NAME:CONTAINER_PATH, project-scoped named volumes
 	SharedVolumes  []string // NAME:CONTAINER_PATH, shared named volumes
+	HostMounts     []string // SOURCE:/CONTAINER_PATH:ro|rw, explicit host bind mounts
 }
 
 type Registry struct {
@@ -61,6 +63,7 @@ schema_version = 1
 # state_group                => namespace shared by related stateful shims
 # project_volumes            => ["name:/container/path"] scoped by project root
 # shared_volumes             => ["name:/container/path"] shared across projects
+# host_mounts                => ["%USERPROFILE%\\.claude:/root/.claude:ro"] explicit host bind mounts
 
 [tools.python]
 image = "python:3.13-slim"
@@ -400,6 +403,12 @@ func ParseTOML(s string) (Registry, error) {
 				return reg, fmt.Errorf("line %d shared_volumes: %w", lineNo, err)
 			}
 			t.SharedVolumes = v
+		case "host_mounts":
+			v, err := toml.ParseStringArray(value)
+			if err != nil {
+				return reg, fmt.Errorf("line %d host_mounts: %w", lineNo, err)
+			}
+			t.HostMounts = v
 		default:
 			return reg, fmt.Errorf("line %d: unsupported key %q", lineNo, key)
 		}
@@ -435,6 +444,9 @@ func ParseTOML(s string) (Registry, error) {
 			}
 		default:
 			return reg, fmt.Errorf("tool %q: unsupported provider %q", name, t.Provider)
+		}
+		if err := validateHostMounts(t); err != nil {
+			return reg, fmt.Errorf("tool %q: %w", name, err)
 		}
 	}
 	return reg, nil
@@ -500,6 +512,182 @@ func ParseVolumeBinding(spec string) (string, string, error) {
 		return "", "", errors.New("container path must be absolute")
 	}
 	return name, dst, nil
+}
+
+// ParseHostMount splits a "SOURCE:/container/path:MODE" host_mounts entry.
+// The source/target delimiter reuses ParseVolumeBinding's ":/" convention: a
+// Windows source path's drive-letter colon is always followed by a backslash,
+// never a forward slash, so the first ":/" in the string unambiguously marks
+// the boundary before the container path even when the source itself (e.g.
+// "D:\Video") contains a colon of its own.
+func ParseHostMount(spec string) (source, target, mode string, err error) {
+	i := strings.Index(spec, ":/")
+	if i <= 0 {
+		return "", "", "", errors.New("expected SOURCE:/absolute/container/path:ro or SOURCE:/absolute/container/path:rw")
+	}
+	source = spec[:i]
+	rest := spec[i+1:] // "/container/path:MODE"
+	j := strings.LastIndex(rest, ":")
+	if j < 0 {
+		return "", "", "", errors.New("host_mounts entry is missing a :ro or :rw mode suffix")
+	}
+	target = rest[:j]
+	mode = rest[j+1:]
+	if mode != "ro" && mode != "rw" {
+		return "", "", "", fmt.Errorf("host_mounts mode must be \"ro\" or \"rw\", got %q", mode)
+	}
+	if !strings.HasPrefix(target, "/") {
+		return "", "", "", errors.New("host_mounts container path must be absolute")
+	}
+	if strings.Contains(target, ",") {
+		// Mirrors the source comma check below: dockerrun.MountSpecMode would
+		// reject this too, but only at RunTool time, once the tool is
+		// actually invoked. Catching it here moves the failure to registry
+		// load, matching this task's two-stage validation split (structural
+		// checks at load, environment-dependent checks at run).
+		return "", "", "", errors.New("host_mounts target contains a comma and cannot be represented safely in docker --mount syntax (values are comma-separated with no escaping)")
+	}
+	if strings.Contains(target, ":") {
+		// The mode suffix is found by taking the LAST ":" in the remainder
+		// (see below), so an entry with an extra colon inside the target,
+		// e.g. "D:\V:/root/a:b:ro", parses without error today: the LAST
+		// colon is still correctly found as the mode delimiter, but the
+		// target itself is left containing one. Docker's --mount tolerates a
+		// colon in dst=, so this was never a mis-mount risk, but it's an
+		// unintended shape the documented SOURCE:/CONTAINER_PATH:MODE grammar
+		// doesn't describe. Rejecting it keeps the grammar as tight as every
+		// other part of this validation.
+		return "", "", "", errors.New("host_mounts target must not contain \":\"")
+	}
+	// Reject ".." path segments outright, before cleaning: path.Clean collapses
+	// a traversal like "/workspace/.." to "/", which is not itself in the
+	// reserved-namespace list validateHostMounts checks against, so a naive
+	// "clean, then compare against reserved prefixes" order would let a
+	// declared target ESCAPE the very check it's meant to satisfy. There is no
+	// legitimate reason for a host_mounts target to contain "..": it should
+	// always be a direct absolute container path the profile author wrote
+	// intentionally. Failing this loudly, before any normalization, keeps the
+	// reserved-namespace check meaningful regardless of what "." segments
+	// (which ARE legitimate, e.g. for collision-detection equivalence) get
+	// cleaned away afterward.
+	for _, seg := range strings.Split(target, "/") {
+		if seg == ".." {
+			return "", "", "", fmt.Errorf("host_mounts container path %q must not contain \"..\"", target)
+		}
+	}
+	target = path.Clean(target)
+	// Defense in depth: no legal traversal-free target should ever clean to
+	// bare "/" (the shortest reserved path is a single segment below root),
+	// but reject it explicitly rather than relying on that reasoning holding
+	// forever as the reserved-namespace list evolves. A host_mounts entry at
+	// "/" would shadow every container-bin-managed mount.
+	if target == "/" {
+		return "", "", "", errors.New("host_mounts container path must not be the filesystem root")
+	}
+	if source == "" {
+		return "", "", "", errors.New("host_mounts source must not be empty")
+	}
+	if strings.Contains(source, ",") {
+		return "", "", "", errors.New("host_mounts source contains a comma and cannot be represented safely in docker --mount syntax (values are comma-separated with no escaping)")
+	}
+	if err := validHostMountSource(source); err != nil {
+		return "", "", "", err
+	}
+	return source, target, mode, nil
+}
+
+func validHostMountSource(source string) error {
+	if strings.Contains(source, "%") {
+		if !strings.HasPrefix(source, "%USERPROFILE%") {
+			return errors.New("host_mounts source contains an unsupported %-variable; only %USERPROFILE% is recognized")
+		}
+		rest := source[len("%USERPROFILE%"):]
+		if strings.Contains(rest, "%") {
+			return errors.New("host_mounts source contains an unsupported %-variable after %USERPROFILE%")
+		}
+		// %USERPROFILE% must be the whole source, or immediately followed by a
+		// path separator. ExpandHostMountSource does plain string
+		// concatenation of os.UserHomeDir() with whatever follows the token,
+		// so without this, "%USERPROFILE%foo" would resolve to a *sibling* of
+		// the home directory (e.g. C:\Users\<user>foo) rather than a child of
+		// it -- silently not the path the registry line visually suggests.
+		if rest != "" && rest[0] != '\\' && rest[0] != '/' {
+			return errors.New("host_mounts source must be exactly %USERPROFILE% or followed immediately by \\ or /")
+		}
+		return nil
+	}
+	if isWindowsAbsPath(source) {
+		return nil
+	}
+	return errors.New("host_mounts source must be %USERPROFILE%\\... or an absolute Windows path (X:\\...)")
+}
+
+func isWindowsAbsPath(s string) bool {
+	if len(s) < 3 {
+		return false
+	}
+	c := s[0]
+	isLetter := (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+	return isLetter && s[1] == ':' && (s[2] == '\\' || s[2] == '/')
+}
+
+// pathContainsOrEquals reports whether target is parent itself, or a strict
+// descendant of it. Both arguments must already be path.Clean'd absolute
+// POSIX container paths. Used only for the fixed, cb-owned reserved
+// namespaces (/workspace, /cb, /venv, /root/.cache/pip) -- not for arbitrary
+// project_volumes/shared_volumes destinations, where a host_mounts entry
+// nested under a user-declared volume is a normal, valid Docker
+// configuration (the more specific mount just shadows part of the outer
+// one), not a defect to reject.
+func pathContainsOrEquals(parent, target string) bool {
+	return target == parent || strings.HasPrefix(target, parent+"/")
+}
+
+func validateHostMounts(t Tool) error {
+	// project_volumes and shared_volumes are both checked here, not just
+	// shared_volumes: ParseVolumeBinding places no requirement that a
+	// project_volumes destination live under /workspace (that is only true
+	// by convention for this repo's built-in profiles), so a custom profile
+	// declaring e.g. project_volumes = ["foo:/root/.foo"] could otherwise
+	// collide with a host_mounts target at that same literal path with
+	// nothing catching it.
+	volumeDst := map[string]bool{}
+	for _, spec := range append(append([]string{}, t.ProjectVolumes...), t.SharedVolumes...) {
+		_, dst, err := ParseVolumeBinding(spec)
+		if err != nil {
+			return err // already validated earlier in the same loop; defensive only
+		}
+		volumeDst[path.Clean(dst)] = true
+	}
+	seen := map[string]bool{}
+	for _, spec := range t.HostMounts {
+		_, target, _, err := ParseHostMount(spec)
+		if err != nil {
+			return err
+		}
+		// Prefix-based, not exact-match: /venv and /root/.cache/pip are fixed,
+		// semantically load-bearing paths the python provider's bootstrap
+		// script depends on having their full structure intact (it checks
+		// /venv/bin/python specifically), not just their top-level directory.
+		// An exact-match-only reservation would let a target like /venv/bin
+		// validate cleanly and only break the tool at run time with no
+		// explanatory error -- the same shape of gap /workspace and /cb were
+		// already guarded against with HasPrefix, extended here to all four
+		// reserved namespaces uniformly via pathContainsOrEquals.
+		for _, reserved := range []string{"/workspace", "/cb", "/venv", "/root/.cache/pip"} {
+			if pathContainsOrEquals(reserved, target) {
+				return fmt.Errorf("host_mounts target %q is reserved for container-bin's own workspace/state mounts", target)
+			}
+		}
+		if seen[target] {
+			return fmt.Errorf("host_mounts target %q is declared more than once", target)
+		}
+		seen[target] = true
+		if volumeDst[target] {
+			return fmt.Errorf("host_mounts target %q collides with a project_volumes/shared_volumes destination", target)
+		}
+	}
+	return nil
 }
 
 func ListTools(reg Registry, cfgPath string) {

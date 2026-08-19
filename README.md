@@ -139,15 +139,55 @@ env_prefixes = ["TF_", "AWS_", "ARM_"]  # only these host vars enter the contain
 
 Semantics include `command`, `args_prefix`, `path_next`, `path_equals`,
 `path_last`, `path_last_if_any`, `env_names`, `env_prefixes`, `env_set`,
-`project_markers`, `state_group`, `project_volumes` and `shared_volumes`.
-Unknown keys **fail validation** instead of being silently ignored, and a
-`schema_version` newer than the binary supports fails closed. Edit the file,
-then run `cb install` to reconcile shims.
+`project_markers`, `state_group`, `project_volumes`, `shared_volumes` and
+`host_mounts`. Unknown keys **fail validation** instead of being silently
+ignored, and a `schema_version` newer than the binary supports fails closed.
+Edit the file, then run `cb install` to reconcile shims.
 
-One exception applies to every path-forcing key (`path_next`, `path_equals`,
-`path_last`): a value whose final element is `...` is never rewritten, because
-Windows cannot represent such a directory and rewriting it would silently
-change which files the tool acts on. See [Windows path mapping](#windows-path-mapping).
+### Explicit host bind mounts (`host_mounts`)
+
+`host_mounts` lets a trusted profile declare fixed host paths that are always
+bind-mounted into the container, regardless of whether they appear in the
+command line. This is provider-agnostic: it works for `stateless`, `python`
+and `stateful` profiles alike.
+
+```toml
+[tools.token-meter]
+image = "example/token-meter:latest"
+provider = "stateless"
+host_mounts = [
+  "%USERPROFILE%\\.claude:/root/.claude:ro",
+  "%USERPROFILE%\\.codex:/root/.codex:ro",
+]
+```
+
+Entries follow the `SOURCE:/CONTAINER_PATH:MODE` shape used by
+`project_volumes`/`shared_volumes`, extended with a required third `:MODE`
+segment. `ro` and `rw` are accepted; there is **no default** — every mount's
+write access must be explicit in the registry line.
+
+`%USERPROFILE%` is the only host variable container-bin expands; no other
+`%...%` token is recognized or guessed. The source may also be a literal
+Windows absolute path using a backslash after the drive letter
+(e.g. `D:\Video`). The forward-slash drive form (`D:/Video`) embeds the `:/`
+source/target delimiter and is rejected as ambiguous, so always use `X:\...`.
+
+Targets under `/workspace`, `/cb`, `/venv` and `/root/.cache/pip` are reserved
+for container-bin's own project workspace and managed state mounts (the last
+two are the python provider's fixed venv/pip-cache paths) and cannot be
+claimed by `host_mounts`, on any provider.
+
+> A `host_mounts` entry grants the configured Docker image direct access to the
+> named host files or directories. ContainerBin is **not a security sandbox**;
+> a `rw` mount exposes those host files to any code running in the container,
+> exactly as a `docker run --mount` would. Use `ro` when the tool only needs to
+> read, review every `rw` mount, and keep the registry and shim directory
+> under your control.
+>
+> Exposed profiles created by `cb expose` from an npm-shaped source profile do
+> **not** inherit that source's `host_mounts`; host access never propagates
+> implicitly to an auto-generated shim. A profile that genuinely needs a host
+> mount must declare it explicitly.
 
 ## Windows path mapping
 

@@ -388,3 +388,25 @@ func TestNetworkStorageVerdict(t *testing.T) {
 		}
 	}
 }
+
+func TestHostMountVerdict(t *testing.T) {
+	status, msg := hostMountVerdict("demo", "%USERPROFILE%\\.claude", "/root/.claude", "C:\\Users\\x\\.claude", true)
+	if status != "ok" {
+		t.Fatalf("expected ok for existing source, got %q", status)
+	}
+	for _, want := range []string{"demo", "\"%USERPROFILE%\\\\.claude\"", "/root/.claude", "exists", "C:\\Users\\x\\.claude"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("message %q does not contain %q", msg, want)
+		}
+	}
+
+	status, msg = hostMountVerdict("demo", "%USERPROFILE%\\.claude", "/root/.claude", "C:\\Users\\x\\.claude", false)
+	if status != "warn" {
+		t.Fatalf("expected warn for missing source, got %q", status)
+	}
+	for _, want := range []string{"demo", "\"%USERPROFILE%\\\\.claude\"", "/root/.claude", "does not exist", "C:\\Users\\x\\.claude", "cannot run"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("message %q does not contain %q", msg, want)
+		}
+	}
+}

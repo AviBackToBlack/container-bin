@@ -98,6 +98,28 @@ func Trace(reg registry.Registry, args []string) error {
 			fmt.Printf("shared_volume:  %s -> %s\n", pathmap.StatefulSharedVolumeID(t.StateGroup, name), dst)
 		}
 	}
+	for _, spec := range t.HostMounts {
+		source, target, mode, err := registry.ParseHostMount(spec)
+		if err != nil {
+			return err
+		}
+		expanded, err := dockerrun.ExpandHostMountSource(source)
+		if err == nil {
+			expanded, err = pathmap.CanonicalPath(expanded)
+		}
+		switch {
+		case err != nil:
+			fmt.Printf("host_mount:  %s -> %s (%s) [resolve error: %v]\n", source, target, mode, err)
+		case strings.HasPrefix(expanded, `\\`):
+			fmt.Printf("host_mount:  %s -> %s (%s) [would fail: resolves to a UNC path, which Docker Desktop cannot share]\n", expanded, target, mode)
+		default:
+			if _, statErr := os.Stat(expanded); statErr != nil {
+				fmt.Printf("host_mount:  %s -> %s (%s) [would fail: source does not exist]\n", expanded, target, mode)
+			} else {
+				fmt.Printf("host_mount:  %s -> %s (%s)\n", expanded, target, mode)
+			}
+		}
+	}
 	return nil
 }
 
@@ -313,6 +335,13 @@ func Inspect(reg registry.Registry, args []string) error {
 			return e
 		}
 		fmt.Printf("shared_volume:  %s -> %s\n", pathmap.StatefulSharedVolumeID(t.StateGroup, logical), dst)
+	}
+	for _, spec := range t.HostMounts {
+		source, target, mode, e := registry.ParseHostMount(spec)
+		if e != nil {
+			return e
+		}
+		fmt.Printf("host_mount:  %s -> %s (%s)\n", source, target, mode)
 	}
 	if t.Provider == "python" {
 		fmt.Printf("python_env: %s\npip_cache:  cb-pip-cache\n", pathmap.PythonEnvID(root, found))

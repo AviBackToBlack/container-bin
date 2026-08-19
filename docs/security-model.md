@@ -11,8 +11,9 @@ mounted in, and the environment variables your profiles select passed through.
 Inside the boundary (whoever controls these controls execution):
 
 - `container-bin.toml` — names the images, the env allowlists, the volumes,
-  the path semantics. Arbitrary registry write access ≈ arbitrary code
-  execution with your Docker privileges.
+  the `host_mounts`, and the path semantics. Arbitrary registry write access
+  ≈ arbitrary code execution with your Docker privileges; `host_mounts` with
+  `rw` access hand the image write access to those host paths.
 - `container-bin.lock` — pins image digests. Whoever can rewrite it can pin a
   malicious digest.
 - The shim directory on `PATH` — whoever can write executables there doesn't
@@ -31,7 +32,11 @@ readable, and dangerous to let others edit.
 - **Narrow mounts.** The project root is mounted; paths outside it get
   individual narrow bind mounts (for files: the parent directory; for
   not-yet-existing outputs: nearest existing ancestor). Whole drives are never
-  mounted because one argument lives on them.
+  mounted because one argument lives on them. `host_mounts` are the explicit,
+  mode-required exception: a trusted profile can declare a fixed host source
+  and container target, but every entry must spell out `ro` or `rw` and is
+  validated as a `SOURCE:/CONTAINER_PATH:MODE` binding with the same fail-closed
+  checks as the volume fields.
 - **Conservative path rewriting.** Arguments are only treated as paths when
   their shape is unambiguous or the tool profile explicitly declares the
   semantics. Unknown strings pass through untouched.
