@@ -512,7 +512,10 @@ func loadRegistry() (Registry, string, error) {
 // strings. Rejecting unknown syntax is safer than silently misreading config.
 func parseRegistryTOML(s string) (Registry, error) {
 	reg := Registry{SchemaVersion: 1, Tools: map[string]Tool{}}
-	var current *Tool
+	// currentName is the [tools.NAME] section being parsed, or "" before the
+	// first section. A name is never empty here because validToolName rejects
+	// that, so "" is an unambiguous "no section yet" marker.
+	var currentName string
 	scanner := bufio.NewScanner(strings.NewReader(s))
 	lineNo := 0
 	for scanner.Scan() {
@@ -539,12 +542,11 @@ func parseRegistryTOML(s string) (Registry, error) {
 			if _, dup := reg.Tools[name]; dup {
 				return reg, fmt.Errorf("line %d: duplicate [tools.%s] section", lineNo, name)
 			}
-			t := Tool{Name: name, Provider: "stateless"}
-			reg.Tools[name] = t
-			current = &t
+			reg.Tools[name] = Tool{Name: name, Provider: "stateless"}
+			currentName = name
 			continue
 		}
-		if current == nil {
+		if currentName == "" {
 			kv := strings.SplitN(line, "=", 2)
 			if len(kv) == 2 && strings.TrimSpace(kv[0]) == "schema_version" {
 				v, err := strconv.Atoi(strings.TrimSpace(kv[1]))
@@ -565,7 +567,7 @@ func parseRegistryTOML(s string) (Registry, error) {
 		}
 		key := strings.TrimSpace(kv[0])
 		value := strings.TrimSpace(kv[1])
-		t := reg.Tools[current.Name]
+		t := reg.Tools[currentName]
 		switch key {
 		case "image":
 			v, err := toml.ParseQuoted(value)
@@ -671,8 +673,7 @@ func parseRegistryTOML(s string) (Registry, error) {
 		default:
 			return reg, fmt.Errorf("line %d: unsupported key %q", lineNo, key)
 		}
-		reg.Tools[current.Name] = t
-		*current = t
+		reg.Tools[currentName] = t
 	}
 	if err := scanner.Err(); err != nil {
 		return reg, err
