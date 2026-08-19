@@ -170,10 +170,75 @@ mutate the registry and tells the user to delete it.
 | Tool state (venvs, node_modules, caches) | Docker named volumes |
 | Nothing | permanently installed on the host |
 
-## Known structural debt
+## Package layout
 
-`main.go` is a single ~2,700-line file. It is coherent and well-tested for its
-size, but decomposition into packages (registry, lockfile, path mapper, docker
-runner, state/volumes, backup, CLI) is planned as dedicated follow-up work —
-deliberately not mixed into the open-source bootstrap PR. See the roadmap
-issue.
+The binary is built from `main.go` plus `internal/`. Dependencies point strictly
+downward; there are no cycles. Packages roughly by depth (each one may skip
+straight past its neighbor to something further down — the groupings below are
+for orientation, not a claim that every package depends on every package in
+the tier below it; see the exact edges further down for that):
+
+```
+main            argv[0] dispatch, subcommand switch, version, usage,
+                exit codes + fatalf/osExit, withMutationLock's signal wrapper
+  ↓
+internal/cli    setup, install, expose, unexpose, uninstall, inspect, trace,
+                env, backup, restore, lock, update
+  ↓
+internal/diag   doctor, self-test, bugreport, verdict functions, redaction
+  ↓
+internal/dockerrun   docker run assembly, TTY decision, host-env selection,
+                     mount specs
+internal/state       cb state, cb gc
+  ↓
+internal/dockervol   docker volume primitives                        (leaf)
+internal/lockfile    container-bin.lock, digest resolution
+  ↓
+internal/pathmap     Windows path classification and mapping, project roots,
+                     volume naming
+  ↓
+internal/registry    Tool/Registry, TOML parser, defaults, registry file
+                     lifecycle, shim install/remove
+  ↓
+internal/toml        the shared TOML subset lexer                    (leaf)
+internal/atomicio    crash-safe write + .bak recovery                (leaf)
+internal/mutationlock  the registry mutation lock primitive          (leaf)
+```
+
+The exact import edges, from `go list -f '{{.ImportPath}} {{.Imports}}' ./...`,
+project-internal imports only:
+
+```
+main         -> cli, diag, dockerrun, mutationlock, registry, state
+cli          -> atomicio, diag, dockerrun, lockfile, pathmap, registry, toml
+diag         -> dockerrun, dockervol, lockfile, pathmap, registry
+dockerrun    -> dockervol, lockfile, pathmap, registry
+state        -> dockervol, pathmap, registry
+lockfile     -> atomicio, registry, toml
+pathmap      -> registry
+registry     -> atomicio, toml
+atomicio, dockervol, mutationlock, toml -> (leaves)
+```
+
+Notably: `lockfile` and `pathmap` both depend on `registry` directly, not on
+each other; `dockervol` is a true leaf with no internal dependencies at all
+(not "beneath" `lockfile`/`pathmap` in any dependency sense — every one of
+`diag`/`dockerrun`/`state` reaches it independently); and `mutationlock` is
+reached only from `main`, unrelated to the `registry`/`lockfile`/`pathmap`
+chain.
+
+Two boundaries are load-bearing rather than cosmetic:
+
+- **`internal/mutationlock` knows nothing about signals or exit codes.** It
+  exposes `Acquire`/`PathFor` only. The `os.Interrupt` handler and
+  `osExit(exitInterrupted)` live in `main`'s `withMutationLock`, keeping
+  exit-code policy in exactly one package.
+- **`internal/dockervol` is a leaf.** `RunTool` must create labelled volumes
+  while `cb state`/`cb gc`/`cb doctor` must list and remove them. Putting the
+  volume primitives in any of those consumers would make them depend on each
+  other; as a leaf, all of them reach it independently.
+
+`version` stays in `package main` as `var version = "dev"`: both CI and the
+release workflow inject it with `-ldflags "-X main.version=..."`, so that symbol
+path is part of the release contract. Packages that need it take it as a
+parameter.

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -117,11 +118,33 @@ func buildTestCb(t *testing.T) string {
 	// "container-bin", or starts with "cb-v". Build the artifact as cb_test,
 	// then create an executable named cb in the same temp directory.
 	if err := os.Link(testPath, cbPath); err != nil {
-		if err := copyFile(testPath, cbPath); err != nil {
+		if err := copyTestFile(testPath, cbPath); err != nil {
 			t.Fatalf("create cb copy: %v", err)
 		}
 	}
 	return cbPath
+}
+
+// copyTestFile is this test's own hardlink fallback. The production copy now
+// lives unexported inside internal/registry, whose only caller is InstallShims;
+// duplicating seventeen lines here is preferable to widening that package's
+// exported surface for a single test consumer.
+func copyTestFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+	if err != nil {
+		return err
+	}
+	_, cpErr := io.Copy(out, in)
+	closeErr := out.Close()
+	if cpErr != nil {
+		return cpErr
+	}
+	return closeErr
 }
 
 func runExitTest(t *testing.T, cbPath string, args []string, want int, workDir string) {

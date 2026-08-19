@@ -1,13 +1,16 @@
-package main
+package dockerrun
 
 import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/AviBackToBlack/container-bin/internal/pathmap"
+	"github.com/AviBackToBlack/container-bin/internal/registry"
 )
 
 func TestMountSpecBindSuccess(t *testing.T) {
-	got, err := mountSpec("bind", "/some/src", "/some/dst")
+	got, err := MountSpec("bind", "/some/src", "/some/dst")
 	if err != nil {
 		t.Fatalf("mountSpec returned unexpected error: %v", err)
 	}
@@ -19,7 +22,7 @@ func TestMountSpecBindSuccess(t *testing.T) {
 
 func TestMountSpecVolumeSuccess(t *testing.T) {
 	src := "cb-python-313-abc123def456"
-	got, err := mountSpec("volume", src, "/venv")
+	got, err := MountSpec("volume", src, "/venv")
 	if err != nil {
 		t.Fatalf("mountSpec returned unexpected error: %v", err)
 	}
@@ -31,7 +34,7 @@ func TestMountSpecVolumeSuccess(t *testing.T) {
 
 func TestMountSpecSourceComma(t *testing.T) {
 	src := "/some, bad/src"
-	got, err := mountSpec("bind", src, "/some/dst")
+	got, err := MountSpec("bind", src, "/some/dst")
 	if err == nil {
 		t.Fatalf("mountSpec with comma in src returned nil error")
 	}
@@ -45,7 +48,7 @@ func TestMountSpecSourceComma(t *testing.T) {
 
 func TestMountSpecDestinationComma(t *testing.T) {
 	dst := "/some, bad/dst"
-	got, err := mountSpec("bind", "/some/src", dst)
+	got, err := MountSpec("bind", "/some/src", dst)
 	if err == nil {
 		t.Fatalf("mountSpec with comma in dst returned nil error")
 	}
@@ -61,8 +64,8 @@ func TestMountSpecDestinationComma(t *testing.T) {
 // mount needs to know which side carries the comma, and the messages are the
 // only signal it gets.
 func TestMountSpecCommaMessagesAreDistinguishable(t *testing.T) {
-	_, srcErr := mountSpec("bind", "/bad, src", "/clean/dst")
-	_, dstErr := mountSpec("bind", "/clean/src", "/bad, dst")
+	_, srcErr := MountSpec("bind", "/bad, src", "/clean/dst")
+	_, dstErr := MountSpec("bind", "/clean/src", "/bad, dst")
 	if srcErr == nil || dstErr == nil {
 		t.Fatalf("expected both to error: src=%v dst=%v", srcErr, dstErr)
 	}
@@ -80,7 +83,7 @@ func TestMountSpecCommaMessagesAreDistinguishable(t *testing.T) {
 func TestMountSpecBothCommas(t *testing.T) {
 	src := "/bad, src"
 	dst := "/bad, dst"
-	got, err := mountSpec("bind", src, dst)
+	got, err := MountSpec("bind", src, dst)
 	if err == nil {
 		t.Fatalf("mountSpec with commas in src and dst returned nil error")
 	}
@@ -101,10 +104,10 @@ func TestMountSpecBothCommas(t *testing.T) {
 // docs/windows-paths.md (row P15) for why the two scenarios are not the same.
 func TestMountSpecWorkspaceRootComposition(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "My, Project")
-	tool := Tool{Provider: "stateful"}
-	workspaceRoot := workspaceRootFor(tool, root)
+	tool := registry.Tool{Provider: "stateful"}
+	workspaceRoot := pathmap.WorkspaceRootFor(tool, root)
 
-	got, err := mountSpec("bind", "/clean/src", workspaceRoot)
+	got, err := MountSpec("bind", "/clean/src", workspaceRoot)
 	if err == nil {
 		t.Fatalf("mountSpec with workspace root containing comma returned nil error; got %q", got)
 	}
@@ -124,15 +127,15 @@ func TestMountSpecWorkspaceRootComposition(t *testing.T) {
 // basename changes this outcome, because the failure never reaches dst.
 func TestRootBindMountCommaFailsClosedOnSrc(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "My, Project")
-	tool := Tool{Provider: "stateful"}
-	workspaceRoot := workspaceRootFor(tool, root) // same root as below, exactly like runTool
+	tool := registry.Tool{Provider: "stateful"}
+	workspaceRoot := pathmap.WorkspaceRootFor(tool, root) // same root as below, exactly like runTool
 
-	got, err := mountSpec("bind", root, workspaceRoot)
+	got, err := MountSpec("bind", root, workspaceRoot)
 	if err == nil {
-		t.Fatalf("mountSpec(root, workspaceRoot) with a comma-named project returned nil error; got %q", got)
+		t.Fatalf("MountSpec(root, workspaceRoot) with a comma-named project returned nil error; got %q", got)
 	}
 	if got != "" {
-		t.Fatalf("mountSpec(root, workspaceRoot) with a comma-named project returned non-empty string: %q", got)
+		t.Fatalf("MountSpec(root, workspaceRoot) with a comma-named project returned non-empty string: %q", got)
 	}
 	// The src check runs first in mountSpec, so the error a user actually
 	// sees names root (the offending src), not workspaceRoot -- checking the
@@ -153,7 +156,7 @@ func TestRootBindMountCommaFailsClosedOnSrc(t *testing.T) {
 func TestMountSpecOtherPunctuationAllowed(t *testing.T) {
 	src := "/some path/with=colon:and spaces"
 	dst := "/another path/with=equals:and spaces"
-	got, err := mountSpec("bind", src, dst)
+	got, err := MountSpec("bind", src, dst)
 	if err != nil {
 		t.Fatalf("mountSpec rejected comma-free path with other punctuation: %v", err)
 	}
