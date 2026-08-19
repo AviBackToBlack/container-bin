@@ -571,6 +571,13 @@ provider = "stateless"
 	mustFail("workspace_traversal_to_root", "host_mounts = "+toml.Array([]string{"C:\\\\data:/workspace/..:ro"})+"\n")
 	mustFail("cb_traversal_to_root", "host_mounts = "+toml.Array([]string{"C:\\\\data:/cb/..:ro"})+"\n")
 	mustFail("bare_traversal_segment", "host_mounts = "+toml.Array([]string{"C:\\\\data:/root/../etc:ro"})+"\n")
+	// No ".." segment is present in either of these, so they reach path.Clean
+	// unrejected by the traversal loop and must be caught by the separate
+	// bare-"/" defense-in-depth check instead -- locking in that branch so a
+	// future refactor that assumes the ".." loop alone is sufficient breaks a
+	// test rather than silently reopening the root-mount hole.
+	mustFail("bare_root_target", "host_mounts = "+toml.Array([]string{"C:\\\\data:/:ro"})+"\n")
+	mustFail("dot_only_target_to_root", "host_mounts = "+toml.Array([]string{"C:\\\\data:/./.:ro"})+"\n")
 
 	// ParseVolumeBinding places no requirement that a project_volumes
 	// destination live under /workspace -- that's only true by convention
