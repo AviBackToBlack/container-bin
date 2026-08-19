@@ -559,6 +559,21 @@ provider = "stateless"
 	mustFail("duplicate_target", "host_mounts = "+toml.Array([]string{"C:\\\\A:/root/.x:ro", "C:\\\\B:/root/.x:rw"})+"\n")
 	mustFail("shared_volume_collision", "shared_volumes = "+toml.Array([]string{"cache:/root/.cache"})+"\nhost_mounts = "+toml.Array([]string{"C:\\\\Video:/root/.cache:ro"})+"\n")
 
+	// ParseVolumeBinding places no requirement that a project_volumes
+	// destination live under /workspace -- that's only true by convention
+	// for this repo's built-in profiles, not enforced by the schema -- so a
+	// stateful profile's project_volumes destination must be checked for
+	// host_mounts collisions too, not just shared_volumes.
+	statefulBase := `[tools.y]
+image = "y:1"
+provider = "stateful"
+state_group = "ygroup"
+`
+	_, pvErr := ParseTOML(statefulBase + "project_volumes = " + toml.Array([]string{"data:/root/.ydata"}) + "\nhost_mounts = " + toml.Array([]string{"C:\\\\Video:/root/.ydata:ro"}) + "\n")
+	if pvErr == nil {
+		t.Fatal("project_volume_collision: expected error")
+	}
+
 	mustPass("valid_multi_entry", "host_mounts = "+toml.Array([]string{
 		"%USERPROFILE%\\\\.claude:/root/.claude:ro",
 		"%USERPROFILE%\\\\.codex:/root/.codex:ro",

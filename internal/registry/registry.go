@@ -576,13 +576,20 @@ func isWindowsAbsPath(s string) bool {
 }
 
 func validateHostMounts(t Tool) error {
-	sharedDst := map[string]bool{}
-	for _, spec := range t.SharedVolumes {
+	// project_volumes and shared_volumes are both checked here, not just
+	// shared_volumes: ParseVolumeBinding places no requirement that a
+	// project_volumes destination live under /workspace (that is only true
+	// by convention for this repo's built-in profiles), so a custom profile
+	// declaring e.g. project_volumes = ["foo:/root/.foo"] could otherwise
+	// collide with a host_mounts target at that same literal path with
+	// nothing catching it.
+	volumeDst := map[string]bool{}
+	for _, spec := range append(append([]string{}, t.ProjectVolumes...), t.SharedVolumes...) {
 		_, dst, err := ParseVolumeBinding(spec)
 		if err != nil {
 			return err // already validated earlier in the same loop; defensive only
 		}
-		sharedDst[dst] = true
+		volumeDst[dst] = true
 	}
 	seen := map[string]bool{}
 	for _, spec := range t.HostMounts {
@@ -598,8 +605,8 @@ func validateHostMounts(t Tool) error {
 			return fmt.Errorf("host_mounts target %q is declared more than once", target)
 		}
 		seen[target] = true
-		if sharedDst[target] {
-			return fmt.Errorf("host_mounts target %q collides with a shared_volumes destination", target)
+		if volumeDst[target] {
+			return fmt.Errorf("host_mounts target %q collides with a project_volumes/shared_volumes destination", target)
 		}
 	}
 	return nil
