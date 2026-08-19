@@ -217,6 +217,9 @@ persistent npm global prefix. It adds registry profiles for them that inherit
 the source profile's image and `state_group`, and creates Windows shims —
 `cowsay.exe` appears on PATH without Node ever touching the host. To expose a
 binary installed under the Node 22 runtime, use `cb expose npm22 <binary>`.
+Exposed profiles are keyed by binary name only, so a binary already exposed
+from one runtime cannot also be exposed from the other under the same name —
+`cb unexpose` it first if you need to switch which runtime backs it.
 `cb unexpose cowsay` removes the shim and profile without deleting the
 underlying npm state. Registry mutations are validated and written atomically;
 a failed validation refuses the update.
