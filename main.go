@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/AviBackToBlack/container-bin/internal/atomicio"
+	"github.com/AviBackToBlack/container-bin/internal/dockervol"
 	"github.com/AviBackToBlack/container-bin/internal/lockfile"
 	"github.com/AviBackToBlack/container-bin/internal/mutationlock"
 	"github.com/AviBackToBlack/container-bin/internal/pathmap"
@@ -543,7 +544,7 @@ func doctor(reg registry.Registry, cfgPath string) error {
 		}
 	}
 
-	managed, err := labeledManagedVolumes()
+	managed, err := dockervol.LabeledManaged()
 	if err != nil {
 		warn("managed volume inspection failed: %v", err)
 	} else {
@@ -770,10 +771,10 @@ func runTool(t registry.Tool, userArgs []string) (int, error) {
 		if err != nil {
 			return 1, err
 		}
-		if err := ensureManagedVolume(envID, pyLabels); err != nil {
+		if err := dockervol.EnsureManaged(envID, pyLabels); err != nil {
 			return 1, err
 		}
-		if err := ensureManagedVolume("cb-pip-cache", map[string]string{"cb.managed": "true", "cb.kind": "shared", "cb.owner": "python313/pip-cache"}); err != nil {
+		if err := dockervol.EnsureManaged("cb-pip-cache", map[string]string{"cb.managed": "true", "cb.kind": "shared", "cb.owner": "python313/pip-cache"}); err != nil {
 			return 1, err
 		}
 		args = append(args,
@@ -802,7 +803,7 @@ func runTool(t registry.Tool, userArgs []string) (int, error) {
 			if err != nil {
 				return 1, err
 			}
-			if err := ensureManagedVolume(vol, map[string]string{"cb.managed": "true", "cb.kind": "project", "cb.owner": t.StateGroup + "/" + name, "cb.project_path": root, "cb.project_hash": pathmap.VolumeHash(root)}); err != nil {
+			if err := dockervol.EnsureManaged(vol, map[string]string{"cb.managed": "true", "cb.kind": "project", "cb.owner": t.StateGroup + "/" + name, "cb.project_path": root, "cb.project_hash": pathmap.VolumeHash(root)}); err != nil {
 				return 1, err
 			}
 			args = append(args, "--mount", volSpec)
@@ -817,7 +818,7 @@ func runTool(t registry.Tool, userArgs []string) (int, error) {
 			if err != nil {
 				return 1, err
 			}
-			if err := ensureManagedVolume(vol, map[string]string{"cb.managed": "true", "cb.kind": "shared", "cb.owner": t.StateGroup + "/" + name}); err != nil {
+			if err := dockervol.EnsureManaged(vol, map[string]string{"cb.managed": "true", "cb.kind": "shared", "cb.owner": t.StateGroup + "/" + name}); err != nil {
 				return 1, err
 			}
 			args = append(args, "--mount", volSpec)
@@ -1004,23 +1005,6 @@ type stateVolume struct {
 	Current bool
 }
 
-func dockerVolumeNames() ([]string, error) {
-	cmd := exec.Command("docker", "volume", "ls", "--format", "{{.Name}}")
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("docker volume ls: %w", err)
-	}
-	var names []string
-	for _, line := range strings.Split(string(out), "\n") {
-		name := strings.TrimSpace(line)
-		if strings.HasPrefix(name, "cb-") {
-			names = append(names, name)
-		}
-	}
-	sort.Strings(names)
-	return names, nil
-}
-
 func currentProjectState(reg registry.Registry) (map[string]stateVolume, map[string]stateVolume, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -1071,7 +1055,7 @@ func currentProjectState(reg registry.Registry) (map[string]stateVolume, map[str
 }
 
 func showState(reg registry.Registry) error {
-	actual, err := dockerVolumeNames()
+	actual, err := dockervol.Names()
 	if err != nil {
 		return err
 	}
@@ -1090,7 +1074,7 @@ func showState(reg registry.Registry) error {
 			fmt.Printf("%-9s  %-48s  %s\n", strings.ToUpper(v.Kind), name, v.Owner)
 			continue
 		}
-		labels, _ := dockerVolumeLabels(name)
+		labels, _ := dockervol.Labels(name)
 		if labels["cb.managed"] == "true" {
 			owner := labels["cb.owner"]
 			switch labels["cb.kind"] {
@@ -1121,18 +1105,6 @@ func showState(reg registry.Registry) error {
 	return nil
 }
 
-func volumeExistsSet() (map[string]bool, error) {
-	names, err := dockerVolumeNames()
-	if err != nil {
-		return nil, err
-	}
-	m := map[string]bool{}
-	for _, n := range names {
-		m[n] = true
-	}
-	return m, nil
-}
-
 func gcState(reg registry.Registry, args []string) error {
 	apply := false
 	orphans := false
@@ -1155,11 +1127,11 @@ func gcState(reg registry.Registry, args []string) error {
 		}
 	}
 	if orphans {
-		vols, err := labeledManagedVolumes()
+		vols, err := dockervol.LabeledManaged()
 		if err != nil {
 			return err
 		}
-		var candidates []managedVolume
+		var candidates []dockervol.Managed
 		for _, v := range vols {
 			if v.Labels["cb.kind"] != "project" {
 				continue
@@ -1189,7 +1161,7 @@ func gcState(reg registry.Registry, args []string) error {
 			return nil
 		}
 		for _, v := range candidates {
-			if err := removeDockerVolume(v.Name); err != nil {
+			if err := dockervol.Remove(v.Name); err != nil {
 				return err
 			}
 		}
@@ -1232,7 +1204,7 @@ func gcState(reg registry.Registry, args []string) error {
 	if len(candidates) == 0 {
 		return errors.New("no project-scoped state matches the current directory/filter")
 	}
-	exists, err := volumeExistsSet()
+	exists, err := dockervol.ExistsSet()
 	if err != nil {
 		return err
 	}
@@ -1256,61 +1228,11 @@ func gcState(reg registry.Registry, args []string) error {
 		return nil
 	}
 	for _, n := range names {
-		if err := removeDockerVolume(n); err != nil {
+		if err := dockervol.Remove(n); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-func removeDockerVolume(name string) error {
-	cmd := exec.Command("docker", "volume", "rm", name)
-	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("remove %s: %w", name, err)
-	}
-	return nil
-}
-
-type managedVolume struct {
-	Name   string
-	Labels map[string]string
-}
-
-func labeledManagedVolumes() ([]managedVolume, error) {
-	cmd := exec.Command("docker", "volume", "ls", "--filter", "label=cb.managed=true", "--format", "{{.Name}}")
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("docker volume ls labels: %w", err)
-	}
-	var result []managedVolume
-	for _, line := range strings.Split(string(out), "\n") {
-		name := strings.TrimSpace(line)
-		if name == "" {
-			continue
-		}
-		labels, err := dockerVolumeLabels(name)
-		if err != nil {
-			return nil, err
-		}
-		result = append(result, managedVolume{Name: name, Labels: labels})
-	}
-	return result, nil
-}
-
-func dockerVolumeLabels(name string) (map[string]string, error) {
-	cmd := exec.Command("docker", "volume", "inspect", "--format", "{{range $k, $v := .Labels}}{{$k}}={{$v}}{{println}}{{end}}", name)
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("inspect volume %s: %w", name, err)
-	}
-	m := map[string]string{}
-	for _, line := range strings.Split(string(out), "\n") {
-		if i := strings.IndexByte(line, '='); i > 0 {
-			m[line[:i]] = line[i+1:]
-		}
-	}
-	return m, nil
 }
 
 func discoverNPMGlobalBins(t registry.Tool) ([]string, error) {
@@ -1423,24 +1345,6 @@ func exposeTool(reg registry.Registry, cfgPath string, args []string) error {
 		return fmt.Errorf("reload registry: %w", err)
 	}
 	return registry.InstallShims(newReg)
-}
-
-func ensureManagedVolume(name string, labels map[string]string) error {
-	args := []string{"volume", "create"}
-	keys := make([]string, 0, len(labels))
-	for k := range labels {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		args = append(args, "--label", k+"="+labels[k])
-	}
-	args = append(args, name)
-	cmd := exec.Command("docker", args...)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("ensure volume %s: %w: %s", name, err, strings.TrimSpace(string(out)))
-	}
-	return nil
 }
 
 func inspectTool(reg registry.Registry, args []string) error {
@@ -2129,21 +2033,10 @@ func runSelfTestChecksAndCleanup(reg registry.Registry, project, external string
 	}
 
 	root, _ := pathmap.CanonicalPath(project)
-	defer removeDockerVolumeQuiet(pathmap.PythonEnvID(root, true))
-	defer removeDockerVolumeQuiet(pathmap.StatefulProjectVolumeID("node24", "node-modules", root, true))
+	defer dockervol.RemoveQuiet(pathmap.PythonEnvID(root, true))
+	defer dockervol.RemoveQuiet(pathmap.StatefulProjectVolumeID("node24", "node-modules", root, true))
 
 	return runSelfTestChecks(reg, project, external, release, cwd)
-}
-
-// removeDockerVolumeQuiet is a best-effort cleanup helper for self-test's own
-// temporary volumes only — unlike removeDockerVolume (shared with cb gc/
-// uninstall, which intentionally show their output), a self-test cleanup call
-// commonly targets a volume that was never created (e.g. because an earlier
-// check failed before python/node ever wrote to it), so "no such volume" is
-// an expected, uninteresting outcome in both plain-text and --json mode, not
-// something worth printing to the user.
-func removeDockerVolumeQuiet(name string) {
-	_ = exec.Command("docker", "volume", "rm", name).Run()
 }
 
 func runSelfTestChecks(reg registry.Registry, project, external string, release bool, cwd string) (selfTestReport, error) {
