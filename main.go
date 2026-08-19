@@ -22,6 +22,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/AviBackToBlack/container-bin/internal/toml"
 )
 
 // version is injected at release time via:
@@ -515,7 +517,7 @@ func parseRegistryTOML(s string) (Registry, error) {
 	lineNo := 0
 	for scanner.Scan() {
 		lineNo++
-		line := strings.TrimSpace(stripComment(scanner.Text()))
+		line := strings.TrimSpace(toml.StripComment(scanner.Text()))
 		if line == "" {
 			continue
 		}
@@ -566,73 +568,73 @@ func parseRegistryTOML(s string) (Registry, error) {
 		t := reg.Tools[current.Name]
 		switch key {
 		case "image":
-			v, err := parseQuoted(value)
+			v, err := toml.ParseQuoted(value)
 			if err != nil {
 				return reg, fmt.Errorf("line %d image: %w", lineNo, err)
 			}
 			t.Image = v
 		case "provider":
-			v, err := parseQuoted(value)
+			v, err := toml.ParseQuoted(value)
 			if err != nil {
 				return reg, fmt.Errorf("line %d provider: %w", lineNo, err)
 			}
 			t.Provider = strings.ToLower(v)
 		case "role":
-			v, err := parseQuoted(value)
+			v, err := toml.ParseQuoted(value)
 			if err != nil {
 				return reg, fmt.Errorf("line %d role: %w", lineNo, err)
 			}
 			t.Role = strings.ToLower(v)
 		case "command":
-			v, err := parseStringArray(value)
+			v, err := toml.ParseStringArray(value)
 			if err != nil {
 				return reg, fmt.Errorf("line %d command: %w", lineNo, err)
 			}
 			t.Command = v
 		case "args_prefix":
-			v, err := parseStringArray(value)
+			v, err := toml.ParseStringArray(value)
 			if err != nil {
 				return reg, fmt.Errorf("line %d args_prefix: %w", lineNo, err)
 			}
 			t.ArgsPrefix = v
 		case "path_next":
-			v, err := parseStringArray(value)
+			v, err := toml.ParseStringArray(value)
 			if err != nil {
 				return reg, fmt.Errorf("line %d path_next: %w", lineNo, err)
 			}
 			t.PathNext = v
 		case "path_equals":
-			v, err := parseStringArray(value)
+			v, err := toml.ParseStringArray(value)
 			if err != nil {
 				return reg, fmt.Errorf("line %d path_equals: %w", lineNo, err)
 			}
 			t.PathEquals = v
 		case "path_last":
-			v, err := parseBool(value)
+			v, err := toml.ParseBool(value)
 			if err != nil {
 				return reg, fmt.Errorf("line %d path_last: %w", lineNo, err)
 			}
 			t.PathLast = v
 		case "path_last_if_any":
-			v, err := parseStringArray(value)
+			v, err := toml.ParseStringArray(value)
 			if err != nil {
 				return reg, fmt.Errorf("line %d path_last_if_any: %w", lineNo, err)
 			}
 			t.PathLastIfAny = v
 		case "env_prefixes":
-			v, err := parseStringArray(value)
+			v, err := toml.ParseStringArray(value)
 			if err != nil {
 				return reg, fmt.Errorf("line %d env_prefixes: %w", lineNo, err)
 			}
 			t.EnvPrefixes = v
 		case "env_names":
-			v, err := parseStringArray(value)
+			v, err := toml.ParseStringArray(value)
 			if err != nil {
 				return reg, fmt.Errorf("line %d env_names: %w", lineNo, err)
 			}
 			t.EnvNames = v
 		case "env_set":
-			v, err := parseStringArray(value)
+			v, err := toml.ParseStringArray(value)
 			if err != nil {
 				return reg, fmt.Errorf("line %d env_set: %w", lineNo, err)
 			}
@@ -643,25 +645,25 @@ func parseRegistryTOML(s string) (Registry, error) {
 			}
 			t.EnvSet = v
 		case "project_markers":
-			v, err := parseStringArray(value)
+			v, err := toml.ParseStringArray(value)
 			if err != nil {
 				return reg, fmt.Errorf("line %d project_markers: %w", lineNo, err)
 			}
 			t.ProjectMarkers = v
 		case "state_group":
-			v, err := parseQuoted(value)
+			v, err := toml.ParseQuoted(value)
 			if err != nil {
 				return reg, fmt.Errorf("line %d state_group: %w", lineNo, err)
 			}
 			t.StateGroup = strings.ToLower(v)
 		case "project_volumes":
-			v, err := parseStringArray(value)
+			v, err := toml.ParseStringArray(value)
 			if err != nil {
 				return reg, fmt.Errorf("line %d project_volumes: %w", lineNo, err)
 			}
 			t.ProjectVolumes = v
 		case "shared_volumes":
-			v, err := parseStringArray(value)
+			v, err := toml.ParseStringArray(value)
 			if err != nil {
 				return reg, fmt.Errorf("line %d shared_volumes: %w", lineNo, err)
 			}
@@ -705,103 +707,6 @@ func parseRegistryTOML(s string) (Registry, error) {
 		}
 	}
 	return reg, nil
-}
-
-func stripComment(s string) string {
-	inQuote := false
-	escaped := false
-	for i, r := range s {
-		if escaped {
-			escaped = false
-			continue
-		}
-		if r == '\\' && inQuote {
-			escaped = true
-			continue
-		}
-		if r == '"' {
-			inQuote = !inQuote
-			continue
-		}
-		if r == '#' && !inQuote {
-			return s[:i]
-		}
-	}
-	return s
-}
-
-func parseQuoted(s string) (string, error) {
-	s = strings.TrimSpace(s)
-	if len(s) < 2 || s[0] != '"' || s[len(s)-1] != '"' {
-		return "", errors.New("expected quoted string")
-	}
-	v, err := strconv.Unquote(s)
-	if err != nil {
-		return "", err
-	}
-	return v, nil
-}
-
-func parseBool(s string) (bool, error) {
-	switch strings.TrimSpace(s) {
-	case "true":
-		return true, nil
-	case "false":
-		return false, nil
-	default:
-		return false, errors.New("expected true or false")
-	}
-}
-
-func parseStringArray(s string) ([]string, error) {
-	s = strings.TrimSpace(s)
-	if s == "[]" {
-		return nil, nil
-	}
-	if len(s) < 2 || s[0] != '[' || s[len(s)-1] != ']' {
-		return nil, errors.New("expected array of quoted strings")
-	}
-	inner := strings.TrimSpace(s[1 : len(s)-1])
-	var out []string
-	for len(inner) > 0 {
-		inner = strings.TrimSpace(inner)
-		if !strings.HasPrefix(inner, "\"") {
-			return nil, errors.New("array elements must be quoted strings")
-		}
-		end := -1
-		escaped := false
-		for i := 1; i < len(inner); i++ {
-			if escaped {
-				escaped = false
-				continue
-			}
-			if inner[i] == '\\' {
-				escaped = true
-				continue
-			}
-			if inner[i] == '"' {
-				end = i
-				break
-			}
-		}
-		if end < 0 {
-			return nil, errors.New("unterminated string")
-		}
-		v, err := strconv.Unquote(inner[:end+1])
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, v)
-		inner = strings.TrimSpace(inner[end+1:])
-		if inner == "" {
-			break
-		}
-		if inner[0] != ',' {
-			return nil, errors.New("expected comma between array elements")
-		}
-		inner = inner[1:]
-	}
-	return out, nil
 }
 
 func validToolName(s string) bool {
@@ -2359,15 +2264,6 @@ func dockerVolumeLabels(name string) (map[string]string, error) {
 	return m, nil
 }
 
-func tomlQuote(s string) string { return strconv.Quote(s) }
-func tomlArray(xs []string) string {
-	q := make([]string, len(xs))
-	for i, x := range xs {
-		q[i] = strconv.Quote(x)
-	}
-	return "[" + strings.Join(q, ", ") + "]"
-}
-
 func discoverNPMGlobalBins(t Tool) ([]string, error) {
 	globalVol := ""
 	for _, spec := range t.SharedVolumes {
@@ -2458,7 +2354,7 @@ func exposeTool(reg Registry, cfgPath string, args []string) error {
 			fmt.Printf("skip %-16s already exists in registry\n", name)
 			continue
 		}
-		section := fmt.Sprintf("\n# Exposed from npm global prefix by cb expose npm\n[tools.%s]\nimage = %s\nprovider = \"stateful\"\ncommand = [%s]\nstate_group = %s\nshared_volumes = %s\nenv_set = %s\nenv_prefixes = %s\nenv_names = %s\n", name, tomlQuote(npm.Image), tomlQuote("/cb/npm-global/bin/"+name), tomlQuote(npm.StateGroup), tomlArray(npm.SharedVolumes), tomlArray(npm.EnvSet), tomlArray(npm.EnvPrefixes), tomlArray(npm.EnvNames))
+		section := fmt.Sprintf("\n# Exposed from npm global prefix by cb expose npm\n[tools.%s]\nimage = %s\nprovider = \"stateful\"\ncommand = [%s]\nstate_group = %s\nshared_volumes = %s\nenv_set = %s\nenv_prefixes = %s\nenv_names = %s\n", name, toml.Quote(npm.Image), toml.Quote("/cb/npm-global/bin/"+name), toml.Quote(npm.StateGroup), toml.Array(npm.SharedVolumes), toml.Array(npm.EnvSet), toml.Array(npm.EnvPrefixes), toml.Array(npm.EnvNames))
 		add.WriteString(section)
 		added++
 		fmt.Printf("exposed %-16s /cb/npm-global/bin/%s\n", name, name)
@@ -3566,7 +3462,7 @@ func loadLockFile(path string) (*LockFile, error) {
 	}
 	for sc.Scan() {
 		lineNo++
-		line := strings.TrimSpace(stripComment(sc.Text()))
+		line := strings.TrimSpace(toml.StripComment(sc.Text()))
 		if line == "" {
 			continue
 		}
@@ -3601,7 +3497,7 @@ func loadLockFile(path string) (*LockFile, error) {
 			lf.Version = v
 			continue
 		}
-		q, err := parseQuoted(val)
+		q, err := toml.ParseQuoted(val)
 		if err != nil {
 			return nil, fmt.Errorf("line %d %s: %w", lineNo, key, err)
 		}
@@ -3646,9 +3542,9 @@ func renderLockFile(lf *LockFile) []byte {
 	for _, configured := range keys {
 		e := lf.Images[configured]
 		b.WriteString("\n[images." + lockEntryID(configured) + "]\n")
-		b.WriteString("configured = " + tomlQuote(e.Configured) + "\n")
-		b.WriteString("resolved = " + tomlQuote(e.Resolved) + "\n")
-		b.WriteString("digest = " + tomlQuote(e.Digest) + "\n")
+		b.WriteString("configured = " + toml.Quote(e.Configured) + "\n")
+		b.WriteString("resolved = " + toml.Quote(e.Resolved) + "\n")
+		b.WriteString("digest = " + toml.Quote(e.Digest) + "\n")
 	}
 	return []byte(b.String())
 }

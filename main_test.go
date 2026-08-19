@@ -318,13 +318,6 @@ func TestStatefulWorkspaceDestination(t *testing.T) {
 	}
 }
 
-func TestTomlArray(t *testing.T) {
-	got := tomlArray([]string{"a", "b c"})
-	if got != `["a", "b c"]` {
-		t.Fatalf("tomlArray = %q", got)
-	}
-}
-
 func TestExposedNPMProfileParses(t *testing.T) {
 	src := `[tools.cowsay]
 image = "node:24-slim"
