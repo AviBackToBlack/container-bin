@@ -422,9 +422,11 @@ that pipeline are in [docs/shell-contract.md](docs/shell-contract.md).
 
 ## Roadmap
 
-Larger ideas (decomposing `main.go` into packages, more package-manager
-integrations, self-update, signing) are tracked in the
+Larger ideas (more package-manager integrations, self-update, signing) are
+tracked in the
 [roadmap issue](https://github.com/AviBackToBlack/container-bin/issues).
+The `main.go` decomposition listed here previously is done; see
+[docs/architecture.md](docs/architecture.md) for the resulting package layout.
 
 ## Contributing & license
 

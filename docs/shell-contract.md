@@ -11,18 +11,18 @@ code that supports it, or is explicitly labeled as documentation only.
 ## 1. Argv delivery
 
 `main()` receives `os.Args` directly from the Windows process-launch boundary
-(`main.go:201`). For shim invocations it calls `runTool(tool, os.Args[1:])`
-(`main.go:213`), forwarding the caller's arguments to the container after
+(`main.go`). For shim invocations it calls `dockerrun.RunTool(tool, os.Args[1:])`
+(`main.go`), forwarding the caller's arguments to the container after
 normalization and path mapping.
 
 `runTool` builds the `docker` argument list and invokes it with
-`exec.Command("docker", args...)` (`main.go:1515`). cb does **not** re-parse or
+`exec.Command("docker", args...)` (`internal/dockerrun/dockerrun.go`, `RunTool`). cb does **not** re-parse or
 re-quote `userArgs` itself for that call. Quoting on the inbound
 Windows→cb boundary is whatever the calling shell and the Go runtime already
 did, and quoting on the cb→`docker.exe` boundary is `os/exec`'s standard
 Windows argument-escaping, not custom cb logic.
 
-Dispatch is driven by `invokedName(os.Args[0])` (`main.go:359`):
+Dispatch is driven by `invokedName(os.Args[0])` (`main.go`):
 
 ```go
 // invokedName derives the dispatch name from argv[0]. Windows filenames are
@@ -39,7 +39,7 @@ there is no further argv re-parsing.
 
 ## 2. PowerShell-specific native argument behavior
 
-`normalizeToolArgs` (`main.go:1542`) rejoins the PowerShell native-command
+`normalizeToolArgs` (`internal/pathmap/pathmap.go`, `NormalizeToolArgs`) rejoins the PowerShell native-command
 split of `-opt=value` into two argv elements (`-opt=`, `value`), but **only** for
 options a profile declares in `path_equals`:
 
@@ -72,7 +72,7 @@ comments and tests, but the underlying check is shape-based: it runs the same
 loop for every caller and joins `opt=` + next value whenever the string matches a
 `path_equals` declaration.
 
-A search of `main.go` for caller-shell detection finds no such code. The only
+A search of the codebase for caller-shell detection finds no such code. The only
 occurrences of `cmd.exe` and `powershell` are the comment in `invokedName`, the
 `doctor`/`bugreport` commands that shell out to PowerShell for host diagnostics,
 and the same `normalizeToolArgs` comment. cb has no code path that inspects which
@@ -89,17 +89,17 @@ this way, so the repair is usually a no-op under `cmd.exe`.
 cmd.Stdin, cmd.Stdout, cmd.Stderr, cmd.Env = os.Stdin, os.Stdout, os.Stderr, os.Environ()
 ```
 
-(`main.go:1516`). There is no cb-side buffering, line-editing, or encoding
+(`internal/dockerrun/dockerrun.go`, `RunTool`). There is no cb-side buffering, line-editing, or encoding
 translation on the tool-run path.
 
-This is not the same as `captureStdout` (`main.go:1197`), which is a different,
+This is not the same as `captureStdout` (`internal/diag/diag.go`), which is a different,
 narrow mechanism used only by `cb self-test` and `cb bugreport` to capture nested
 command output for redaction. `captureStdout` is not part of the tool-run path
 and must not be confused with the passthrough above.
 
 ## 5. TTY detection
 
-`interactiveTerminal()` (`main.go:1367`) is the only TTY-decision function in
+`interactiveTerminal()` (`internal/dockerrun/dockerrun.go`) is the only TTY-decision function in
 cb:
 
 ```go
@@ -119,22 +119,22 @@ func interactiveTerminal() bool {
 A search of the repository for any other TTY, terminal, or console capability
 decision finds only `interactiveTerminal`; no color-forcing, terminal capability
 negotiation, or alternate buffer control exists. `runTool` adds `docker run -t`
-only when this function returns true (`main.go:1408`) and uses plain `-i`
+only when this function returns true (`internal/dockerrun/dockerrun.go`, `RunTool`) and uses plain `-i`
 otherwise.
 
 ## 6. Current working directory
 
 `runTool` derives the container working directory as follows:
 
-1. `os.Getwd()` (`main.go:1377`) gets the host process cwd.
-2. `canonicalPath(cwd)` (`main.go:1381`) resolves to a cleaned, symlink-resolved
-   absolute path, lowercased when `runtime.GOOS == "windows"` (`main.go:1990`).
-3. `findProjectRoot(cwd, projectMarkersFor(t))` (`main.go:1385`) walks upward
+1. `os.Getwd()` (`internal/dockerrun/dockerrun.go`, `RunTool`) gets the host process cwd.
+2. `canonicalPath(cwd)` (`internal/dockerrun/dockerrun.go`, `RunTool`) resolves to a cleaned, symlink-resolved
+   absolute path, lowercased when `runtime.GOOS == "windows"` (`internal/pathmap/pathmap.go`, `CanonicalPath`).
+3. `findProjectRoot(cwd, projectMarkersFor(t))` (`internal/dockerrun/dockerrun.go`, `RunTool`) walks upward
    looking for declared markers.
-4. If no root is found, `root = cwd` (`main.go:1387`).
-5. `workspaceRoot := workspaceRootFor(t, root)` (`main.go:1393`) and
-   `containerWD` are built from that root (`main.go:1394`).
-6. The `--workdir` flag is appended to the `docker run` argv (`main.go:1411`).
+4. If no root is found, `root = cwd` (`internal/dockerrun/dockerrun.go`, `RunTool`).
+5. `workspaceRoot := workspaceRootFor(t, root)` (`internal/dockerrun/dockerrun.go`, `RunTool`) and
+   `containerWD` are built from that root (`internal/dockerrun/dockerrun.go`, `RunTool`).
+6. The `--workdir` flag is appended to the `docker run` argv (`internal/dockerrun/dockerrun.go`, `RunTool`).
 
 Because `containerWD` is always computed from the root that is also bind-mounted
 as `/workspace`, the container's cwd is always inside that bind-mounted project
@@ -149,7 +149,7 @@ Two separate code paths exist and must not be conflated.
 
 ### Mutation-lock path
 
-`withMutationLock` (`main.go:3489`) installs a single `os.Interrupt` handler:
+`withMutationLock` (`main.go`) installs a single `os.Interrupt` handler:
 
 ```go
 c := make(chan os.Signal, 1)
@@ -165,7 +165,7 @@ go func() {
 }()
 ```
 
-`exitInterrupted` is the constant `130` (`main.go:2032`). This is the cited,
+`exitInterrupted` is the constant `130` (`main.go`). This is the cited,
 tested behavior: a `cb` process interrupted with Ctrl-C while holding the
 mutation lock exits `130` and releases the lock. The authoritative exit-code
 meaning is in [README.md's `## Exit codes`](../README.md#exit-codes); see that
@@ -173,10 +173,11 @@ section for the table rather than restating it here.
 
 ### Tool-run path
 
-`runTool` installs **no** signal handler. A search of `main.go` for
+`RunTool` installs **no** signal handler. A search of the codebase for
 `signal.Notify` and `os.Interrupt` finds exactly one call site, inside
-`withMutationLock`. `runTool` also sets no `SysProcAttr` on the `docker` child; a
-search for `SysProcAttr` in the entire repository finds no matches.
+`withMutationLock` in `main.go`. `RunTool` also sets no `SysProcAttr` on the
+`docker` child; a search for `SysProcAttr` in the entire repository finds no
+matches.
 
 > **Documentation only — inferred, not tested.** Because `exec.Command` on this
 > path uses default process attributes, the child `docker` process is not placed
@@ -192,7 +193,7 @@ search for `SysProcAttr` in the entire repository finds no matches.
 
 ## 8. Environment variable case-folding
 
-`selectedHostEnv` (`main.go:1745`) matches `EnvNames` and `EnvPrefixes` against
+`selectedHostEnv` (`internal/dockerrun/dockerrun.go`) matches `EnvNames` and `EnvPrefixes` against
 `os.Environ()` case-insensitively:
 
 ```go
@@ -218,7 +219,7 @@ profile author can declare `env_names = ["Path"]` and the host `PATH` or `Path`
 will match without enumerating every case variant.
 
 The actual host values are resolved through `cmd.Env = os.Environ()`
-(`main.go:1516`); `selectedHostEnv` only decides which variable *names* are
+(`internal/dockerrun/dockerrun.go`, `RunTool`); `selectedHostEnv` only decides which variable *names* are
 passed to `docker run` as `-e` flags.
 
 ## 9. What is deliberately NOT emulated
@@ -227,7 +228,7 @@ These are behaviors ContainerBin explicitly does not provide. Each item was
 checked in the current codebase.
 
 - **No re-quoting or re-escaping of `argv` beyond what Go's `os/exec` does**
-  (`main.go:1515`). The two quoting boundaries are the calling shell's and
+  (`internal/dockerrun/dockerrun.go`, `RunTool`). The two quoting boundaries are the calling shell's and
   `os/exec`'s; cb adds no custom quoting engine.
 - **No shell detection of any kind.** cb does not inspect the parent process,
   `COMSPEC`, `PSModulePath`, or any other caller signature; `normalizeToolArgs`
