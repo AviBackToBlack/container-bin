@@ -128,26 +128,31 @@ func Env(reg registry.Registry) error {
 }
 
 func discoverNPMGlobalBins(t registry.Tool) ([]string, error) {
-	globalVol := ""
+	var globalVol, logicalName string
 	for _, spec := range t.SharedVolumes {
-		logical, _, err := registry.ParseVolumeBinding(spec)
+		logical, dst, err := registry.ParseVolumeBinding(spec)
 		if err != nil {
 			return nil, err
 		}
-		if logical == "npm-global" {
-			globalVol = pathmap.StatefulSharedVolumeID(t.StateGroup, logical)
+		if dst == "/cb/npm-global" {
+			logicalName = logical
+			globalVol = pathmap.StatefulSharedVolumeID(t.StateGroup, logicalName)
 			break
 		}
 	}
 	if globalVol == "" {
 		return nil, fmt.Errorf("tool %q has no npm-global shared volume", t.Name)
 	}
+	image, err := lockfile.RuntimeImageForTool(t)
+	if err != nil {
+		return nil, err
+	}
 	script := `if [ -d /cb/npm-global/bin ]; then for f in /cb/npm-global/bin/*; do [ -e "$f" ] || continue; basename "$f"; done; fi`
 	mount, err := dockerrun.MountSpec("volume", globalVol, "/cb/npm-global")
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.Command("docker", "run", "--rm", "--mount", mount, t.Image, "sh", "-lc", script)
+	cmd := exec.Command("docker", "run", "--rm", "--mount", mount, image, "sh", "-lc", script)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("inspect npm global bin: %w", err)
@@ -168,6 +173,19 @@ func discoverNPMGlobalBins(t registry.Tool) ([]string, error) {
 	return bins, nil
 }
 
+func renderExposedToolSection(sourceName string, source registry.Tool, name string) string {
+	return fmt.Sprintf("\n# Exposed from %s global prefix by cb expose %s\n[tools.%s]\nimage = %s\nprovider = \"stateful\"\ncommand = [%s]\nstate_group = %s\nshared_volumes = %s\nenv_set = %s\nenv_prefixes = %s\nenv_names = %s\n",
+		sourceName, sourceName, name,
+		toml.Quote(source.Image),
+		toml.Quote("/cb/npm-global/bin/"+name),
+		toml.Quote(source.StateGroup),
+		toml.Array(source.SharedVolumes),
+		toml.Array(source.EnvSet),
+		toml.Array(source.EnvPrefixes),
+		toml.Array(source.EnvNames),
+	)
+}
+
 func Expose(reg registry.Registry, cfgPath string, args []string) error {
 	if len(args) == 0 {
 		return errors.New("usage: cb expose TOOL [BINARY ...] (TOOL is an npm-shaped stateful profile already in the registry, e.g. npm or npm22)")
@@ -176,6 +194,9 @@ func Expose(reg registry.Registry, cfgPath string, args []string) error {
 	source, ok := reg.Tools[sourceName]
 	if !ok {
 		return fmt.Errorf("tool %q not found; cb expose exposes global binaries from an npm-shaped profile already in the registry", sourceName)
+	}
+	if source.Provider != "stateful" {
+		return fmt.Errorf("tool %q is not a stateful npm-shaped profile", sourceName)
 	}
 	bins, err := discoverNPMGlobalBins(source)
 	if err != nil {
@@ -212,10 +233,10 @@ func Expose(reg registry.Registry, cfgPath string, args []string) error {
 	added := 0
 	for _, name := range selected {
 		if _, exists := reg.Tools[name]; exists {
-			fmt.Printf("skip %-16s already exists in registry\n", name)
+			fmt.Printf("skip %-16s already exists in registry (state_group=%s)\n", name, reg.Tools[name].StateGroup)
 			continue
 		}
-		section := fmt.Sprintf("\n# Exposed from %s global prefix by cb expose %s\n[tools.%s]\nimage = %s\nprovider = \"stateful\"\ncommand = [%s]\nstate_group = %s\nshared_volumes = %s\nenv_set = %s\nenv_prefixes = %s\nenv_names = %s\n", sourceName, sourceName, name, toml.Quote(source.Image), toml.Quote("/cb/npm-global/bin/"+name), toml.Quote(source.StateGroup), toml.Array(source.SharedVolumes), toml.Array(source.EnvSet), toml.Array(source.EnvPrefixes), toml.Array(source.EnvNames))
+		section := renderExposedToolSection(sourceName, source, name)
 		add.WriteString(section)
 		added++
 		fmt.Printf("exposed %-16s /cb/npm-global/bin/%s\n", name, name)

@@ -201,7 +201,7 @@ npm global prefix. Projects are mounted with their **real basename**
 not a guarantee that every npm package is ABI-compatible with it. For packages
 whose native addons need a different Node ABI, `node22`/`npm22`/`npx22` are a
 second, independent Node-major runtime with their own `node22` state group,
-fully isolating project `node_modules`, the npm cache and the npm global prefix.
+fully isolating project `node_modules`, the npm cache and the npm global prefix; upgrading an existing installation adds these profiles automatically, but they are not yet locked, so run `cb lock` or `cb update --all` before using them.
 
 ## Dynamic npm CLI exposure
 
