@@ -350,7 +350,7 @@ func MountSpecMode(kind, src, dst, mode string) (string, error) {
 // ExpandHostMountSource resolves the one host variable container-bin
 // understands in a host_mounts source. A literal Windows absolute path is
 // returned unchanged. registry.ParseHostMount has already rejected any other
-// %...% token, so this never needs to guess about anything it hasn’t seen.
+// %...% token, so this never needs to guess about anything it hasn't seen.
 func ExpandHostMountSource(source string) (string, error) {
 	if strings.HasPrefix(source, "%USERPROFILE%") {
 		home, err := os.UserHomeDir()
