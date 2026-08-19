@@ -172,9 +172,10 @@ Windows absolute path using a backslash after the drive letter
 (e.g. `D:\Video`). The forward-slash drive form (`D:/Video`) embeds the `:/`
 source/target delimiter and is rejected as ambiguous, so always use `X:\...`.
 
-Targets under `/workspace` and `/cb` are reserved for container-bin's own
-project workspace and managed state mounts and cannot be claimed by
-`host_mounts`.
+Targets under `/workspace`, `/cb`, `/venv` and `/root/.cache/pip` are reserved
+for container-bin's own project workspace and managed state mounts (the last
+two are the python provider's fixed venv/pip-cache paths) and cannot be
+claimed by `host_mounts`, on any provider.
 
 > A `host_mounts` entry grants the configured Docker image direct access to the
 > named host files or directories. ContainerBin is **not a security sandbox**;

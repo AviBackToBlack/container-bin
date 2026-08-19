@@ -122,7 +122,13 @@ func reparsePointVerdict(subject, literalPath, resolvedPath string) (status, mes
 // warn-not-fail precedent as dockerOSTypeVerdict.
 func hostMountVerdict(toolName, source, target, canonicalPath string, exists bool) (status, message string) {
 	if !exists {
-		return "warn", fmt.Sprintf("%s: host_mounts source %q for %s does not exist: %s", toolName, source, target, canonicalPath)
+		// This is warn, not fail, because a missing source is per-machine/
+		// per-user state, not a container-bin defect (dockerOSTypeVerdict's
+		// warn-not-fail precedent). But RunTool fails closed on the identical
+		// condition -- cb doctor summarizing "0 failures" must not read as
+		// "this tool will run"; naming the actual consequence in the message
+		// closes that gap without changing the warn/fail severity.
+		return "warn", fmt.Sprintf("%s: host_mounts source %q for %s does not exist: %s (this tool cannot run until it does)", toolName, source, target, canonicalPath)
 	}
 	return "ok", fmt.Sprintf("%s: host_mounts source %q for %s exists: %s", toolName, source, target, canonicalPath)
 }

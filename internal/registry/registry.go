@@ -547,6 +547,18 @@ func ParseHostMount(spec string) (source, target, mode string, err error) {
 		// checks at load, environment-dependent checks at run).
 		return "", "", "", errors.New("host_mounts target contains a comma and cannot be represented safely in docker --mount syntax (values are comma-separated with no escaping)")
 	}
+	if strings.Contains(target, ":") {
+		// The mode suffix is found by taking the LAST ":" in the remainder
+		// (see below), so an entry with an extra colon inside the target,
+		// e.g. "D:\V:/root/a:b:ro", parses without error today: the LAST
+		// colon is still correctly found as the mode delimiter, but the
+		// target itself is left containing one. Docker's --mount tolerates a
+		// colon in dst=, so this was never a mis-mount risk, but it's an
+		// unintended shape the documented SOURCE:/CONTAINER_PATH:MODE grammar
+		// doesn't describe. Rejecting it keeps the grammar as tight as every
+		// other part of this validation.
+		return "", "", "", errors.New("host_mounts target must not contain \":\"")
+	}
 	// Reject ".." path segments outright, before cleaning: path.Clean collapses
 	// a traversal like "/workspace/.." to "/", which is not itself in the
 	// reserved-namespace list validateHostMounts checks against, so a naive

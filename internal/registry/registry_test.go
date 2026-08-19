@@ -489,6 +489,16 @@ func TestParseHostMount(t *testing.T) {
 			errSubstr: "comma",
 		},
 		{
+			// The mode suffix is found via the LAST ":" in the remainder, so
+			// this would otherwise parse as target "/root/a:b", mode "ro"
+			// without error -- an unintended shape outside the documented
+			// SOURCE:/CONTAINER_PATH:MODE grammar.
+			name:      "colon_in_target",
+			spec:      "D:\\Video:/root/a:b:ro",
+			wantErr:   true,
+			errSubstr: "must not contain",
+		},
+		{
 			name:      "userprofile_no_separator_concatenates_into_sibling",
 			spec:      "%USERPROFILE%foo:/root/foo:ro",
 			wantErr:   true,

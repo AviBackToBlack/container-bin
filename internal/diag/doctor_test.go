@@ -404,7 +404,7 @@ func TestHostMountVerdict(t *testing.T) {
 	if status != "warn" {
 		t.Fatalf("expected warn for missing source, got %q", status)
 	}
-	for _, want := range []string{"demo", "\"%USERPROFILE%\\\\.claude\"", "/root/.claude", "does not exist", "C:\\Users\\x\\.claude"} {
+	for _, want := range []string{"demo", "\"%USERPROFILE%\\\\.claude\"", "/root/.claude", "does not exist", "C:\\Users\\x\\.claude", "cannot run"} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("message %q does not contain %q", msg, want)
 		}
