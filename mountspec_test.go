@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/AviBackToBlack/container-bin/internal/registry"
 )
 
 func TestMountSpecBindSuccess(t *testing.T) {
@@ -101,7 +103,7 @@ func TestMountSpecBothCommas(t *testing.T) {
 // docs/windows-paths.md (row P15) for why the two scenarios are not the same.
 func TestMountSpecWorkspaceRootComposition(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "My, Project")
-	tool := Tool{Provider: "stateful"}
+	tool := registry.Tool{Provider: "stateful"}
 	workspaceRoot := workspaceRootFor(tool, root)
 
 	got, err := mountSpec("bind", "/clean/src", workspaceRoot)
@@ -124,7 +126,7 @@ func TestMountSpecWorkspaceRootComposition(t *testing.T) {
 // basename changes this outcome, because the failure never reaches dst.
 func TestRootBindMountCommaFailsClosedOnSrc(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "My, Project")
-	tool := Tool{Provider: "stateful"}
+	tool := registry.Tool{Provider: "stateful"}
 	workspaceRoot := workspaceRootFor(tool, root) // same root as below, exactly like runTool
 
 	got, err := mountSpec("bind", root, workspaceRoot)

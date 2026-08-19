@@ -6,107 +6,9 @@ import (
 	"reflect"
 	"runtime"
 	"testing"
+
+	"github.com/AviBackToBlack/container-bin/internal/registry"
 )
-
-func TestGoProfilesParseAndImage(t *testing.T) {
-	reg, err := parseRegistryTOML(defaultRegistryTOML)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"go", "gofmt"} {
-		tool, ok := reg.Tools[name]
-		if !ok {
-			t.Fatalf("missing default tool %q", name)
-		}
-		if tool.Provider != "stateful" {
-			t.Fatalf("%s provider = %q, want stateful", name, tool.Provider)
-		}
-		if tool.Image != "golang:1.24" {
-			t.Fatalf("%s image = %q, want golang:1.24", name, tool.Image)
-		}
-		if tool.StateGroup != "go124" {
-			t.Fatalf("%s state_group = %q, want go124", name, tool.StateGroup)
-		}
-	}
-}
-
-func TestGoProfilesShareStateGroupAndVolumes(t *testing.T) {
-	reg, err := parseRegistryTOML(defaultRegistryTOML)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"go", "gofmt"} {
-		tool := reg.Tools[name]
-		if tool.Provider != "stateful" || tool.StateGroup != "go124" {
-			t.Fatalf("bad %s state profile: %+v", name, tool)
-		}
-		want := []string{"gomodcache:/go/pkg/mod", "gobuild:/root/.cache/go-build", "gobin:/go/bin"}
-		if !reflect.DeepEqual(tool.SharedVolumes, want) {
-			t.Fatalf("%s shared_volumes = %#v, want %#v", name, tool.SharedVolumes, want)
-		}
-	}
-}
-
-func TestGoProfileHasNoProjectVolumes(t *testing.T) {
-	reg, err := parseRegistryTOML(defaultRegistryTOML)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(reg.Tools["go"].ProjectVolumes) != 0 {
-		t.Fatalf("go has unexpected project_volumes: %#v", reg.Tools["go"].ProjectVolumes)
-	}
-}
-
-func TestGoSharedVolumesParse(t *testing.T) {
-	reg, err := parseRegistryTOML(defaultRegistryTOML)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"go", "gofmt"} {
-		for _, spec := range reg.Tools[name].SharedVolumes {
-			if _, _, err := parseVolumeBinding(spec); err != nil {
-				t.Fatalf("%s shared volume %q: %v", name, spec, err)
-			}
-		}
-	}
-}
-
-func TestGoEnvAllowlistExcludesPathVariables(t *testing.T) {
-	reg, err := parseRegistryTOML(defaultRegistryTOML)
-	if err != nil {
-		t.Fatal(err)
-	}
-	allowed := map[string]bool{}
-	for _, name := range reg.Tools["go"].EnvNames {
-		allowed[name] = true
-	}
-	for _, name := range reg.Tools["gofmt"].EnvNames {
-		allowed[name] = true
-	}
-	must := []string{"GOFLAGS", "GOOS"}
-	for _, name := range must {
-		if !allowed[name] {
-			t.Fatalf("env allowlist missing %q", name)
-		}
-	}
-	excluded := []string{"GOPATH", "GOROOT", "GOBIN", "GOCACHE", "GOMODCACHE", "GOTMPDIR", "GOENV"}
-	for _, name := range excluded {
-		if allowed[name] {
-			t.Fatalf("env allowlist must not include path-valued %q", name)
-		}
-	}
-}
-
-func TestGoNamesAreInstallable(t *testing.T) {
-	for _, name := range []string{"go", "gofmt"} {
-		if reservedToolName(name) {
-			t.Fatalf("%q should not be reserved", name)
-		}
-		if !validToolName(name) {
-			t.Fatalf("%q should be a valid tool name", name)
-		}
-	}
-}
 
 func TestGoPathMappingWindows(t *testing.T) {
 	if runtime.GOOS != "windows" {
@@ -119,7 +21,7 @@ func TestGoPathMappingWindows(t *testing.T) {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	root := mustCanonical(t, rootRaw)
-	reg, err := parseRegistryTOML(defaultRegistryTOML)
+	reg, err := registry.ParseTOML(registry.DefaultTOML)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,27 +70,6 @@ func TestGoPathMappingWindows(t *testing.T) {
 // positionally blind, so it would rewrite arguments the tool never treats as
 // paths: the value after "go run PKG -o", and the trailing rewrite rule of
 // "gofmt -r". Real paths are still handled by the general shape rules.
-func TestGoProfilesDeclareNoForcedPathSemantics(t *testing.T) {
-	reg, err := parseRegistryTOML(defaultRegistryTOML)
-	if err != nil {
-		t.Fatal(err)
-	}
-	goTool := reg.Tools["go"]
-	if len(goTool.PathNext) != 0 {
-		t.Fatalf("go must not declare path_next, got %#v", goTool.PathNext)
-	}
-	if len(goTool.PathEquals) != 0 || goTool.PathLast {
-		t.Fatalf("go must not declare forced path semantics: %+v", goTool)
-	}
-	gofmtTool := reg.Tools["gofmt"]
-	if gofmtTool.PathLast {
-		t.Fatal("gofmt must not declare path_last; it would force the -r rewrite rule through path mapping")
-	}
-	if len(gofmtTool.PathNext) != 0 || len(gofmtTool.PathEquals) != 0 {
-		t.Fatalf("gofmt must not declare forced path semantics: %+v", gofmtTool)
-	}
-}
-
 func TestGofmtPathMappingWindows(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("windows path-mapping semantics")
@@ -199,7 +80,7 @@ func TestGofmtPathMappingWindows(t *testing.T) {
 		t.Fatalf("MkdirAll: %v", err)
 	}
 	root := mustCanonical(t, rootRaw)
-	reg, err := parseRegistryTOML(defaultRegistryTOML)
+	reg, err := registry.ParseTOML(registry.DefaultTOML)
 	if err != nil {
 		t.Fatal(err)
 	}

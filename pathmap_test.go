@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/AviBackToBlack/container-bin/internal/registry"
 )
 
 func mustCanonical(t *testing.T, p string) string {
@@ -29,7 +31,7 @@ func mustWriteFile(t *testing.T, path string, data []byte) {
 }
 
 func TestNormalizeToolArgsJoinsSplitValue(t *testing.T) {
-	tool := Tool{Name: "demo", PathEquals: []string{"--file"}}
+	tool := registry.Tool{Name: "demo", PathEquals: []string{"--file"}}
 	in := []string{"--file=", "value", "rest"}
 	want := []string{"--file=value", "rest"}
 	got := normalizeToolArgs(tool, in)
@@ -39,7 +41,7 @@ func TestNormalizeToolArgsJoinsSplitValue(t *testing.T) {
 }
 
 func TestNormalizeToolArgsTrailingBarePrefix(t *testing.T) {
-	tool := Tool{Name: "demo", PathEquals: []string{"--file"}}
+	tool := registry.Tool{Name: "demo", PathEquals: []string{"--file"}}
 	in := []string{"validate", "--file="}
 	got := normalizeToolArgs(tool, in)
 	if !reflect.DeepEqual(got, in) {
@@ -48,7 +50,7 @@ func TestNormalizeToolArgsTrailingBarePrefix(t *testing.T) {
 }
 
 func TestNormalizeToolArgsEmptyPathEquals(t *testing.T) {
-	tool := Tool{Name: "demo"}
+	tool := registry.Tool{Name: "demo"}
 	in := []string{"--file=", "value", "x"}
 	got := normalizeToolArgs(tool, in)
 	if !reflect.DeepEqual(got, in) {
@@ -60,7 +62,7 @@ func TestMapToolArgsNonWindowsContract(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("documents the non-windows early return in mapToolArgs")
 	}
-	tool := Tool{Name: "demo", PathEquals: []string{"--file"}}
+	tool := registry.Tool{Name: "demo", PathEquals: []string{"--file"}}
 	in := []string{"--file=", "value", "rest"}
 	mapped, mounts, err := mapToolArgs(tool, "root", "cwd", "/workspace", in)
 	if err != nil {
@@ -135,7 +137,7 @@ func TestWorkspaceRootFor(t *testing.T) {
 		{"stateful", "/workspace/myproj"},
 	}
 	for _, tc := range cases {
-		got := workspaceRootFor(Tool{Provider: tc.provider}, root)
+		got := workspaceRootFor(registry.Tool{Provider: tc.provider}, root)
 		if got != tc.want {
 			t.Fatalf("A7 provider %q: got %q, want %q", tc.provider, got, tc.want)
 		}
@@ -169,7 +171,7 @@ func windowsFixtures(t *testing.T) (root, ext string) {
 
 func TestMapToolArgsAbsoluteInsideRoot(t *testing.T) {
 	root, _ := windowsFixtures(t)
-	tool := Tool{Name: "demo"}
+	tool := registry.Tool{Name: "demo"}
 	in := []string{filepath.Join(root, "sub", "a.txt")}
 	mapped, mounts, err := mapToolArgs(tool, root, root, "/workspace", in)
 	if err != nil {
@@ -186,7 +188,7 @@ func TestMapToolArgsAbsoluteInsideRoot(t *testing.T) {
 
 func TestMapToolArgsRootItself(t *testing.T) {
 	root, _ := windowsFixtures(t)
-	tool := Tool{Name: "demo"}
+	tool := registry.Tool{Name: "demo"}
 	in := []string{root}
 	mapped, mounts, err := mapToolArgs(tool, root, root, "/workspace", in)
 	if err != nil {
@@ -203,7 +205,7 @@ func TestMapToolArgsRootItself(t *testing.T) {
 
 func TestMapToolArgsNonPathArgs(t *testing.T) {
 	root, _ := windowsFixtures(t)
-	tool := Tool{Name: "demo"}
+	tool := registry.Tool{Name: "demo"}
 	in := []string{"-n", "hello", "{.items}"}
 	mapped, mounts, err := mapToolArgs(tool, root, root, "/workspace", in)
 	if err != nil {
@@ -219,7 +221,7 @@ func TestMapToolArgsNonPathArgs(t *testing.T) {
 
 func TestMapToolArgsExternalAbsolute(t *testing.T) {
 	root, ext := windowsFixtures(t)
-	tool := Tool{Name: "demo"}
+	tool := registry.Tool{Name: "demo"}
 	in := []string{filepath.Join(ext, "b.txt")}
 	mapped, mounts, err := mapToolArgs(tool, root, root, "/workspace", in)
 	if err != nil {
@@ -236,7 +238,7 @@ func TestMapToolArgsExternalAbsolute(t *testing.T) {
 
 func TestMapToolArgsExternalDedup(t *testing.T) {
 	root, ext := windowsFixtures(t)
-	tool := Tool{Name: "demo"}
+	tool := registry.Tool{Name: "demo"}
 	in := []string{filepath.Join(ext, "b.txt"), filepath.Join(ext, "c.txt")}
 	mapped, mounts, err := mapToolArgs(tool, root, root, "/workspace", in)
 	if err != nil {
@@ -253,7 +255,7 @@ func TestMapToolArgsExternalDedup(t *testing.T) {
 
 func TestMapToolArgsExternalDedupCaseInsensitive(t *testing.T) {
 	root, ext := windowsFixtures(t)
-	tool := Tool{Name: "demo"}
+	tool := registry.Tool{Name: "demo"}
 	lower := filepath.Join(ext, "b.txt")
 	upper := filepath.Join(strings.ToUpper(ext), "B.TXT")
 	in := []string{lower, upper}
@@ -289,7 +291,7 @@ func TestMapToolArgsDistinctExternalRoots(t *testing.T) {
 		t.Fatalf("precondition: ext %q must not be under root %q", ext2, root)
 	}
 
-	tool := Tool{Name: "demo"}
+	tool := registry.Tool{Name: "demo"}
 	in := []string{filepath.Join(ext1, "x1.txt"), filepath.Join(ext2, "x2.txt")}
 	mapped, mounts, err := mapToolArgs(tool, root, root, "/workspace", in)
 	if err != nil {
@@ -307,7 +309,7 @@ func TestMapToolArgsDistinctExternalRoots(t *testing.T) {
 
 func TestMapToolArgsPathNext(t *testing.T) {
 	root, ext := windowsFixtures(t)
-	tool := Tool{Name: "demo", PathNext: []string{"-f"}}
+	tool := registry.Tool{Name: "demo", PathNext: []string{"-f"}}
 
 	file := filepath.Join(ext, "b.txt")
 	in := []string{"-f", file}
@@ -339,7 +341,7 @@ func TestMapToolArgsPathNext(t *testing.T) {
 
 func TestMapToolArgsPathNextDangling(t *testing.T) {
 	root, _ := windowsFixtures(t)
-	tool := Tool{Name: "tf", PathNext: []string{"-f"}}
+	tool := registry.Tool{Name: "tf", PathNext: []string{"-f"}}
 	in := []string{"-f"}
 	_, _, err := mapToolArgs(tool, root, root, "/workspace", in)
 	if err == nil {
@@ -353,7 +355,7 @@ func TestMapToolArgsPathNextDangling(t *testing.T) {
 
 func TestMapToolArgsPathEquals(t *testing.T) {
 	root, _ := windowsFixtures(t)
-	tool := Tool{Name: "demo", PathEquals: []string{"--file"}}
+	tool := registry.Tool{Name: "demo", PathEquals: []string{"--file"}}
 	in := []string{"--file=" + filepath.Join(root, "sub", "a.txt")}
 	mapped, mounts, err := mapToolArgs(tool, root, root, "/workspace", in)
 	if err != nil {
@@ -370,7 +372,7 @@ func TestMapToolArgsPathEquals(t *testing.T) {
 
 func TestMapToolArgsPathLast(t *testing.T) {
 	root, _ := windowsFixtures(t)
-	tool := Tool{Name: "demo", PathLast: true}
+	tool := registry.Tool{Name: "demo", PathLast: true}
 	cases := []struct {
 		name string
 		in   []string
@@ -398,7 +400,7 @@ func TestMapToolArgsPathLast(t *testing.T) {
 
 func TestMapToolArgsPathLastIfAny(t *testing.T) {
 	root, ext := windowsFixtures(t)
-	tool := Tool{Name: "demo", PathLast: true, PathLastIfAny: []string{"-o"}}
+	tool := registry.Tool{Name: "demo", PathLast: true, PathLastIfAny: []string{"-o"}}
 
 	in1 := []string{"-o", "data.json"}
 	mapped1, mounts1, err1 := mapToolArgs(tool, root, ext, "/workspace", in1)
@@ -428,7 +430,7 @@ func TestMapToolArgsPathLastIfAny(t *testing.T) {
 
 func TestMapToolArgsExternalMissingAncestor(t *testing.T) {
 	root, ext := windowsFixtures(t)
-	tool := Tool{Name: "demo"}
+	tool := registry.Tool{Name: "demo"}
 	in := []string{filepath.Join(ext, "nope", "out.txt")}
 	mapped, mounts, err := mapToolArgs(tool, root, root, "/workspace", in)
 	if err != nil {
@@ -445,7 +447,7 @@ func TestMapToolArgsExternalMissingAncestor(t *testing.T) {
 
 func TestMapToolArgsStatefulWorkspaceRoot(t *testing.T) {
 	root, _ := windowsFixtures(t)
-	tool := Tool{Name: "demo"}
+	tool := registry.Tool{Name: "demo"}
 	in := []string{filepath.Join(root, "sub", "a.txt")}
 	mapped, mounts, err := mapToolArgs(tool, root, root, "/workspace/proj", in)
 	if err != nil {
@@ -488,11 +490,11 @@ func TestPackagePatternSuffix(t *testing.T) {
 
 func TestMapToolArgsPackagePattern(t *testing.T) {
 	root, ext := windowsFixtures(t)
-	demo := Tool{Name: "demo"}
+	demo := registry.Tool{Name: "demo"}
 
 	cases := []struct {
 		name       string
-		tool       Tool
+		tool       registry.Tool
 		in         []string
 		want       []string
 		wantMounts int
@@ -504,7 +506,7 @@ func TestMapToolArgsPackagePattern(t *testing.T) {
 		{"dotdot backslash dotdotdot", demo, []string{`..\...`}, []string{`..\...`}, 0},
 		{"cmd slash dotdotdot", demo, []string{"./cmd/..."}, []string{"./cmd/..."}, 0},
 		{"cmd backslash dotdotdot", demo, []string{`.\cmd\...`}, []string{`.\cmd\...`}, 0},
-		{"path next still declines", Tool{Name: "demo", PathNext: []string{"-o"}}, []string{"-o", "./..."}, []string{"-o", "./..."}, 0},
+		{"path next still declines", registry.Tool{Name: "demo", PathNext: []string{"-o"}}, []string{"-o", "./..."}, []string{"-o", "./..."}, 0},
 		{"regression subdir", demo, []string{`.\sub`}, []string{"/workspace/sub"}, 0},
 		{"regression absolute inside", demo, []string{filepath.Join(root, "sub", "a.txt")}, []string{"/workspace/sub/a.txt"}, 0},
 		{"regression absolute outside", demo, []string{filepath.Join(ext, "b.txt")}, []string{"/cb/mounts/0/b.txt"}, 1},

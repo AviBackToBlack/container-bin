@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/AviBackToBlack/container-bin/internal/registry"
 )
 
 func TestPathFormP1JunctionToRoot(t *testing.T) {
@@ -32,7 +34,7 @@ func TestPathFormP1JunctionToRoot(t *testing.T) {
 		t.Fatalf("P1: canonical through link %q != resolved %q", through, resolved)
 	}
 
-	tool := Tool{Name: "demo"}
+	tool := registry.Tool{Name: "demo"}
 	arg := filepath.Join(link, "a.txt")
 	mapped, mounts, err := mapToolArgs(tool, resolved, resolved, "/workspace", []string{arg})
 	if err != nil {
@@ -55,7 +57,7 @@ func TestPathFormP2JunctionEscapesRoot(t *testing.T) {
 		t.Skipf("P2: creating directory symlink requires privilege or developer mode: %v", err)
 	}
 
-	tool := Tool{Name: "demo"}
+	tool := registry.Tool{Name: "demo"}
 	arg := `.\escape\b.txt`
 	mapped, mounts, err := mapToolArgs(tool, root, root, "/workspace", []string{arg})
 	if err != nil {
@@ -71,7 +73,7 @@ func TestPathFormP2JunctionEscapesRoot(t *testing.T) {
 
 func TestPathFormP5CaseInsensitiveEquivalence(t *testing.T) {
 	root, ext := windowsFixtures(t)
-	tool := Tool{Name: "demo"}
+	tool := registry.Tool{Name: "demo"}
 
 	upperIn := filepath.Join(strings.ToUpper(root), "SUB", "A.TXT")
 	mapped, mounts, err := mapToolArgs(tool, root, root, "/workspace", []string{upperIn})
@@ -112,7 +114,7 @@ func TestPathFormP6WorkspaceBasenameLowercased(t *testing.T) {
 	mustWriteFile(t, filepath.Join(raw, "x.txt"), []byte{})
 	canon := mustCanonical(t, raw)
 
-	got := workspaceRootFor(Tool{Provider: "stateful"}, canon)
+	got := workspaceRootFor(registry.Tool{Provider: "stateful"}, canon)
 	want := "/workspace/my-app"
 	if got != want {
 		t.Fatalf("P6: workspaceRootFor(%q) = %q, want %q", canon, got, want)
@@ -124,7 +126,7 @@ func TestPathFormP7UNCArgumentDeclined(t *testing.T) {
 		t.Skip("windows path-mapping semantics")
 	}
 	root, _ := windowsFixtures(t)
-	tool := Tool{Name: "demo"}
+	tool := registry.Tool{Name: "demo"}
 	arg := `\\server\share\x`
 
 	if isWindowsAbsPath(arg) {
@@ -154,7 +156,7 @@ func TestPathFormP7UNCCoincidentalSubtreeIsMapped(t *testing.T) {
 	root, _ := windowsFixtures(t)
 	mustWriteFile(t, filepath.Join(root, "server", "share", "x"), []byte{})
 
-	tool := Tool{Name: "demo"}
+	tool := registry.Tool{Name: "demo"}
 	mapped, mounts, err := mapToolArgs(tool, root, root, "/workspace", []string{`\\server\share\x`})
 	if err != nil {
 		t.Fatalf("P7 coincidental: err=%v", err)
@@ -173,7 +175,7 @@ func TestPathFormP9LongPathSyntaxDeclined(t *testing.T) {
 		t.Skip("windows path-mapping semantics")
 	}
 	root, _ := windowsFixtures(t)
-	tool := Tool{Name: "demo"}
+	tool := registry.Tool{Name: "demo"}
 
 	cases := []struct {
 		name string
@@ -230,7 +232,7 @@ func TestPathFormP11TrailingDotsAndSpaces(t *testing.T) {
 
 	// End to end, in the explicit-relative shape a user actually types: the
 	// argument reaches the tool as the stripped name, not as a literal.
-	tool := Tool{Name: "demo"}
+	tool := registry.Tool{Name: "demo"}
 	in := []string{`.\foo.`}
 	mapped, mounts, err := mapToolArgs(tool, root, root, "/workspace", in)
 	if err != nil {
@@ -249,7 +251,7 @@ func TestPathFormP13DeclinedArgumentsPassByteForByte(t *testing.T) {
 		t.Skip("windows path-mapping semantics")
 	}
 	root, _ := windowsFixtures(t)
-	tool := Tool{Name: "demo"}
+	tool := registry.Tool{Name: "demo"}
 
 	cases := []struct {
 		name string

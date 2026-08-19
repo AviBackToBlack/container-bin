@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/AviBackToBlack/container-bin/internal/registry"
 )
 
 // TestPathNormalizationCorpus is the RM-6b table-driven corpus. It encodes the
@@ -133,7 +135,7 @@ func TestPathNormalizationCorpus(t *testing.T) {
 		},
 	}
 
-	tool := Tool{Name: "demo"}
+	tool := registry.Tool{Name: "demo"}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			mapped, mounts, err := mapToolArgs(tool, root, root, "/workspace", []string{tc.arg})

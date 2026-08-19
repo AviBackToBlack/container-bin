@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/AviBackToBlack/container-bin/internal/registry"
 )
 
 func TestLoadLockFile_RecoversFromBackup(t *testing.T) {
@@ -73,7 +75,7 @@ func TestLoadLockFile_CorruptBackup(t *testing.T) {
 func TestValidateRegistryBackup(t *testing.T) {
 	dir := t.TempDir()
 	good := filepath.Join(dir, "good.bak")
-	if err := os.WriteFile(good, []byte(defaultRegistryTOML), 0644); err != nil {
+	if err := os.WriteFile(good, []byte(registry.DefaultTOML), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if err := validateRegistryBackup(good); err != nil {

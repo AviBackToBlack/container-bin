@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/AviBackToBlack/container-bin/internal/registry"
 )
 
 func TestPythonEnvIDStable(t *testing.T) {
@@ -38,54 +40,6 @@ func TestIsWindowsAbsPath(t *testing.T) {
 	}
 }
 
-func TestParseDefaultRegistry(t *testing.T) {
-	reg, err := parseRegistryTOML(defaultRegistryTOML)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(reg.Tools) != 13 {
-		t.Fatalf("expected 13 tools, got %d", len(reg.Tools))
-	}
-	jq := reg.Tools["jq"]
-	if jq.Provider != "stateless" || jq.Image != "ghcr.io/jqlang/jq:latest" {
-		t.Fatalf("bad jq profile: %+v", jq)
-	}
-	pip := reg.Tools["pip"]
-	if pip.Provider != "python" || pip.Role != "pip" {
-		t.Fatalf("bad pip profile: %+v", pip)
-	}
-}
-
-func TestParseCommandAndArgsPrefix(t *testing.T) {
-	src := `[tools.demo]
-image = "example/demo:1"
-provider = "stateless"
-command = ["demo", "sub"]
-args_prefix = ["--quiet"]
-`
-	reg, err := parseRegistryTOML(src)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := reg.Tools["demo"]
-	if strings.Join(got.Command, "|") != "demo|sub" {
-		t.Fatalf("bad command: %#v", got.Command)
-	}
-	if strings.Join(got.ArgsPrefix, "|") != "--quiet" {
-		t.Fatalf("bad prefix: %#v", got.ArgsPrefix)
-	}
-}
-
-func TestRejectUnknownRegistryKey(t *testing.T) {
-	_, err := parseRegistryTOML(`[tools.x]
-image = "x"
-magic = "y"
-`)
-	if err == nil {
-		t.Fatal("expected error")
-	}
-}
-
 func TestExplicitWindowsRelPath(t *testing.T) {
 	cases := map[string]bool{
 		`.\\foo.json`:      true,
@@ -101,66 +55,6 @@ func TestExplicitWindowsRelPath(t *testing.T) {
 	for in, want := range cases {
 		if got := isExplicitWindowsRelPath(in); got != want {
 			t.Fatalf("isExplicitWindowsRelPath(%q)=%v want %v", in, got, want)
-		}
-	}
-}
-
-func TestParseToolSemantics(t *testing.T) {
-	src := `[tools.ff]
-image = "x/ff:1"
-provider = "stateless"
-path_next = ["-i", "-attach"]
-path_equals = ["-chdir"]
-path_last = true
-path_last_if_any = ["-i"]
-env_prefixes = ["AWS_", "TF_VAR_"]
-env_names = ["NO_COLOR"]
-`
-	reg, err := parseRegistryTOML(src)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := reg.Tools["ff"]
-	if !got.PathLast {
-		t.Fatal("path_last not parsed")
-	}
-	if strings.Join(got.PathLastIfAny, "|") != "-i" {
-		t.Fatalf("bad path_last_if_any: %#v", got.PathLastIfAny)
-	}
-	if strings.Join(got.PathNext, "|") != "-i|-attach" {
-		t.Fatalf("bad path_next: %#v", got.PathNext)
-	}
-	if strings.Join(got.PathEquals, "|") != "-chdir" {
-		t.Fatalf("bad path_equals: %#v", got.PathEquals)
-	}
-	if strings.Join(got.EnvPrefixes, "|") != "AWS_|TF_VAR_" {
-		t.Fatalf("bad env_prefixes: %#v", got.EnvPrefixes)
-	}
-	if strings.Join(got.EnvNames, "|") != "NO_COLOR" {
-		t.Fatalf("bad env_names: %#v", got.EnvNames)
-	}
-}
-
-func TestDefaultRegistryHasV06Tools(t *testing.T) {
-	reg, err := parseRegistryTOML(defaultRegistryTOML)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"python", "pip", "jq", "yq", "terraform", "ffmpeg", "node", "npm", "npx", "go", "gofmt"} {
-		if _, ok := reg.Tools[name]; !ok {
-			t.Fatalf("missing default tool %q", name)
-		}
-	}
-	if strings.Join(reg.Tools["terraform"].PathEquals, "|") != "-chdir" {
-		t.Fatal("terraform -chdir semantics missing")
-	}
-}
-
-func TestDefaultToolSections(t *testing.T) {
-	sections := defaultToolSections()
-	for _, name := range []string{"python", "yq", "terraform", "ffmpeg", "node", "npm", "npx", "go", "gofmt"} {
-		if !strings.Contains(sections[name], "[tools."+name+"]") {
-			t.Fatalf("bad section for %s: %q", name, sections[name])
 		}
 	}
 }
@@ -187,7 +81,7 @@ provider = "stateless"
 	if err != nil {
 		t.Fatal(err)
 	}
-	reg, err := parseRegistryTOML(string(data))
+	reg, err := registry.ParseTOML(string(data))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +96,7 @@ provider = "stateless"
 }
 
 func TestNormalizePathEqualsSplitByShell(t *testing.T) {
-	tool := Tool{Name: "terraform", PathEquals: []string{"-chdir"}}
+	tool := registry.Tool{Name: "terraform", PathEquals: []string{"-chdir"}}
 	got := normalizeToolArgs(tool, []string{"-chdir=", `.\\tf-demo`, "validate"})
 	want := []string{`-chdir=.\\tf-demo`, "validate"}
 	if !reflect.DeepEqual(got, want) {
@@ -211,30 +105,11 @@ func TestNormalizePathEqualsSplitByShell(t *testing.T) {
 }
 
 func TestNormalizePathEqualsAlreadyJoined(t *testing.T) {
-	tool := Tool{Name: "terraform", PathEquals: []string{"-chdir"}}
+	tool := registry.Tool{Name: "terraform", PathEquals: []string{"-chdir"}}
 	in := []string{`-chdir=.\\tf-demo`, "validate"}
 	got := normalizeToolArgs(tool, in)
 	if !reflect.DeepEqual(got, in) {
 		t.Fatalf("normalizeToolArgs() = %#v, want %#v", got, in)
-	}
-}
-
-func TestNodeProfilesShareStateGroupAndVolumes(t *testing.T) {
-	reg, err := parseRegistryTOML(defaultRegistryTOML)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"node", "npm", "npx"} {
-		tool := reg.Tools[name]
-		if tool.Provider != "stateful" || tool.StateGroup != "node24" {
-			t.Fatalf("bad %s state profile: %+v", name, tool)
-		}
-		if !containsString(tool.ProjectMarkers, "package.json") {
-			t.Fatalf("%s missing package.json marker", name)
-		}
-		if !containsString(tool.ProjectVolumes, "node-modules:/workspace/node_modules") {
-			t.Fatalf("%s missing node_modules volume", name)
-		}
 	}
 }
 
@@ -255,41 +130,8 @@ func TestSharedVolumeIDStable(t *testing.T) {
 	}
 }
 
-func TestParseVolumeBinding(t *testing.T) {
-	name, dst, err := parseVolumeBinding("node-modules:/workspace/node_modules")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if name != "node-modules" || dst != "/workspace/node_modules" {
-		t.Fatalf("got %q %q", name, dst)
-	}
-	if _, _, err := parseVolumeBinding("broken"); err == nil {
-		t.Fatal("expected invalid binding error")
-	}
-}
-
-func TestEnvSetValidation(t *testing.T) {
-	if !validEnvAssignment("NPM_CONFIG_PREFIX=/cb/npm-global") {
-		t.Fatal("valid env rejected")
-	}
-	if validEnvAssignment("1BAD=x") {
-		t.Fatal("invalid env accepted")
-	}
-	reg, err := parseRegistryTOML(`[tools.x]
-image = "x"
-provider = "stateless"
-env_set = ["A=b"]
-`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Join(reg.Tools["x"].EnvSet, "|") != "A=b" {
-		t.Fatalf("env_set not parsed")
-	}
-}
-
 func TestLegacyPythonProfileKeepsPythonMarkers(t *testing.T) {
-	legacy := Tool{Name: "python", Provider: "python", Role: "python"}
+	legacy := registry.Tool{Name: "python", Provider: "python", Role: "python"}
 	markers := projectMarkersFor(legacy)
 	if !containsString(markers, "pyproject.toml") || !containsString(markers, ".git") {
 		t.Fatalf("legacy python markers lost: %#v", markers)
@@ -297,7 +139,7 @@ func TestLegacyPythonProfileKeepsPythonMarkers(t *testing.T) {
 }
 
 func TestStatefulWorkspacePreservesProjectBasename(t *testing.T) {
-	tool := Tool{Provider: "stateful"}
+	tool := registry.Tool{Provider: "stateful"}
 	got := workspaceRootFor(tool, filepath.Join("tmp", "node-demo"))
 	if got != "/workspace/node-demo" {
 		t.Fatalf("workspaceRootFor() = %q", got)
@@ -305,7 +147,7 @@ func TestStatefulWorkspacePreservesProjectBasename(t *testing.T) {
 }
 
 func TestStatelessWorkspaceRemainsStable(t *testing.T) {
-	tt := Tool{Provider: "stateless"}
+	tt := registry.Tool{Provider: "stateless"}
 	if got := workspaceRootFor(tt, filepath.Join("tmp", "demo")); got != "/workspace" {
 		t.Fatalf("workspaceRootFor() = %q", got)
 	}
@@ -315,28 +157,6 @@ func TestStatefulWorkspaceDestination(t *testing.T) {
 	got := statefulWorkspaceDestination("/workspace/node_modules", "/workspace/node-demo")
 	if got != "/workspace/node-demo/node_modules" {
 		t.Fatalf("statefulWorkspaceDestination() = %q", got)
-	}
-}
-
-func TestExposedNPMProfileParses(t *testing.T) {
-	src := `[tools.cowsay]
-image = "node:24-slim"
-provider = "stateful"
-command = ["/cb/npm-global/bin/cowsay"]
-state_group = "node24"
-shared_volumes = ["npm-cache:/root/.npm", "npm-global:/cb/npm-global"]
-env_set = ["NPM_CONFIG_PREFIX=/cb/npm-global"]
-`
-	reg, err := parseRegistryTOML(src)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := reg.Tools["cowsay"]
-	if got.Provider != "stateful" || got.StateGroup != "node24" {
-		t.Fatalf("bad exposed profile: %+v", got)
-	}
-	if strings.Join(got.Command, "|") != "/cb/npm-global/bin/cowsay" {
-		t.Fatalf("bad command: %#v", got.Command)
 	}
 }
 
@@ -367,7 +187,7 @@ provider = "stateless"
 	if err != nil {
 		t.Fatal(err)
 	}
-	reg, err := parseRegistryTOML(string(data))
+	reg, err := registry.ParseTOML(string(data))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -382,19 +202,6 @@ provider = "stateless"
 	}
 	if !strings.Contains(string(data), "# custom comment") {
 		t.Fatal("leading comments lost")
-	}
-}
-
-func TestRegistrySchemaVersion(t *testing.T) {
-	reg, err := parseRegistryTOML("schema_version = 1\n\n[tools.x]\nimage = \"x:1\"\nprovider = \"stateless\"\n")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if reg.SchemaVersion != 1 {
-		t.Fatalf("schema=%d", reg.SchemaVersion)
-	}
-	if _, err := parseRegistryTOML("schema_version = 2\n\n[tools.x]\nimage = \"x:1\"\nprovider = \"stateless\"\n"); err == nil {
-		t.Fatal("expected newer schema rejection")
 	}
 }
 
@@ -447,7 +254,7 @@ digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 }
 
 func TestConfiguredImagesDeduplicatesSharedImage(t *testing.T) {
-	reg := Registry{Tools: map[string]Tool{
+	reg := registry.Registry{Tools: map[string]registry.Tool{
 		"node": {Image: "node:24-slim"},
 		"npm":  {Image: "node:24-slim"},
 		"jq":   {Image: "ghcr.io/jqlang/jq:latest"},
@@ -480,39 +287,8 @@ func TestVersionDefaultIsDev(t *testing.T) {
 	}
 }
 
-func TestRejectDuplicateToolSections(t *testing.T) {
-	_, err := parseRegistryTOML(`[tools.jq]
-image = "a:1"
-provider = "stateless"
-
-[tools.jq]
-image = "b:1"
-provider = "stateless"
-`)
-	if err == nil || !strings.Contains(err.Error(), "duplicate") {
-		t.Fatalf("expected duplicate section rejection, got %v", err)
-	}
-}
-
-func TestReservedToolNames(t *testing.T) {
-	reserved := []string{"cb", "container-bin", "con", "prn", "aux", "nul", "com1", "com9", "lpt1", "lpt9"}
-	for _, name := range reserved {
-		if !reservedToolName(name) {
-			t.Fatalf("%q should be reserved", name)
-		}
-		if _, err := parseRegistryTOML("[tools." + name + "]\nimage = \"x:1\"\nprovider = \"stateless\"\n"); err == nil {
-			t.Fatalf("registry accepted reserved tool name %q", name)
-		}
-	}
-	for _, name := range []string{"python", "cowsay", "com", "lpt", "com0", "lpt0", "com10", "conx", "nul2"} {
-		if reservedToolName(name) {
-			t.Fatalf("%q should not be reserved", name)
-		}
-	}
-}
-
 func TestNormalizePathEqualsSplitAtEndKeptAsIs(t *testing.T) {
-	tool := Tool{Name: "terraform", PathEquals: []string{"-chdir"}}
+	tool := registry.Tool{Name: "terraform", PathEquals: []string{"-chdir"}}
 	in := []string{"validate", "-chdir="}
 	got := normalizeToolArgs(tool, in)
 	if !reflect.DeepEqual(got, in) {
@@ -575,19 +351,6 @@ func TestInvokedNameIsCaseInsensitive(t *testing.T) {
 	for in, want := range cases {
 		if got := invokedName(in); got != want {
 			t.Fatalf("invokedName(%q)=%q want %q", in, got, want)
-		}
-	}
-}
-
-func TestReservedCbVersionPrefixNames(t *testing.T) {
-	for _, name := range []string{"cb-v", "cb-vault", "cb-version"} {
-		if !reservedToolName(name) {
-			t.Fatalf("%q should be reserved (cb-v* never dispatches to a tool)", name)
-		}
-	}
-	for _, name := range []string{"cb-x", "cbv", "vault"} {
-		if reservedToolName(name) {
-			t.Fatalf("%q should not be reserved", name)
 		}
 	}
 }
