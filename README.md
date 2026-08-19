@@ -25,6 +25,14 @@ Success! The configuration is valid.
 > [docs/security-model.md](docs/security-model.md) before pointing it at
 > anything sensitive.
 
+## Development provenance
+
+ContainerBin is developed using an AI-assisted, agentic workflow. The
+maintainer owns requirements, design decisions, acceptance testing, and
+releases; implementation and review make extensive use of coding agents. AI
+involvement is intentionally preserved in commit and PR history rather than
+hidden — see the `Co-Authored-By` trailers throughout the git log.
+
 ## How it works
 
 ```
