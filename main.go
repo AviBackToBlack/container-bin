@@ -2,9 +2,6 @@ package main
 
 import (
 	"archive/zip"
-	"bufio"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,11 +14,11 @@ import (
 	"regexp"
 	"runtime"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/AviBackToBlack/container-bin/internal/atomicio"
+	"github.com/AviBackToBlack/container-bin/internal/lockfile"
 	"github.com/AviBackToBlack/container-bin/internal/mutationlock"
 	"github.com/AviBackToBlack/container-bin/internal/pathmap"
 	"github.com/AviBackToBlack/container-bin/internal/registry"
@@ -34,17 +31,6 @@ import (
 //
 // Local/dev builds report "dev".
 var version = "dev"
-
-type LockEntry struct {
-	Configured string
-	Resolved   string
-	Digest     string
-}
-
-type LockFile struct {
-	Version int
-	Images  map[string]LockEntry // keyed by configured image reference
-}
 
 func main() {
 	reg, cfgPath, err := registry.Load()
@@ -401,14 +387,14 @@ func doctor(reg registry.Registry, cfgPath string) error {
 		ok("registry schema 1: %s", cfgPath)
 	}
 
-	lf, lockPath, err := loadLockFileForRegistry()
+	lf, lockPath, err := lockfile.LoadForRegistry()
 	if err != nil {
 		fail("lockfile invalid: %v", err)
 	} else if lf == nil {
 		warn("lockfile missing: %s (runtime is UNLOCKED)", lockPath)
 	} else {
 		missing := 0
-		for _, image := range configuredImages(reg) {
+		for _, image := range lockfile.ConfiguredImages(reg) {
 			e, found := lf.Images[image]
 			if !found {
 				missing++
@@ -737,7 +723,7 @@ func runTool(t registry.Tool, userArgs []string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	imageRef, err := runtimeImageForTool(t)
+	imageRef, err := lockfile.RuntimeImageForTool(t)
 	if err != nil {
 		return 1, err
 	}
@@ -1479,7 +1465,7 @@ func inspectTool(reg registry.Registry, args []string) error {
 		root = cwd
 	}
 	fmt.Printf("name:       %s\nimage:      %s\nprovider:   %s\n", t.Name, t.Image, t.Provider)
-	lock, lockPath, lerr := loadLockFileForRegistry()
+	lock, lockPath, lerr := lockfile.LoadForRegistry()
 	if lerr != nil {
 		fmt.Printf("lock:       ERROR (%v)\n", lerr)
 	} else if lock == nil {
@@ -1630,7 +1616,7 @@ func backupCommand(cfgPath string, args []string) error {
 		f.Close()
 		return err
 	}
-	if err := add(lockPathForRegistry(cfgPath), "container-bin.lock", false); err != nil {
+	if err := add(lockfile.PathFor(cfgPath), "container-bin.lock", false); err != nil {
 		zw.Close()
 		f.Close()
 		return err
@@ -1693,7 +1679,7 @@ func restoreCommand(cfgPath string, args []string) error {
 		if err := os.WriteFile(name, lock, 0600); err != nil {
 			return err
 		}
-		if _, err := loadLockFile(name); err != nil {
+		if _, err := lockfile.Load(name); err != nil {
 			return fmt.Errorf("backup lock invalid: %w", err)
 		}
 	}
@@ -1711,7 +1697,7 @@ func restoreCommand(cfgPath string, args []string) error {
 	if err := atomicio.WriteFile(cfgPath, cfg, 0644); err != nil {
 		return err
 	}
-	lockPath := lockPathForRegistry(cfgPath)
+	lockPath := lockfile.PathFor(cfgPath)
 	if b, ok := files["container-bin.lock"]; ok {
 		if err := atomicio.WriteFile(lockPath, b, 0644); err != nil {
 			return err
@@ -1725,7 +1711,7 @@ func restoreCommand(cfgPath string, args []string) error {
 }
 
 func ensureImageLocalForTool(t registry.Tool) error {
-	ref, err := runtimeImageForTool(t)
+	ref, err := lockfile.RuntimeImageForTool(t)
 	if err != nil {
 		return err
 	}
@@ -2278,270 +2264,10 @@ func withMutationLock(cfgPath string, fn func() error) error {
 	return fn()
 }
 
-func lockPathForRegistry(cfgPath string) string {
-	return filepath.Join(filepath.Dir(cfgPath), "container-bin.lock")
-}
-
-func loadLockFileForRegistry() (*LockFile, string, error) {
-	cfgPath, err := registry.Path()
-	if err != nil {
-		return nil, "", err
-	}
-	path := lockPathForRegistry(cfgPath)
-	lf, err := loadLockFile(path)
-	return lf, path, err
-}
-
-func loadLockFile(path string) (*LockFile, error) {
-	b, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		rec, err := atomicio.RecoverFromBackup(path, func(bak string) error {
-			_, err := loadLockFile(bak)
-			return err
-		})
-		if err != nil {
-			return nil, err
-		}
-		if !rec {
-			return nil, nil
-		}
-		b, err = os.ReadFile(path)
-		if err != nil {
-			return nil, err
-		}
-	} else if err != nil {
-		return nil, err
-	}
-	lf := &LockFile{Version: 0, Images: map[string]LockEntry{}}
-	var cur *LockEntry
-	var curKey string
-	sc := bufio.NewScanner(strings.NewReader(string(b)))
-	lineNo := 0
-	flush := func() error {
-		if cur == nil {
-			return nil
-		}
-		if cur.Configured == "" || cur.Resolved == "" || cur.Digest == "" {
-			return fmt.Errorf("lock entry %q is incomplete", curKey)
-		}
-		if curKey != lockEntryID(cur.Configured) {
-			return fmt.Errorf("lock entry id %q does not match configured image %q", curKey, cur.Configured)
-		}
-		lf.Images[cur.Configured] = *cur
-		return nil
-	}
-	for sc.Scan() {
-		lineNo++
-		line := strings.TrimSpace(toml.StripComment(sc.Text()))
-		if line == "" {
-			continue
-		}
-		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
-			if err := flush(); err != nil {
-				return nil, err
-			}
-			sec := strings.TrimSpace(line[1 : len(line)-1])
-			if !strings.HasPrefix(sec, "images.") {
-				return nil, fmt.Errorf("line %d: unsupported lock section %q", lineNo, sec)
-			}
-			curKey = strings.TrimPrefix(sec, "images.")
-			if curKey == "" {
-				return nil, fmt.Errorf("line %d: empty image lock id", lineNo)
-			}
-			cur = &LockEntry{}
-			continue
-		}
-		kv := strings.SplitN(line, "=", 2)
-		if len(kv) != 2 {
-			return nil, fmt.Errorf("line %d: expected key = value", lineNo)
-		}
-		key, val := strings.TrimSpace(kv[0]), strings.TrimSpace(kv[1])
-		if cur == nil {
-			if key != "lock_version" {
-				return nil, fmt.Errorf("line %d: unsupported top-level key %q", lineNo, key)
-			}
-			v, err := strconv.Atoi(val)
-			if err != nil || v != 1 {
-				return nil, fmt.Errorf("line %d: unsupported lock_version %q (supported: 1)", lineNo, val)
-			}
-			lf.Version = v
-			continue
-		}
-		q, err := toml.ParseQuoted(val)
-		if err != nil {
-			return nil, fmt.Errorf("line %d %s: %w", lineNo, key, err)
-		}
-		switch key {
-		case "configured":
-			cur.Configured = q
-		case "resolved":
-			cur.Resolved = q
-		case "digest":
-			cur.Digest = q
-		default:
-			return nil, fmt.Errorf("line %d: unsupported lock key %q", lineNo, key)
-		}
-	}
-	if err := sc.Err(); err != nil {
-		return nil, err
-	}
-	if err := flush(); err != nil {
-		return nil, err
-	}
-	if lf.Version != 1 {
-		return nil, errors.New("lock_version = 1 is required")
-	}
-	return lf, nil
-}
-
-func lockEntryID(configured string) string {
-	h := sha256.Sum256([]byte(configured))
-	return hex.EncodeToString(h[:6])
-}
-
-func renderLockFile(lf *LockFile) []byte {
-	var b strings.Builder
-	b.WriteString("# container-bin immutable image lockfile\n")
-	b.WriteString("# Generated by cb lock / cb update. Do not edit by hand.\n")
-	b.WriteString("lock_version = 1\n")
-	keys := make([]string, 0, len(lf.Images))
-	for k := range lf.Images {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, configured := range keys {
-		e := lf.Images[configured]
-		b.WriteString("\n[images." + lockEntryID(configured) + "]\n")
-		b.WriteString("configured = " + toml.Quote(e.Configured) + "\n")
-		b.WriteString("resolved = " + toml.Quote(e.Resolved) + "\n")
-		b.WriteString("digest = " + toml.Quote(e.Digest) + "\n")
-	}
-	return []byte(b.String())
-}
-
-func configuredImages(reg registry.Registry) []string {
-	set := map[string]bool{}
-	for _, t := range reg.Tools {
-		set[t.Image] = true
-	}
-	out := make([]string, 0, len(set))
-	for image := range set {
-		out = append(out, image)
-	}
-	sort.Strings(out)
-	return out
-}
-
-func imageRepository(ref string) string {
-	if i := strings.Index(ref, "@"); i >= 0 {
-		ref = ref[:i]
-	}
-	lastSlash := strings.LastIndex(ref, "/")
-	if colon := strings.LastIndex(ref, ":"); colon > lastSlash {
-		ref = ref[:colon]
-	}
-	return ref
-}
-
-// canonicalRepository folds away the Docker Hub aliases that the engine
-// normalizes out of RepoDigests, so that a registry entry written as
-// docker.io/library/python matches the python@sha256:... digest Docker
-// reports. Non-Hub registries (ghcr.io/..., private hosts) pass through.
-func canonicalRepository(repo string) string {
-	for _, p := range []string{"docker.io/", "index.docker.io/", "registry-1.docker.io/"} {
-		if strings.HasPrefix(repo, p) {
-			repo = strings.TrimPrefix(repo, p)
-			break
-		}
-	}
-	if strings.HasPrefix(repo, "library/") && strings.Count(repo, "/") == 1 {
-		repo = strings.TrimPrefix(repo, "library/")
-	}
-	return repo
-}
-
-// matchRepoDigest selects the RepoDigest whose repository is the same image
-// repository as the configured reference, modulo Docker Hub normalization.
-// No match is an error condition handled by the caller (fail closed).
-func matchRepoDigest(configured string, repoDigests []string) (string, bool) {
-	want := canonicalRepository(imageRepository(configured))
-	for _, rd := range repoDigests {
-		i := strings.LastIndex(rd, "@")
-		if i < 0 || !strings.HasPrefix(rd[i+1:], "sha256:") {
-			continue
-		}
-		if canonicalRepository(rd[:i]) == want {
-			return rd, true
-		}
-	}
-	return "", false
-}
-
-func resolveImage(configured string, pull bool) (LockEntry, error) {
-	if pull {
-		cmd := exec.Command("docker", "pull", configured)
-		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-		if err := cmd.Run(); err != nil {
-			return LockEntry{}, fmt.Errorf("docker pull %s: %w", configured, err)
-		}
-	}
-	cmd := exec.Command("docker", "image", "inspect", "--format", `{{range .RepoDigests}}{{println .}}{{end}}`, configured)
-	out, err := cmd.Output()
-	if err != nil {
-		return LockEntry{}, fmt.Errorf("inspect %s (pull it first or run cb lock): %w", configured, err)
-	}
-	lines := strings.Fields(string(out))
-	if len(lines) == 0 {
-		return LockEntry{}, fmt.Errorf("image %s has no RepoDigests; cannot lock it reproducibly", configured)
-	}
-	resolved, ok := matchRepoDigest(configured, lines)
-	if !ok {
-		// Fail closed: silently locking a digest from a different repository
-		// (e.g. a locally re-tagged image) would record an identity the
-		// configured reference never had.
-		return LockEntry{}, fmt.Errorf("image %s has no RepoDigest for repository %q (locally tagged image?); pull it from its registry before locking", configured, imageRepository(configured))
-	}
-	i := strings.LastIndex(resolved, "@")
-	return LockEntry{Configured: configured, Resolved: resolved, Digest: resolved[i+1:]}, nil
-}
-
-func runtimeImageForTool(t registry.Tool) (string, error) {
-	lf, path, err := loadLockFileForRegistry()
-	if err != nil {
-		return "", fmt.Errorf("lockfile: %w", err)
-	}
-	if lf == nil {
-		return t.Image, nil
-	}
-	e, ok := lf.Images[t.Image]
-	if !ok || e.Configured != t.Image {
-		return "", fmt.Errorf("image %q is not locked in %s; run `cb update %s` or `cb lock`", t.Image, path, t.Name)
-	}
-	return e.Resolved, nil
-}
-
-func writeLockFile(path string, lf *LockFile) error {
-	if lf.Version == 0 {
-		lf.Version = 1
-	}
-	data := renderLockFile(lf)
-	// Parse our own output before committing it.
-	tmp := path + ".validate.tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
-		return err
-	}
-	_, err := loadLockFile(tmp)
-	_ = os.Remove(tmp)
-	if err != nil {
-		return fmt.Errorf("generated lockfile failed validation: %w", err)
-	}
-	return atomicio.WriteFile(path, data, 0644)
-}
-
 func lockCommand(reg registry.Registry, cfgPath string, args []string) error {
-	path := lockPathForRegistry(cfgPath)
+	path := lockfile.PathFor(cfgPath)
 	if len(args) == 1 && args[0] == "--check" {
-		lf, err := loadLockFile(path)
+		lf, err := lockfile.Load(path)
 		if err != nil {
 			return err
 		}
@@ -2549,7 +2275,7 @@ func lockCommand(reg registry.Registry, cfgPath string, args []string) error {
 			return fmt.Errorf("lockfile missing: %s (run `cb lock`)", path)
 		}
 		missing := 0
-		for _, image := range configuredImages(reg) {
+		for _, image := range lockfile.ConfiguredImages(reg) {
 			e, ok := lf.Images[image]
 			if !ok || e.Configured != image {
 				fmt.Printf("MISSING  %s\n", image)
@@ -2573,17 +2299,17 @@ func lockCommand(reg registry.Registry, cfgPath string, args []string) error {
 	if len(args) != 0 {
 		return errors.New("usage: cb lock [--check]")
 	}
-	lf := &LockFile{Version: 1, Images: map[string]LockEntry{}}
-	for _, image := range configuredImages(reg) {
+	lf := &lockfile.LockFile{Version: 1, Images: map[string]lockfile.LockEntry{}}
+	for _, image := range lockfile.ConfiguredImages(reg) {
 		fmt.Printf("locking  %s\n", image)
-		e, err := resolveImage(image, true)
+		e, err := lockfile.ResolveImage(image, true)
 		if err != nil {
 			return err
 		}
 		lf.Images[image] = e
 		fmt.Printf("  -> %s\n", e.Resolved)
 	}
-	if err := writeLockFile(path, lf); err != nil {
+	if err := lockfile.Write(path, lf); err != nil {
 		return err
 	}
 	fmt.Printf("\nlockfile: %s\n", path)
@@ -2594,17 +2320,17 @@ func updateCommand(reg registry.Registry, cfgPath string, args []string) error {
 	if len(args) != 1 {
 		return errors.New("usage: cb update TOOL | cb update --all")
 	}
-	path := lockPathForRegistry(cfgPath)
-	lf, err := loadLockFile(path)
+	path := lockfile.PathFor(cfgPath)
+	lf, err := lockfile.Load(path)
 	if err != nil {
 		return err
 	}
 	if lf == nil {
-		lf = &LockFile{Version: 1, Images: map[string]LockEntry{}}
+		lf = &lockfile.LockFile{Version: 1, Images: map[string]lockfile.LockEntry{}}
 	}
 	var images []string
 	if args[0] == "--all" {
-		images = configuredImages(reg)
+		images = lockfile.ConfiguredImages(reg)
 	} else {
 		name := strings.ToLower(args[0])
 		t, ok := reg.Tools[name]
@@ -2621,7 +2347,7 @@ func updateCommand(reg registry.Registry, cfgPath string, args []string) error {
 		seen[image] = true
 		old := lf.Images[image]
 		fmt.Printf("updating %s\n", image)
-		e, err := resolveImage(image, true)
+		e, err := lockfile.ResolveImage(image, true)
 		if err != nil {
 			return err
 		}
@@ -2634,7 +2360,7 @@ func updateCommand(reg registry.Registry, cfgPath string, args []string) error {
 			fmt.Printf("  old: %s\n  new: %s\n", old.Resolved, e.Resolved)
 		}
 	}
-	if err := writeLockFile(path, lf); err != nil {
+	if err := lockfile.Write(path, lf); err != nil {
 		return err
 	}
 	fmt.Printf("lockfile: %s\n", path)
