@@ -59,42 +59,6 @@ func TestExplicitWindowsRelPath(t *testing.T) {
 	}
 }
 
-func TestAppendMissingDefaultToolsPreservesCustom(t *testing.T) {
-	dir := t.TempDir()
-	path := dir + "/container-bin.toml"
-	old := `[tools.python]
-image = "python:3.13-slim"
-provider = "python"
-role = "python"
-
-[tools.jq2]
-image = "ghcr.io/jqlang/jq:latest"
-provider = "stateless"
-`
-	if err := os.WriteFile(path, []byte(old), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := appendMissingDefaultTools(path); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	reg, err := registry.ParseTOML(string(data))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := reg.Tools["jq2"]; !ok {
-		t.Fatal("custom jq2 was lost")
-	}
-	for _, name := range []string{"python3", "pip", "pip3", "jq", "yq", "terraform", "ffmpeg", "node", "npm", "npx", "go", "gofmt"} {
-		if _, ok := reg.Tools[name]; !ok {
-			t.Fatalf("missing migrated tool %q", name)
-		}
-	}
-}
-
 func TestNormalizePathEqualsSplitByShell(t *testing.T) {
 	tool := registry.Tool{Name: "terraform", PathEquals: []string{"-chdir"}}
 	got := normalizeToolArgs(tool, []string{"-chdir=", `.\\tf-demo`, "validate"})
@@ -157,51 +121,6 @@ func TestStatefulWorkspaceDestination(t *testing.T) {
 	got := statefulWorkspaceDestination("/workspace/node_modules", "/workspace/node-demo")
 	if got != "/workspace/node-demo/node_modules" {
 		t.Fatalf("statefulWorkspaceDestination() = %q", got)
-	}
-}
-
-func TestRewriteRegistryWithoutToolsPreservesOthers(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "container-bin.toml")
-	src := `# custom comment
-[tools.alpha]
-image = "a:1"
-provider = "stateless"
-
-# keep me
-[tools.beta]
-image = "b:1"
-provider = "stateless"
-
-[tools.gamma]
-image = "g:1"
-provider = "stateless"
-`
-	if err := os.WriteFile(path, []byte(src), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := rewriteRegistryWithoutTools(path, map[string]bool{"beta": true}); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	reg, err := registry.ParseTOML(string(data))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := reg.Tools["beta"]; ok {
-		t.Fatal("beta still present")
-	}
-	if _, ok := reg.Tools["alpha"]; !ok {
-		t.Fatal("alpha lost")
-	}
-	if _, ok := reg.Tools["gamma"]; !ok {
-		t.Fatal("gamma lost")
-	}
-	if !strings.Contains(string(data), "# custom comment") {
-		t.Fatal("leading comments lost")
 	}
 }
 

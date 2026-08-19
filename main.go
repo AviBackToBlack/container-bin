@@ -46,7 +46,7 @@ type LockFile struct {
 }
 
 func main() {
-	reg, cfgPath, err := loadRegistry()
+	reg, cfgPath, err := registry.Load()
 	if err != nil {
 		fatalf("registry: %v", err)
 	}
@@ -71,18 +71,18 @@ func main() {
 	switch os.Args[1] {
 	case "install":
 		if err := withMutationLock(cfgPath, func() error {
-			if err := ensureRegistryFile(cfgPath); err != nil {
+			if err := registry.EnsureFile(cfgPath); err != nil {
 				return err
 			}
-			if err := appendMissingDefaultTools(cfgPath); err != nil {
+			if err := registry.AppendMissingDefaultTools(cfgPath, version); err != nil {
 				return err
 			}
 			// Reload in case the file was just created or upgraded.
-			reg, _, err = loadRegistry()
+			reg, _, err = registry.Load()
 			if err != nil {
 				return err
 			}
-			return installShims(reg)
+			return registry.InstallShims(reg)
 		}); err != nil {
 			fatalf("install: %v", err)
 		}
@@ -142,7 +142,7 @@ func main() {
 		}
 	case "expose":
 		if err := withMutationLock(cfgPath, func() error {
-			reg, _, err := loadRegistry()
+			reg, _, err := registry.Load()
 			if err != nil {
 				return err
 			}
@@ -152,7 +152,7 @@ func main() {
 		}
 	case "unexpose":
 		if err := withMutationLock(cfgPath, func() error {
-			reg, _, err := loadRegistry()
+			reg, _, err := registry.Load()
 			if err != nil {
 				return err
 			}
@@ -162,7 +162,7 @@ func main() {
 		}
 	case "uninstall":
 		if err := withMutationLock(cfgPath, func() error {
-			reg, _, err := loadRegistry()
+			reg, _, err := registry.Load()
 			if err != nil {
 				return err
 			}
@@ -172,7 +172,7 @@ func main() {
 		}
 	case "lock":
 		if err := withMutationLock(cfgPath, func() error {
-			reg, _, err := loadRegistry()
+			reg, _, err := registry.Load()
 			if err != nil {
 				return err
 			}
@@ -182,7 +182,7 @@ func main() {
 		}
 	case "update":
 		if err := withMutationLock(cfgPath, func() error {
-			reg, _, err := loadRegistry()
+			reg, _, err := registry.Load()
 			if err != nil {
 				return err
 			}
@@ -236,87 +236,6 @@ Commands:
 Registry:
   %s
 `, version, cfg)
-}
-
-func registryPath() (string, error) {
-	exe, err := os.Executable()
-	if err != nil {
-		return "", err
-	}
-	exe, err = filepath.Abs(exe)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(filepath.Dir(exe), "container-bin.toml"), nil
-}
-
-func ensureRegistryFile(path string) error {
-	if _, err := os.Stat(path); err == nil {
-		return nil
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	return atomicio.WriteFile(path, []byte(registry.DefaultTOML), 0644)
-}
-
-// appendMissingDefaultTools upgrades an existing registry non-destructively.
-// Existing tool sections are never rewritten; missing built-in sections are
-// appended, preserving user profiles and comments (e.g. jq2 from earlier tests).
-func appendMissingDefaultTools(path string) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	reg, err := registry.ParseTOML(string(data))
-	if err != nil {
-		return err
-	}
-	defaults := registry.DefaultToolSections()
-	var names []string
-	for name := range defaults {
-		if _, exists := reg.Tools[name]; !exists {
-			names = append(names, name)
-		}
-	}
-	if len(names) == 0 {
-		return nil
-	}
-	sort.Strings(names)
-	var b strings.Builder
-	b.Write(data)
-	if len(data) > 0 && data[len(data)-1] != '\n' {
-		b.WriteByte('\n')
-	}
-	b.WriteString("\n# Added by container-bin " + version + "\n")
-	for _, name := range names {
-		b.WriteString(defaults[name])
-	}
-	return atomicio.WriteFile(path, []byte(b.String()), 0644)
-}
-
-func loadRegistry() (registry.Registry, string, error) {
-	path, err := registryPath()
-	if err != nil {
-		return registry.Registry{}, "", err
-	}
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		rec, err := atomicio.RecoverFromBackup(path, validateRegistryBackup)
-		if err != nil {
-			return registry.Registry{}, path, err
-		}
-		if !rec {
-			return registry.Default(), path, nil
-		}
-		data, err = os.ReadFile(path)
-		if err != nil {
-			return registry.Registry{}, path, err
-		}
-	} else if err != nil {
-		return registry.Registry{}, path, err
-	}
-	reg, err := registry.ParseTOML(string(data))
-	return reg, path, err
 }
 
 func dockerOSTypeVerdict(raw string) (status, message string) {
@@ -761,70 +680,21 @@ func bugreportCommand(reg registry.Registry, cfgPath string) error {
 }
 
 func setupCommand(cfgPath string) error {
-	if err := ensureRegistryFile(cfgPath); err != nil {
+	if err := registry.EnsureFile(cfgPath); err != nil {
 		return err
 	}
-	if err := appendMissingDefaultTools(cfgPath); err != nil {
+	if err := registry.AppendMissingDefaultTools(cfgPath, version); err != nil {
 		return err
 	}
-	reg, _, err := loadRegistry()
+	reg, _, err := registry.Load()
 	if err != nil {
 		return err
 	}
-	if err := installShims(reg); err != nil {
+	if err := registry.InstallShims(reg); err != nil {
 		return err
 	}
 	fmt.Println("\nRunning doctor after setup...")
 	return doctor(reg, cfgPath)
-}
-
-func installShims(reg registry.Registry) error {
-	exe, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	exe, err = filepath.Abs(exe)
-	if err != nil {
-		return err
-	}
-	dir := filepath.Dir(exe)
-	names := make([]string, 0, len(reg.Tools))
-	for name := range reg.Tools {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		dst := filepath.Join(dir, name+".exe")
-		_ = os.Remove(dst)
-		if err := os.Link(exe, dst); err != nil {
-			if err := copyFile(exe, dst); err != nil {
-				return fmt.Errorf("create %s: hardlink failed and copy fallback failed: %w", dst, err)
-			}
-			fmt.Printf("installed %-10s (copy fallback) -> %s\n", name, dst)
-		} else {
-			fmt.Printf("installed %-10s (hardlink)      -> %s\n", name, dst)
-		}
-	}
-	fmt.Printf("\nRegistry:\n  %s\n\nAdd this directory near the front of PATH:\n  %s\n", filepath.Join(dir, "container-bin.toml"), dir)
-	return nil
-}
-
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
-	if err != nil {
-		return err
-	}
-	_, cpErr := io.Copy(out, in)
-	closeErr := out.Close()
-	if cpErr != nil {
-		return cpErr
-	}
-	return closeErr
 }
 
 // interactiveTerminal is intentionally conservative: Docker gets a TTY only
@@ -1900,11 +1770,11 @@ func exposeTool(reg registry.Registry, cfgPath string, args []string) error {
 	if err := atomicio.WriteFile(cfgPath, combined, 0644); err != nil {
 		return err
 	}
-	newReg, _, err := loadRegistry()
+	newReg, _, err := registry.Load()
 	if err != nil {
 		return fmt.Errorf("reload registry: %w", err)
 	}
-	return installShims(newReg)
+	return registry.InstallShims(newReg)
 }
 
 func ensureManagedVolume(name string, labels map[string]string) error {
@@ -1923,21 +1793,6 @@ func ensureManagedVolume(name string, labels map[string]string) error {
 		return fmt.Errorf("ensure volume %s: %w: %s", name, err, strings.TrimSpace(string(out)))
 	}
 	return nil
-}
-
-func validateRegistryBackup(bak string) error {
-	b, err := os.ReadFile(bak)
-	if err != nil {
-		return err
-	}
-	if len(b) == 0 {
-		return errors.New("backup is empty")
-	}
-	// parseRegistryTOML already rejects a tool-less registry, so this needs no
-	// separate check for one; keeping the rule in a single place stops the two
-	// copies from drifting apart later.
-	_, err = registry.ParseTOML(string(b))
-	return err
 }
 
 func inspectTool(reg registry.Registry, args []string) error {
@@ -2014,43 +1869,6 @@ func inspectTool(reg registry.Registry, args []string) error {
 	return nil
 }
 
-func rewriteRegistryWithoutTools(cfgPath string, remove map[string]bool) error {
-	data, err := os.ReadFile(cfgPath)
-	if err != nil {
-		return err
-	}
-	lines := strings.SplitAfter(string(data), "\n")
-	var out strings.Builder
-	skip := false
-	for _, raw := range lines {
-		trim := strings.TrimSpace(strings.TrimSuffix(raw, "\n"))
-		if strings.HasPrefix(trim, "[tools.") && strings.HasSuffix(trim, "]") {
-			name := strings.ToLower(strings.TrimSuffix(strings.TrimPrefix(trim, "[tools."), "]"))
-			skip = remove[name]
-		}
-		if !skip {
-			out.WriteString(raw)
-		}
-	}
-	if _, err := registry.ParseTOML(out.String()); err != nil {
-		return fmt.Errorf("refusing registry rewrite: %w", err)
-	}
-	return atomicio.WriteFile(cfgPath, []byte(out.String()), 0644)
-}
-
-func removeShim(name string) error {
-	exe, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	path := filepath.Join(filepath.Dir(exe), strings.ToLower(name)+".exe")
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	fmt.Printf("removed shim %-16s %s\n", name, path)
-	return nil
-}
-
 func unexposeTools(reg registry.Registry, cfgPath string, args []string) error {
 	if len(args) == 0 {
 		return errors.New("usage: cb unexpose TOOL [TOOL...]")
@@ -2067,11 +1885,11 @@ func unexposeTools(reg registry.Registry, cfgPath string, args []string) error {
 		}
 		remove[name] = true
 	}
-	if err := rewriteRegistryWithoutTools(cfgPath, remove); err != nil {
+	if err := registry.RewriteWithoutTools(cfgPath, remove); err != nil {
 		return err
 	}
 	for name := range remove {
-		if err := removeShim(name); err != nil {
+		if err := registry.RemoveShim(name); err != nil {
 			return err
 		}
 	}
@@ -2097,11 +1915,11 @@ func uninstallTools(reg registry.Registry, cfgPath string, args []string) error 
 		}
 		remove[name] = true
 	}
-	if err := rewriteRegistryWithoutTools(cfgPath, remove); err != nil {
+	if err := registry.RewriteWithoutTools(cfgPath, remove); err != nil {
 		return err
 	}
 	for name := range remove {
-		if err := removeShim(name); err != nil {
+		if err := registry.RemoveShim(name); err != nil {
 			return err
 		}
 	}
@@ -2803,7 +2621,7 @@ func lockPathForRegistry(cfgPath string) string {
 }
 
 func loadLockFileForRegistry() (*LockFile, string, error) {
-	cfgPath, err := registryPath()
+	cfgPath, err := registry.Path()
 	if err != nil {
 		return nil, "", err
 	}
