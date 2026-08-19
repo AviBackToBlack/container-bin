@@ -122,9 +122,9 @@ func reparsePointVerdict(subject, literalPath, resolvedPath string) (status, mes
 // warn-not-fail precedent as dockerOSTypeVerdict.
 func hostMountVerdict(toolName, source, target, canonicalPath string, exists bool) (status, message string) {
 	if !exists {
-		return "warn", fmt.Sprintf("%s: host_mounts source for %s does not exist: %s", toolName, target, canonicalPath)
+		return "warn", fmt.Sprintf("%s: host_mounts source %q for %s does not exist: %s", toolName, source, target, canonicalPath)
 	}
-	return "ok", fmt.Sprintf("%s: host_mounts source for %s exists: %s", toolName, target, canonicalPath)
+	return "ok", fmt.Sprintf("%s: host_mounts source %q for %s exists: %s", toolName, source, target, canonicalPath)
 }
 
 func networkStorageVerdict(subject, path, driveType string) (status, message string) {
@@ -380,10 +380,12 @@ func Doctor(reg registry.Registry, cfgPath string) error {
 			} else {
 				warn("%s", msg)
 			}
-			if runtime.GOOS == "windows" && !strings.HasPrefix(canon, `\\`) {
+			if runtime.GOOS == "windows" {
 				driveType := ""
-				if dt, err := windowsDriveType(filepath.VolumeName(canon)); err == nil {
-					driveType = dt
+				if !strings.HasPrefix(canon, `\\`) {
+					if dt, err := windowsDriveType(filepath.VolumeName(canon)); err == nil {
+						driveType = dt
+					}
 				}
 				nsStatus, nsMsg := networkStorageVerdict("host_mounts source for "+target, canon, driveType)
 				if nsStatus != "ok" {

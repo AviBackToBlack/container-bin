@@ -286,12 +286,12 @@ func buildHostMountArgs(hostMounts []string) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		if strings.HasPrefix(expanded, `\\`) {
-			return nil, fmt.Errorf("host_mounts source %q resolves to a UNC path, which Docker Desktop cannot share", source)
-		}
 		canon, err := pathmap.CanonicalPath(expanded)
 		if err != nil {
 			return nil, fmt.Errorf("host_mounts source %q: %w", source, err)
+		}
+		if strings.HasPrefix(canon, `\\`) {
+			return nil, fmt.Errorf("host_mounts source %q resolves to a UNC path, which Docker Desktop cannot share", source)
 		}
 		if _, statErr := os.Stat(canon); statErr != nil {
 			return nil, fmt.Errorf("host_mounts source %q does not exist: %s", source, canon)

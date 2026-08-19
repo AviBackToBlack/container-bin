@@ -556,8 +556,12 @@ provider = "stateless"
 	mustFail("workspace_child_reserved", "host_mounts = "+toml.Array([]string{"C:\\\\Video:/workspace/foo:ro"})+"\n")
 	mustFail("cb_root_reserved", "host_mounts = "+toml.Array([]string{"C:\\\\Video:/cb:ro"})+"\n")
 	mustFail("cb_child_reserved", "host_mounts = "+toml.Array([]string{"C:\\\\Video:/cb/global:ro"})+"\n")
+	mustFail("venv_reserved", "host_mounts = "+toml.Array([]string{"C:\\\\Video:/venv:ro"})+"\n")
+	mustFail("pip_cache_reserved", "host_mounts = "+toml.Array([]string{"C:\\\\Video:/root/.cache/pip:ro"})+"\n")
 	mustFail("duplicate_target", "host_mounts = "+toml.Array([]string{"C:\\\\A:/root/.x:ro", "C:\\\\B:/root/.x:rw"})+"\n")
+	mustFail("duplicate_target_equivalent", "host_mounts = "+toml.Array([]string{"C:\\\\A:/root/./.x:ro", "C:\\\\B:/root/.x:rw"})+"\n")
 	mustFail("shared_volume_collision", "shared_volumes = "+toml.Array([]string{"cache:/root/.cache"})+"\nhost_mounts = "+toml.Array([]string{"C:\\\\Video:/root/.cache:ro"})+"\n")
+	mustFail("shared_volume_collision_equivalent", "shared_volumes = "+toml.Array([]string{"cache:/root/./.cache"})+"\nhost_mounts = "+toml.Array([]string{"C:\\\\Video:/root/.cache:ro"})+"\n")
 
 	// ParseVolumeBinding places no requirement that a project_volumes
 	// destination live under /workspace -- that's only true by convention

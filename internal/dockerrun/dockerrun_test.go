@@ -10,6 +10,15 @@ import (
 	"github.com/AviBackToBlack/container-bin/internal/registry"
 )
 
+func setTestHome(t *testing.T, dir string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Setenv("USERPROFILE", dir)
+	} else {
+		t.Setenv("HOME", dir)
+	}
+}
+
 func TestMountSpecMode(t *testing.T) {
 	got, err := MountSpecMode("bind", "/some/src", "/some/dst", "ro")
 	if err != nil {
@@ -145,12 +154,11 @@ host_mounts = ["%USERPROFILE%/does-not-exist:/root/missing:ro"]
 }
 
 func TestBuildHostMountArgsRejectsUNCSource(t *testing.T) {
-	uncHome := `\\server\share\home`
-	if runtime.GOOS == "windows" {
-		t.Setenv("USERPROFILE", uncHome)
-	} else {
-		t.Setenv("HOME", uncHome)
+	if runtime.GOOS != "windows" {
+		t.Skip("UNC path detection is only meaningful on Windows")
 	}
+	uncHome := `\\server\share\home`
+	t.Setenv("USERPROFILE", uncHome)
 
 	reg, err := registry.ParseTOML(`[tools.x]
 image = "x:1"
@@ -167,5 +175,34 @@ host_mounts = ["%USERPROFILE%/.claude:/root/.claude:ro"]
 	}
 	if !strings.Contains(err.Error(), "UNC") {
 		t.Fatalf("error does not mention UNC: %v", err)
+	}
+}
+
+func TestBuildHostMountArgsCanonicalizesBeforeStat(t *testing.T) {
+	homeDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(homeDir, ".claude"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	setTestHome(t, homeDir)
+
+	reg, err := registry.ParseTOML(`[tools.x]
+image = "x:1"
+provider = "stateless"
+host_mounts = ["%USERPROFILE%/.claude/.:/root/.claude:ro"]
+`)
+	if err != nil {
+		t.Fatalf("parse registry: %v", err)
+	}
+
+	args, err := buildHostMountArgs(reg.Tools["x"].HostMounts)
+	if err != nil {
+		t.Fatalf("buildHostMountArgs error: %v", err)
+	}
+	mount := args[1]
+	if strings.Contains(mount, "/./") || strings.HasSuffix(mount, "/.") {
+		t.Fatalf("mount string should be canonicalized, got %q", mount)
+	}
+	if !strings.Contains(mount, ",dst=/root/.claude,readonly") {
+		t.Fatalf("mount string missing readonly dst: %q", mount)
 	}
 }

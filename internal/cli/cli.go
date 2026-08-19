@@ -107,10 +107,17 @@ func Trace(reg registry.Registry, args []string) error {
 		if err == nil {
 			expanded, err = pathmap.CanonicalPath(expanded)
 		}
-		if err != nil {
+		switch {
+		case err != nil:
 			fmt.Printf("host_mount:  %s -> %s (%s) [resolve error: %v]\n", source, target, mode, err)
-		} else {
-			fmt.Printf("host_mount:  %s -> %s (%s)\n", expanded, target, mode)
+		case strings.HasPrefix(expanded, `\\`):
+			fmt.Printf("host_mount:  %s -> %s (%s) [would fail: resolves to a UNC path, which Docker Desktop cannot share]\n", expanded, target, mode)
+		default:
+			if _, statErr := os.Stat(expanded); statErr != nil {
+				fmt.Printf("host_mount:  %s -> %s (%s) [would fail: source does not exist]\n", expanded, target, mode)
+			} else {
+				fmt.Printf("host_mount:  %s -> %s (%s)\n", expanded, target, mode)
+			}
 		}
 	}
 	return nil

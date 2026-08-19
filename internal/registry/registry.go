@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -538,6 +539,7 @@ func ParseHostMount(spec string) (source, target, mode string, err error) {
 	if !strings.HasPrefix(target, "/") {
 		return "", "", "", errors.New("host_mounts container path must be absolute")
 	}
+	target = path.Clean(target)
 	if source == "" {
 		return "", "", "", errors.New("host_mounts source must not be empty")
 	}
@@ -589,7 +591,7 @@ func validateHostMounts(t Tool) error {
 		if err != nil {
 			return err // already validated earlier in the same loop; defensive only
 		}
-		volumeDst[dst] = true
+		volumeDst[path.Clean(dst)] = true
 	}
 	seen := map[string]bool{}
 	for _, spec := range t.HostMounts {
@@ -598,7 +600,8 @@ func validateHostMounts(t Tool) error {
 			return err
 		}
 		if target == "/workspace" || strings.HasPrefix(target, "/workspace/") ||
-			target == "/cb" || strings.HasPrefix(target, "/cb/") {
+			target == "/cb" || strings.HasPrefix(target, "/cb/") ||
+			target == "/venv" || target == "/root/.cache/pip" {
 			return fmt.Errorf("host_mounts target %q is reserved for container-bin's own workspace/state mounts", target)
 		}
 		if seen[target] {

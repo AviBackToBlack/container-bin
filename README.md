@@ -182,6 +182,11 @@ project workspace and managed state mounts and cannot be claimed by
 > exactly as a `docker run --mount` would. Use `ro` when the tool only needs to
 > read, review every `rw` mount, and keep the registry and shim directory
 > under your control.
+>
+> Exposed profiles created by `cb expose` from an npm-shaped source profile do
+> **not** inherit that source's `host_mounts`; host access never propagates
+> implicitly to an auto-generated shim. A profile that genuinely needs a host
+> mount must declare it explicitly.
 
 ## Windows path mapping
 

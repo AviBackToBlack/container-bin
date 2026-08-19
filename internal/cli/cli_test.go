@@ -235,3 +235,69 @@ host_mounts = ["%USERPROFILE%/.claude:/root/.claude:ro"]
 		t.Fatalf("trace output missing resolve error marker:\n%s", out)
 	}
 }
+
+func TestTraceHostMountMissingSourceWouldFail(t *testing.T) {
+	dir := t.TempDir()
+	homeDir := t.TempDir()
+	setTestHome(t, homeDir)
+
+	old, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(old)
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte{}, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	reg, err := registry.ParseTOML(`[tools.demo]
+image = "demo:1"
+provider = "stateless"
+host_mounts = ["%USERPROFILE%/does-not-exist:/root/missing:ro"]
+`)
+	if err != nil {
+		t.Fatalf("parse registry: %v", err)
+	}
+
+	out, err := captureStdout(func() error { return Trace(reg, []string{"demo"}) })
+	if err != nil {
+		t.Fatalf("capture: %v", err)
+	}
+	if !strings.Contains(out, "[would fail: source does not exist]") {
+		t.Fatalf("trace output missing would-fail annotation:\n%s", out)
+	}
+}
+
+func TestTraceHostMountUNCWouldFail(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("UNC resolution is only meaningful on Windows")
+	}
+	dir := t.TempDir()
+	t.Setenv("USERPROFILE", `\\server\share\home`)
+
+	old, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(old)
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte{}, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	reg, err := registry.ParseTOML(`[tools.demo]
+image = "demo:1"
+provider = "stateless"
+host_mounts = ["%USERPROFILE%/.claude:/root/.claude:ro"]
+`)
+	if err != nil {
+		t.Fatalf("parse registry: %v", err)
+	}
+
+	out, err := captureStdout(func() error { return Trace(reg, []string{"demo"}) })
+	if err != nil {
+		t.Fatalf("capture: %v", err)
+	}
+	if !strings.Contains(out, "[would fail: resolves to a UNC path, which Docker Desktop cannot share]") {
+		t.Fatalf("trace output missing UNC would-fail annotation:\n%s", out)
+	}
+}
