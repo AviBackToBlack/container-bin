@@ -168,10 +168,9 @@ write access must be explicit in the registry line.
 
 `%USERPROFILE%` is the only host variable container-bin expands; no other
 `%...%` token is recognized or guessed. The source may also be a literal
-Windows absolute path (`D:\Video` or `D:/Video`), but a source that uses a
-drive letter with a forward slash must be written so that the first `: /`
-sequence in the string unambiguously marks the container path boundary; the
-backslash form is the safest choice.
+Windows absolute path using a backslash after the drive letter
+(e.g. `D:\Video`). The forward-slash drive form (`D:/Video`) embeds the `:/`
+source/target delimiter and is rejected as ambiguous, so always use `X:\...`.
 
 Targets under `/workspace` and `/cb` are reserved for container-bin's own
 project workspace and managed state mounts and cannot be claimed by
