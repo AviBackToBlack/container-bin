@@ -1,11 +1,14 @@
 package cli
 
 import (
+	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/AviBackToBlack/container-bin/internal/pathmap"
 	"github.com/AviBackToBlack/container-bin/internal/registry"
 )
 
@@ -85,5 +88,150 @@ func TestRenderExposedToolSection(t *testing.T) {
 	wantCommand := []string{"/cb/npm-global/bin/" + binary}
 	if !reflect.DeepEqual(got.Command, wantCommand) {
 		t.Errorf("command = %v, want %v", got.Command, wantCommand)
+	}
+}
+
+// captureStdout redirects os.Stdout to a temp file for the duration of fn,
+// then restores it and returns everything fn wrote. Mirrors the helper in
+// internal/diag so the new inspect/trace output lines can be asserted without
+// changing those functions' signatures just for tests.
+func captureStdout(fn func() error) (string, error) {
+	f, err := os.CreateTemp("", "cb-cli-test-")
+	if err != nil {
+		return "", err
+	}
+	tmpPath := f.Name()
+	defer os.Remove(tmpPath)
+
+	real := os.Stdout
+	os.Stdout = f
+	defer func() { os.Stdout = real }()
+
+	_ = fn()
+
+	if cerr := f.Close(); cerr != nil {
+		return "", cerr
+	}
+	data, rerr := os.ReadFile(tmpPath)
+	if rerr != nil {
+		return "", rerr
+	}
+	return string(data), nil
+}
+
+func setTestHome(t *testing.T, dir string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Setenv("USERPROFILE", dir)
+	} else {
+		t.Setenv("HOME", dir)
+	}
+}
+
+func TestInspectPrintsHostMountRaw(t *testing.T) {
+	dir := t.TempDir()
+	old, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(old)
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte{}, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	reg, err := registry.ParseTOML(`[tools.demo]
+image = "demo:1"
+provider = "stateless"
+host_mounts = ["%USERPROFILE%\\.claude:/root/.claude:ro"]
+`)
+	if err != nil {
+		t.Fatalf("parse registry: %v", err)
+	}
+
+	out, err := captureStdout(func() error { return Inspect(reg, []string{"demo"}) })
+	if err != nil {
+		t.Fatalf("capture: %v", err)
+	}
+	if !strings.Contains(out, "host_mount:  %USERPROFILE%\\.claude -> /root/.claude (ro)") {
+		t.Fatalf("inspect output missing raw host_mount line:\n%s", out)
+	}
+}
+
+func TestTracePrintsHostMountExpanded(t *testing.T) {
+	dir := t.TempDir()
+	homeDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(homeDir, ".claude"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	setTestHome(t, homeDir)
+
+	old, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(old)
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte{}, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	reg, err := registry.ParseTOML(`[tools.demo]
+image = "demo:1"
+provider = "stateless"
+host_mounts = ["%USERPROFILE%/.claude:/root/.claude:ro"]
+`)
+	if err != nil {
+		t.Fatalf("parse registry: %v", err)
+	}
+
+	expectedCanon, err := pathmap.CanonicalPath(homeDir + "/.claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := captureStdout(func() error { return Trace(reg, []string{"demo"}) })
+	if err != nil {
+		t.Fatalf("capture: %v", err)
+	}
+	want := "host_mount:  " + expectedCanon + " -> /root/.claude (ro)"
+	if !strings.Contains(out, want) {
+		t.Fatalf("trace output missing expanded host_mount line (want %q):\n%s", want, out)
+	}
+}
+
+func TestTraceHostMountResolveErrorIsPrintedNotFatal(t *testing.T) {
+	dir := t.TempDir()
+	if runtime.GOOS == "windows" {
+		t.Setenv("USERPROFILE", "")
+	} else {
+		t.Setenv("HOME", "")
+	}
+
+	old, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(old)
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte{}, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	reg, err := registry.ParseTOML(`[tools.demo]
+image = "demo:1"
+provider = "stateless"
+host_mounts = ["%USERPROFILE%/.claude:/root/.claude:ro"]
+`)
+	if err != nil {
+		t.Fatalf("parse registry: %v", err)
+	}
+
+	out, err := captureStdout(func() error { return Trace(reg, []string{"demo"}) })
+	if err != nil {
+		t.Fatalf("capture: %v", err)
+	}
+	if !strings.Contains(out, "host_mount:  %USERPROFILE%/.claude -> /root/.claude (ro)") {
+		t.Fatalf("trace output missing host_mount line:\n%s", out)
+	}
+	if !strings.Contains(out, "resolve error:") {
+		t.Fatalf("trace output missing resolve error marker:\n%s", out)
 	}
 }

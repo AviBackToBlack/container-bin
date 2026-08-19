@@ -78,6 +78,11 @@ func RunTool(t registry.Tool, userArgs []string) (int, error) {
 		}
 		args = append(args, "--mount", mount)
 	}
+	hostMountArgs, err := buildHostMountArgs(t.HostMounts)
+	if err != nil {
+		return 1, err
+	}
+	args = append(args, hostMountArgs...)
 	for _, name := range selectedHostEnv(t) {
 		args = append(args, "-e", name)
 	}
@@ -213,7 +218,7 @@ func selectedHostEnv(t registry.Tool) []string {
 	return out
 }
 
-func MountSpec(kind, src, dst string) (string, error) {
+func mountSpecChecked(kind, src, dst string) error {
 	// src is checked before dst deliberately: for the project-root bind
 	// mount, dst (workspaceRoot) is always derived from a substring of src
 	// (root), so this ordering is what makes a comma-named project fail on
@@ -222,12 +227,82 @@ func MountSpec(kind, src, dst string) (string, error) {
 	// would not change whether the mount is rejected, but would change which
 	// message the row and test depend on.
 	if strings.Contains(src, ",") {
-		return "", fmt.Errorf("source path/volume contains a comma and cannot be represented safely in docker --mount syntax (values are comma-separated with no escaping): %s", src)
+		return fmt.Errorf("source path/volume contains a comma and cannot be represented safely in docker --mount syntax (values are comma-separated with no escaping): %s", src)
 	}
 	if strings.Contains(dst, ",") {
-		return "", fmt.Errorf("destination path contains a comma and cannot be represented safely in docker --mount syntax (values are comma-separated with no escaping): %s", dst)
+		return fmt.Errorf("destination path contains a comma and cannot be represented safely in docker --mount syntax (values are comma-separated with no escaping): %s", dst)
+	}
+	return nil
+}
+
+func MountSpec(kind, src, dst string) (string, error) {
+	if err := mountSpecChecked(kind, src, dst); err != nil {
+		return "", err
 	}
 	return fmt.Sprintf("type=%s,src=%s,dst=%s", kind, src, dst), nil
+}
+
+// MountSpecMode is MountSpec plus an explicit ro/rw mode. mode must be "ro" or
+// "rw" -- registry.ParseHostMount already guarantees this for every
+// host_mounts entry, so an unrecognized value here is a programmer error, not
+// user input; fail closed rather than silently defaulting.
+func MountSpecMode(kind, src, dst, mode string) (string, error) {
+	if err := mountSpecChecked(kind, src, dst); err != nil {
+		return "", err
+	}
+	switch mode {
+	case "ro":
+		return fmt.Sprintf("type=%s,src=%s,dst=%s,readonly", kind, src, dst), nil
+	case "rw":
+		return fmt.Sprintf("type=%s,src=%s,dst=%s", kind, src, dst), nil
+	default:
+		return "", fmt.Errorf("unsupported mount mode %q", mode)
+	}
+}
+
+// ExpandHostMountSource resolves the one host variable container-bin
+// understands in a host_mounts source. A literal Windows absolute path is
+// returned unchanged. registry.ParseHostMount has already rejected any other
+// %...% token, so this never needs to guess about anything it hasn't seen.
+func ExpandHostMountSource(source string) (string, error) {
+	if strings.HasPrefix(source, "%USERPROFILE%") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("resolve %%USERPROFILE%%: %w", err)
+		}
+		return home + strings.TrimPrefix(source, "%USERPROFILE%"), nil
+	}
+	return source, nil
+}
+
+func buildHostMountArgs(hostMounts []string) ([]string, error) {
+	var args []string
+	for _, spec := range hostMounts {
+		source, target, mode, err := registry.ParseHostMount(spec)
+		if err != nil {
+			return nil, err // unreachable in practice; the registry was already validated at load
+		}
+		expanded, err := ExpandHostMountSource(source)
+		if err != nil {
+			return nil, err
+		}
+		if strings.HasPrefix(expanded, `\\`) {
+			return nil, fmt.Errorf("host_mounts source %q resolves to a UNC path, which Docker Desktop cannot share", source)
+		}
+		canon, err := pathmap.CanonicalPath(expanded)
+		if err != nil {
+			return nil, fmt.Errorf("host_mounts source %q: %w", source, err)
+		}
+		if _, statErr := os.Stat(canon); statErr != nil {
+			return nil, fmt.Errorf("host_mounts source %q does not exist: %s", source, canon)
+		}
+		mount, err := MountSpecMode("bind", canon, target, mode)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, "--mount", mount)
+	}
+	return args, nil
 }
 
 func EnsureImageLocalForTool(t registry.Tool) error {

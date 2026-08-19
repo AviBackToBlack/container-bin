@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/AviBackToBlack/container-bin/internal/toml"
 )
 
 // containsString mirrors the tiny helper these profile assertions used while
@@ -416,5 +418,176 @@ func TestNode22ProfilesParseAndVolumes(t *testing.T) {
 		if !reflect.DeepEqual(oldTool.SharedVolumes, newTool.SharedVolumes) {
 			t.Fatalf("%s and %s shared_volumes differ: %#v vs %#v", p.old, p.new, oldTool.SharedVolumes, newTool.SharedVolumes)
 		}
+	}
+}
+
+func TestParseHostMount(t *testing.T) {
+	cases := []struct {
+		name      string
+		spec      string
+		wantErr   bool
+		wantSrc   string
+		wantDst   string
+		wantMode  string
+		errSubstr string
+	}{
+		{
+			name:     "ro_ok",
+			spec:     "D:\\Video:/root/videos:ro",
+			wantSrc:  "D:\\Video",
+			wantDst:  "/root/videos",
+			wantMode: "ro",
+		},
+		{
+			name:     "rw_ok",
+			spec:     "D:\\Video:/root/videos:rw",
+			wantSrc:  "D:\\Video",
+			wantDst:  "/root/videos",
+			wantMode: "rw",
+		},
+		{
+			name:     "userprofile_ok",
+			spec:     "%USERPROFILE%\\.claude:/root/.claude:ro",
+			wantSrc:  "%USERPROFILE%\\.claude",
+			wantDst:  "/root/.claude",
+			wantMode: "ro",
+		},
+		{
+			name:      "missing_mode",
+			spec:      "D:\\Video:/root/videos",
+			wantErr:   true,
+			errSubstr: "missing a :ro or :rw mode suffix",
+		},
+		{
+			name:      "invalid_mode",
+			spec:      "D:\\Video:/root/videos:rx",
+			wantErr:   true,
+			errSubstr: "mode must be",
+		},
+		{
+			name:      "non_absolute_target",
+			spec:      "D:\\Video:relative:ro",
+			wantErr:   true,
+			errSubstr: "absolute",
+		},
+		{
+			name:      "empty_source",
+			spec:      ":/root/videos:ro",
+			wantErr:   true,
+			errSubstr: "expected SOURCE:/absolute/container/path",
+		},
+		{
+			name:      "comma_in_source",
+			spec:      "D:\\Video, here:/root/videos:ro",
+			wantErr:   true,
+			errSubstr: "comma",
+		},
+		{
+			name:      "other_variable_rejected",
+			spec:      "%APPDATA%\\x:/root/x:ro",
+			wantErr:   true,
+			errSubstr: "unsupported",
+		},
+		{
+			name:      "other_variable_after_userprofile",
+			spec:      "%USERPROFILE%\\%APPDATA%\\x:/root/x:ro",
+			wantErr:   true,
+			errSubstr: "unsupported",
+		},
+		{
+			name:      "userprofile_not_at_start",
+			spec:      "C:\\%USERPROFILE%\\.claude:/root/.claude:ro",
+			wantErr:   true,
+			errSubstr: "unsupported",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			src, dst, mode, err := ParseHostMount(c.spec)
+			if c.wantErr {
+				if err == nil {
+					t.Fatalf("ParseHostMount(%q) expected error, got src=%q dst=%q mode=%q", c.spec, src, dst, mode)
+				}
+				if c.errSubstr != "" && !strings.Contains(err.Error(), c.errSubstr) {
+					t.Fatalf("ParseHostMount(%q) error %q does not contain %q", c.spec, err.Error(), c.errSubstr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ParseHostMount(%q) unexpected error: %v", c.spec, err)
+			}
+			if src != c.wantSrc || dst != c.wantDst || mode != c.wantMode {
+				t.Fatalf("ParseHostMount(%q) = src=%q dst=%q mode=%q, want src=%q dst=%q mode=%q", c.spec, src, dst, mode, c.wantSrc, c.wantDst, c.wantMode)
+			}
+		})
+	}
+}
+
+func TestParseHostMountWindowsLiteralWithForwardSlashDrive(t *testing.T) {
+	// The "X:\" form is unambiguous with the ":/" source/target delimiter.
+	src, dst, mode, err := ParseHostMount("D:/Video:/root/videos:ro")
+	if err == nil {
+		t.Fatalf("expected ambiguity to be rejected, got src=%q dst=%q mode=%q", src, dst, mode)
+	}
+}
+
+func TestValidateHostMounts(t *testing.T) {
+	base := `[tools.x]
+image = "x:1"
+provider = "stateless"
+`
+
+	mustFail := func(label, extra string) {
+		t.Helper()
+		_, err := ParseTOML(base + extra)
+		if err == nil {
+			t.Fatalf("%s: expected error", label)
+		}
+	}
+	mustPass := func(label, extra string) {
+		t.Helper()
+		_, err := ParseTOML(base + extra)
+		if err != nil {
+			t.Fatalf("%s: unexpected error: %v", label, err)
+		}
+	}
+
+	mustFail("workspace_root_reserved", "host_mounts = "+toml.Array([]string{"C:\\\\Video:/workspace:ro"})+"\n")
+	mustFail("workspace_child_reserved", "host_mounts = "+toml.Array([]string{"C:\\\\Video:/workspace/foo:ro"})+"\n")
+	mustFail("cb_root_reserved", "host_mounts = "+toml.Array([]string{"C:\\\\Video:/cb:ro"})+"\n")
+	mustFail("cb_child_reserved", "host_mounts = "+toml.Array([]string{"C:\\\\Video:/cb/global:ro"})+"\n")
+	mustFail("duplicate_target", "host_mounts = "+toml.Array([]string{"C:\\\\A:/root/.x:ro", "C:\\\\B:/root/.x:rw"})+"\n")
+	mustFail("shared_volume_collision", "shared_volumes = "+toml.Array([]string{"cache:/root/.cache"})+"\nhost_mounts = "+toml.Array([]string{"C:\\\\Video:/root/.cache:ro"})+"\n")
+
+	mustPass("valid_multi_entry", "host_mounts = "+toml.Array([]string{
+		"%USERPROFILE%\\\\.claude:/root/.claude:ro",
+		"%USERPROFILE%\\\\.codex:/root/.codex:ro",
+	})+"\n")
+
+	// stateless provider is allowed to use host_mounts
+	_, err := ParseTOML(base + "host_mounts = " + toml.Array([]string{"%USERPROFILE%\\\\.claude:/root/.claude:ro"}) + "\n")
+	if err != nil {
+		t.Fatalf("stateless tool with host_mounts should parse: %v", err)
+	}
+
+	// Ensure the parsed value is retained.
+	reg, err := ParseTOML(base + "host_mounts = " + toml.Array([]string{"%USERPROFILE%\\\\.claude:/root/.claude:ro"}) + "\n")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(reg.Tools["x"].HostMounts) != 1 {
+		t.Fatalf("expected 1 host_mount, got %#v", reg.Tools["x"].HostMounts)
+	}
+}
+
+func TestHostMountDefaultTOMLComment(t *testing.T) {
+	// The default TOML must still parse and the host_mounts comment must not
+	// create an extra tool or confuse the parser.
+	reg, err := ParseTOML(DefaultTOML)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reg.Tools) != 16 {
+		t.Fatalf("expected 16 tools, got %d", len(reg.Tools))
 	}
 }

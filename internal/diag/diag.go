@@ -115,6 +115,18 @@ func reparsePointVerdict(subject, literalPath, resolvedPath string) (status, mes
 	return "warn", fmt.Sprintf("%s does not resolve to itself (literal: %s, resolved: %s); if this is a junction or symlink, that is supported (see docs/windows-paths.md P1), but links inside the tree do not traverse from inside the container (P3) — filepath.EvalSymlinks can also produce a different form for reasons other than a reparse point (e.g. expanding an 8.3 short name), so this may be informational only", subject, literalPath, resolvedPath)
 }
 
+// hostMountVerdict reports whether a declared host_mounts source resolves to
+// a usable path right now. A missing source is a per-machine/per-user state
+// fact (the directory may simply not exist yet on this machine), not a
+// container-bin defect, so this warns rather than fails -- the same
+// warn-not-fail precedent as dockerOSTypeVerdict.
+func hostMountVerdict(toolName, source, target, canonicalPath string, exists bool) (status, message string) {
+	if !exists {
+		return "warn", fmt.Sprintf("%s: host_mounts source for %s does not exist: %s", toolName, target, canonicalPath)
+	}
+	return "ok", fmt.Sprintf("%s: host_mounts source for %s exists: %s", toolName, target, canonicalPath)
+}
+
 func networkStorageVerdict(subject, path, driveType string) (status, message string) {
 	if strings.HasPrefix(path, `\\`) {
 		return "warn", fmt.Sprintf("%s is on a UNC path (%s); Docker Desktop cannot bind-mount a UNC source; see docs/windows-paths.md P8", subject, path)
@@ -337,6 +349,46 @@ func Doctor(reg registry.Registry, cfgPath string) error {
 			if strings.Contains(strings.ToLower(line), `microsoft\windowsapps\python`) {
 				warn("Windows App Execution Alias for python is present on PATH; disable it in Windows Settings > Apps > App execution aliases")
 				break
+			}
+		}
+	}
+
+	for name, t := range reg.Tools {
+		if len(t.HostMounts) == 0 {
+			continue
+		}
+		for _, spec := range t.HostMounts {
+			source, target, _, err := registry.ParseHostMount(spec)
+			if err != nil {
+				warn("%s: host_mounts entry %q is invalid: %v", name, spec, err)
+				continue
+			}
+			expanded, err := dockerrun.ExpandHostMountSource(source)
+			if err != nil {
+				warn("%s: host_mounts source %q could not be resolved: %v", name, source, err)
+				continue
+			}
+			canon, err := pathmap.CanonicalPath(expanded)
+			if err != nil {
+				warn("%s: host_mounts source %q could not be canonicalized: %v", name, source, err)
+				continue
+			}
+			_, statErr := os.Stat(canon)
+			status, msg := hostMountVerdict(name, source, target, canon, statErr == nil)
+			if status == "ok" {
+				ok("%s", msg)
+			} else {
+				warn("%s", msg)
+			}
+			if runtime.GOOS == "windows" && !strings.HasPrefix(canon, `\\`) {
+				driveType := ""
+				if dt, err := windowsDriveType(filepath.VolumeName(canon)); err == nil {
+					driveType = dt
+				}
+				nsStatus, nsMsg := networkStorageVerdict("host_mounts source for "+target, canon, driveType)
+				if nsStatus != "ok" {
+					warn("%s", nsMsg)
+				}
 			}
 		}
 	}
