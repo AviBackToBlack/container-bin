@@ -81,7 +81,7 @@ readable, and dangerous to let others edit.
   change; review `cb update` diffs (old → new digest) when refreshing.
 - Prefer specific tags (`python:3.13-slim`) over `latest` in profiles you care
   about; the lockfile pins either way, but intent stays readable.
-- Audit `cb expose npm` output — every exposed binary is a new command on your
+- Audit `cb expose` output — every exposed binary is a new command on your
   PATH.
 - Before pasting `cb inspect` / registry snippets into issues, strip
   credentials: env allowlists tell attackers what's worth stealing, and

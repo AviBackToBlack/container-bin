@@ -140,7 +140,7 @@ func discoverNPMGlobalBins(t registry.Tool) ([]string, error) {
 		}
 	}
 	if globalVol == "" {
-		return nil, errors.New("npm profile has no npm-global shared volume")
+		return nil, fmt.Errorf("tool %q has no npm-global shared volume", t.Name)
 	}
 	script := `if [ -d /cb/npm-global/bin ]; then for f in /cb/npm-global/bin/*; do [ -e "$f" ] || continue; basename "$f"; done; fi`
 	mount, err := dockerrun.MountSpec("volume", globalVol, "/cb/npm-global")
@@ -170,16 +170,14 @@ func discoverNPMGlobalBins(t registry.Tool) ([]string, error) {
 
 func Expose(reg registry.Registry, cfgPath string, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: cb expose npm [BINARY ...]")
+		return errors.New("usage: cb expose TOOL [BINARY ...] (TOOL is an npm-shaped stateful profile already in the registry, e.g. npm or npm22)")
 	}
-	if strings.ToLower(args[0]) != "npm" {
-		return errors.New("v0.8 supports only: cb expose npm [BINARY ...]")
-	}
-	npm, ok := reg.Tools["npm"]
+	sourceName := strings.ToLower(args[0])
+	source, ok := reg.Tools[sourceName]
 	if !ok {
-		return errors.New("npm tool is not configured")
+		return fmt.Errorf("tool %q not found; cb expose exposes global binaries from an npm-shaped profile already in the registry", sourceName)
 	}
-	bins, err := discoverNPMGlobalBins(npm)
+	bins, err := discoverNPMGlobalBins(source)
 	if err != nil {
 		return err
 	}
@@ -217,7 +215,7 @@ func Expose(reg registry.Registry, cfgPath string, args []string) error {
 			fmt.Printf("skip %-16s already exists in registry\n", name)
 			continue
 		}
-		section := fmt.Sprintf("\n# Exposed from npm global prefix by cb expose npm\n[tools.%s]\nimage = %s\nprovider = \"stateful\"\ncommand = [%s]\nstate_group = %s\nshared_volumes = %s\nenv_set = %s\nenv_prefixes = %s\nenv_names = %s\n", name, toml.Quote(npm.Image), toml.Quote("/cb/npm-global/bin/"+name), toml.Quote(npm.StateGroup), toml.Array(npm.SharedVolumes), toml.Array(npm.EnvSet), toml.Array(npm.EnvPrefixes), toml.Array(npm.EnvNames))
+		section := fmt.Sprintf("\n# Exposed from %s global prefix by cb expose %s\n[tools.%s]\nimage = %s\nprovider = \"stateful\"\ncommand = [%s]\nstate_group = %s\nshared_volumes = %s\nenv_set = %s\nenv_prefixes = %s\nenv_names = %s\n", sourceName, sourceName, name, toml.Quote(source.Image), toml.Quote("/cb/npm-global/bin/"+name), toml.Quote(source.StateGroup), toml.Array(source.SharedVolumes), toml.Array(source.EnvSet), toml.Array(source.EnvPrefixes), toml.Array(source.EnvNames))
 		add.WriteString(section)
 		added++
 		fmt.Printf("exposed %-16s /cb/npm-global/bin/%s\n", name, name)

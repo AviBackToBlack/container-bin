@@ -133,7 +133,8 @@ Runtime resolution is fail-closed: lockfile present + configured image missing
 from it = refuse to run and say exactly which command fixes it. Tools sharing
 an image share one entry, so `node`, `npm`, `npx` and every npm-exposed tool
 update together — by design: they are the same runtime and diverging them
-would create unrepresentable states.
+would create unrepresentable states. The Node 22 family (`node22`, `npm22`,
+`npx22` and anything exposed from `npm22`) is a separate `node:22-slim` entry.
 
 ## Atomic writes
 

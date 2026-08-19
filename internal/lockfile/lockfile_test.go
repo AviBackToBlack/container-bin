@@ -58,6 +58,46 @@ digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 	}
 }
 
+func TestConfiguredImagesIncludesNode22(t *testing.T) {
+	reg := registry.Default()
+	got := ConfiguredImages(reg)
+	want := map[string]bool{
+		"node:24-slim": true,
+		"node:22-slim": true,
+	}
+	for image := range want {
+		if !containsString(got, image) {
+			t.Fatalf("ConfiguredImages missing %q; got %v", image, got)
+		}
+	}
+	// node:22-slim and node:24-slim are distinct configured references, so they
+	// must produce distinct lock entries.
+	node24Idx, node22Idx := -1, -1
+	for i, image := range got {
+		if image == "node:24-slim" {
+			node24Idx = i
+		}
+		if image == "node:22-slim" {
+			node22Idx = i
+		}
+	}
+	if node24Idx == -1 || node22Idx == -1 {
+		t.Fatalf("missing node images in %v", got)
+	}
+	if node24Idx == node22Idx {
+		t.Fatal("node:24-slim and node:22-slim collapsed into the same entry")
+	}
+}
+
+func containsString(xs []string, s string) bool {
+	for _, x := range xs {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
 func TestConfiguredImagesDeduplicatesSharedImage(t *testing.T) {
 	reg := registry.Registry{Tools: map[string]registry.Tool{
 		"node": {Image: "node:24-slim"},

@@ -191,7 +191,7 @@ Commands:
   cb state     list container-bin Docker volumes and mark current/shared state
   cb inspect   show a tool profile plus resolved project/state information
   cb gc        dry-run cleanup; supports --orphans for labeled missing projects
-  cb expose    expose binaries from a managed global tool store (npm)
+  cb expose    expose binaries from a managed npm-shaped global tool store (npm, npm22, ...)
   cb unexpose  remove dynamically exposed tool profiles/shims
   cb uninstall remove custom tool profiles/shims
   cb lock      create/check immutable image digest lockfile

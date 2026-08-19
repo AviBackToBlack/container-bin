@@ -142,6 +142,40 @@ env_set = ["NPM_CONFIG_PREFIX=/cb/npm-global"]
 env_prefixes = ["NPM_CONFIG_"]
 env_names = ["NODE_ENV", "NODE_OPTIONS", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"]
 
+[tools.node22]
+image = "node:22-slim"
+provider = "stateful"
+command = ["node"]
+state_group = "node22"
+project_markers = ["package.json", "package-lock.json", "npm-shrinkwrap.json", ".git"]
+project_volumes = ["node-modules:/workspace/node_modules"]
+shared_volumes = ["npm-cache:/root/.npm"]
+env_names = ["NODE_ENV", "NODE_OPTIONS", "NPM_CONFIG_REGISTRY", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"]
+
+[tools.npm22]
+image = "node:22-slim"
+provider = "stateful"
+command = ["npm"]
+state_group = "node22"
+project_markers = ["package.json", "package-lock.json", "npm-shrinkwrap.json", ".git"]
+project_volumes = ["node-modules:/workspace/node_modules"]
+shared_volumes = ["npm-cache:/root/.npm", "npm-global:/cb/npm-global"]
+env_set = ["NPM_CONFIG_PREFIX=/cb/npm-global"]
+env_prefixes = ["NPM_CONFIG_"]
+env_names = ["NODE_ENV", "NODE_OPTIONS", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"]
+
+[tools.npx22]
+image = "node:22-slim"
+provider = "stateful"
+command = ["npx"]
+state_group = "node22"
+project_markers = ["package.json", "package-lock.json", "npm-shrinkwrap.json", ".git"]
+project_volumes = ["node-modules:/workspace/node_modules"]
+shared_volumes = ["npm-cache:/root/.npm", "npm-global:/cb/npm-global"]
+env_set = ["NPM_CONFIG_PREFIX=/cb/npm-global"]
+env_prefixes = ["NPM_CONFIG_"]
+env_names = ["NODE_ENV", "NODE_OPTIONS", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"]
+
 [tools.go]
 image = "golang:1.24"
 provider = "stateful"
