@@ -539,6 +539,14 @@ func ParseHostMount(spec string) (source, target, mode string, err error) {
 	if !strings.HasPrefix(target, "/") {
 		return "", "", "", errors.New("host_mounts container path must be absolute")
 	}
+	if strings.Contains(target, ",") {
+		// Mirrors the source comma check below: dockerrun.MountSpecMode would
+		// reject this too, but only at RunTool time, once the tool is
+		// actually invoked. Catching it here moves the failure to registry
+		// load, matching this task's two-stage validation split (structural
+		// checks at load, environment-dependent checks at run).
+		return "", "", "", errors.New("host_mounts target contains a comma and cannot be represented safely in docker --mount syntax (values are comma-separated with no escaping)")
+	}
 	// Reject ".." path segments outright, before cleaning: path.Clean collapses
 	// a traversal like "/workspace/.." to "/", which is not itself in the
 	// reserved-namespace list validateHostMounts checks against, so a naive
@@ -581,8 +589,18 @@ func validHostMountSource(source string) error {
 		if !strings.HasPrefix(source, "%USERPROFILE%") {
 			return errors.New("host_mounts source contains an unsupported %-variable; only %USERPROFILE% is recognized")
 		}
-		if strings.Contains(source[len("%USERPROFILE%"):], "%") {
+		rest := source[len("%USERPROFILE%"):]
+		if strings.Contains(rest, "%") {
 			return errors.New("host_mounts source contains an unsupported %-variable after %USERPROFILE%")
+		}
+		// %USERPROFILE% must be the whole source, or immediately followed by a
+		// path separator. ExpandHostMountSource does plain string
+		// concatenation of os.UserHomeDir() with whatever follows the token,
+		// so without this, "%USERPROFILE%foo" would resolve to a *sibling* of
+		// the home directory (e.g. C:\Users\<user>foo) rather than a child of
+		// it -- silently not the path the registry line visually suggests.
+		if rest != "" && rest[0] != '\\' && rest[0] != '/' {
+			return errors.New("host_mounts source must be exactly %USERPROFILE% or followed immediately by \\ or /")
 		}
 		return nil
 	}
@@ -599,6 +617,18 @@ func isWindowsAbsPath(s string) bool {
 	c := s[0]
 	isLetter := (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
 	return isLetter && s[1] == ':' && (s[2] == '\\' || s[2] == '/')
+}
+
+// pathContainsOrEquals reports whether target is parent itself, or a strict
+// descendant of it. Both arguments must already be path.Clean'd absolute
+// POSIX container paths. Used only for the fixed, cb-owned reserved
+// namespaces (/workspace, /cb, /venv, /root/.cache/pip) -- not for arbitrary
+// project_volumes/shared_volumes destinations, where a host_mounts entry
+// nested under a user-declared volume is a normal, valid Docker
+// configuration (the more specific mount just shadows part of the outer
+// one), not a defect to reject.
+func pathContainsOrEquals(parent, target string) bool {
+	return target == parent || strings.HasPrefix(target, parent+"/")
 }
 
 func validateHostMounts(t Tool) error {
@@ -623,10 +653,19 @@ func validateHostMounts(t Tool) error {
 		if err != nil {
 			return err
 		}
-		if target == "/workspace" || strings.HasPrefix(target, "/workspace/") ||
-			target == "/cb" || strings.HasPrefix(target, "/cb/") ||
-			target == "/venv" || target == "/root/.cache/pip" {
-			return fmt.Errorf("host_mounts target %q is reserved for container-bin's own workspace/state mounts", target)
+		// Prefix-based, not exact-match: /venv and /root/.cache/pip are fixed,
+		// semantically load-bearing paths the python provider's bootstrap
+		// script depends on having their full structure intact (it checks
+		// /venv/bin/python specifically), not just their top-level directory.
+		// An exact-match-only reservation would let a target like /venv/bin
+		// validate cleanly and only break the tool at run time with no
+		// explanatory error -- the same shape of gap /workspace and /cb were
+		// already guarded against with HasPrefix, extended here to all four
+		// reserved namespaces uniformly via pathContainsOrEquals.
+		for _, reserved := range []string{"/workspace", "/cb", "/venv", "/root/.cache/pip"} {
+			if pathContainsOrEquals(reserved, target) {
+				return fmt.Errorf("host_mounts target %q is reserved for container-bin's own workspace/state mounts", target)
+			}
 		}
 		if seen[target] {
 			return fmt.Errorf("host_mounts target %q is declared more than once", target)

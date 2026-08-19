@@ -94,7 +94,11 @@ func TestRenderExposedToolSection(t *testing.T) {
 // captureStdout redirects os.Stdout to a temp file for the duration of fn,
 // then restores it and returns everything fn wrote. Mirrors the helper in
 // internal/diag so the new inspect/trace output lines can be asserted without
-// changing those functions' signatures just for tests.
+// changing those functions' signatures just for tests. Safe only because
+// none of this package's tests call t.Parallel() — it swaps the process-
+// global os.Stdout, so a parallel test using it would interleave captures
+// silently; keep every test using it serial (same precondition
+// internal/diag's copy documents at its own call site).
 func captureStdout(fn func() error) (string, error) {
 	f, err := os.CreateTemp("", "cb-cli-test-")
 	if err != nil {

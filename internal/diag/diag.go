@@ -353,10 +353,18 @@ func Doctor(reg registry.Registry, cfgPath string) error {
 		}
 	}
 
+	// Sorted, not map-order: reg.Tools iteration order is otherwise
+	// nondeterministic, and cb bugreport embeds this output verbatim, which
+	// would make diffing two reports noisier than necessary for no benefit.
+	hostMountToolNames := make([]string, 0, len(reg.Tools))
 	for name, t := range reg.Tools {
-		if len(t.HostMounts) == 0 {
-			continue
+		if len(t.HostMounts) > 0 {
+			hostMountToolNames = append(hostMountToolNames, name)
 		}
+	}
+	sort.Strings(hostMountToolNames)
+	for _, name := range hostMountToolNames {
+		t := reg.Tools[name]
 		for _, spec := range t.HostMounts {
 			source, target, _, err := registry.ParseHostMount(spec)
 			if err != nil {

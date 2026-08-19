@@ -483,6 +483,25 @@ func TestParseHostMount(t *testing.T) {
 			errSubstr: "comma",
 		},
 		{
+			name:      "comma_in_target",
+			spec:      "D:\\Video:/root/videos, here:ro",
+			wantErr:   true,
+			errSubstr: "comma",
+		},
+		{
+			name:      "userprofile_no_separator_concatenates_into_sibling",
+			spec:      "%USERPROFILE%foo:/root/foo:ro",
+			wantErr:   true,
+			errSubstr: "followed immediately by",
+		},
+		{
+			name:     "userprofile_bare_token_ok",
+			spec:     "%USERPROFILE%:/root/home:ro",
+			wantSrc:  "%USERPROFILE%",
+			wantDst:  "/root/home",
+			wantMode: "ro",
+		},
+		{
 			name:      "other_variable_rejected",
 			spec:      "%APPDATA%\\x:/root/x:ro",
 			wantErr:   true,
@@ -558,6 +577,13 @@ provider = "stateless"
 	mustFail("cb_child_reserved", "host_mounts = "+toml.Array([]string{"C:\\\\Video:/cb/global:ro"})+"\n")
 	mustFail("venv_reserved", "host_mounts = "+toml.Array([]string{"C:\\\\Video:/venv:ro"})+"\n")
 	mustFail("pip_cache_reserved", "host_mounts = "+toml.Array([]string{"C:\\\\Video:/root/.cache/pip:ro"})+"\n")
+	// /venv and /root/.cache/pip must be reserved by prefix, not exact match
+	// only: the python provider's bootstrap script depends on their full
+	// structure (it checks /venv/bin/python specifically), so a sub-path
+	// target like /venv/bin would otherwise validate cleanly and only break
+	// the tool at run time.
+	mustFail("venv_subpath_reserved", "host_mounts = "+toml.Array([]string{"C:\\\\Video:/venv/bin:ro"})+"\n")
+	mustFail("pip_cache_subpath_reserved", "host_mounts = "+toml.Array([]string{"C:\\\\Video:/root/.cache/pip/http:ro"})+"\n")
 	mustFail("duplicate_target", "host_mounts = "+toml.Array([]string{"C:\\\\A:/root/.x:ro", "C:\\\\B:/root/.x:rw"})+"\n")
 	mustFail("duplicate_target_equivalent", "host_mounts = "+toml.Array([]string{"C:\\\\A:/root/./.x:ro", "C:\\\\B:/root/.x:rw"})+"\n")
 	mustFail("shared_volume_collision", "shared_volumes = "+toml.Array([]string{"cache:/root/.cache"})+"\nhost_mounts = "+toml.Array([]string{"C:\\\\Video:/root/.cache:ro"})+"\n")
