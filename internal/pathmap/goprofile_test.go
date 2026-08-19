@@ -66,10 +66,6 @@ func TestGoPathMappingWindows(t *testing.T) {
 	assertMapped("go vet", []string{"vet"}, []string{"vet"}, 0)
 }
 
-// Both profiles deliberately declare no forced path semantics. Forcing is
-// positionally blind, so it would rewrite arguments the tool never treats as
-// paths: the value after "go run PKG -o", and the trailing rewrite rule of
-// "gofmt -r". Real paths are still handled by the general shape rules.
 func TestGofmtPathMappingWindows(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("windows path-mapping semantics")
