@@ -1,4 +1,4 @@
-package main
+package pathmap
 
 import (
 	"os"
@@ -26,13 +26,13 @@ func TestGoPathMappingWindows(t *testing.T) {
 		t.Fatal(err)
 	}
 	tool := reg.Tools["go"]
-	wr := workspaceRootFor(tool, root)
+	wr := WorkspaceRootFor(tool, root)
 
 	mustWriteFile(t, filepath.Join(rootRaw, "go.mod"), []byte("module myproj\ngo 1.24\n"))
 
 	assertMapped := func(name string, in, want []string, wantMounts int) {
 		t.Helper()
-		mapped, mounts, err := mapToolArgs(tool, root, root, wr, in)
+		mapped, mounts, err := MapToolArgs(tool, root, root, wr, in)
 		if err != nil {
 			t.Fatalf("%s: err=%v", name, err)
 		}
@@ -85,11 +85,11 @@ func TestGofmtPathMappingWindows(t *testing.T) {
 		t.Fatal(err)
 	}
 	tool := reg.Tools["gofmt"]
-	wr := workspaceRootFor(tool, root)
+	wr := WorkspaceRootFor(tool, root)
 
 	check := func(name string, in, want []string) {
 		t.Helper()
-		mapped, mounts, err := mapToolArgs(tool, root, root, wr, in)
+		mapped, mounts, err := MapToolArgs(tool, root, root, wr, in)
 		if err != nil {
 			t.Fatalf("%s: err=%v", name, err)
 		}

@@ -23,6 +23,7 @@ import (
 
 	"github.com/AviBackToBlack/container-bin/internal/atomicio"
 	"github.com/AviBackToBlack/container-bin/internal/mutationlock"
+	"github.com/AviBackToBlack/container-bin/internal/pathmap"
 	"github.com/AviBackToBlack/container-bin/internal/registry"
 	"github.com/AviBackToBlack/container-bin/internal/toml"
 )
@@ -714,11 +715,11 @@ func runTool(t registry.Tool, userArgs []string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	cwd, err = canonicalPath(cwd)
+	cwd, err = pathmap.CanonicalPath(cwd)
 	if err != nil {
 		return 1, err
 	}
-	root, found := findProjectRoot(cwd, projectMarkersFor(t))
+	root, found := pathmap.FindProjectRoot(cwd, pathmap.ProjectMarkersFor(t))
 	if !found {
 		root = cwd
 	}
@@ -726,13 +727,13 @@ func runTool(t registry.Tool, userArgs []string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	workspaceRoot := workspaceRootFor(t, root)
+	workspaceRoot := pathmap.WorkspaceRootFor(t, root)
 	containerWD := workspaceRoot
 	if rel != "." {
 		containerWD += "/" + filepath.ToSlash(rel)
 	}
 
-	mappedUserArgs, pathMounts, err := mapToolArgs(t, root, cwd, workspaceRoot, userArgs)
+	mappedUserArgs, pathMounts, err := pathmap.MapToolArgs(t, root, cwd, workspaceRoot, userArgs)
 	if err != nil {
 		return 1, err
 	}
@@ -766,12 +767,12 @@ func runTool(t registry.Tool, userArgs []string) (int, error) {
 
 	switch t.Provider {
 	case "python":
-		envID := pythonEnvID(root, found)
+		envID := pathmap.PythonEnvID(root, found)
 		pyLabels := map[string]string{"cb.managed": "true", "cb.owner": "python313/venv"}
 		if found {
 			pyLabels["cb.kind"] = "project"
 			pyLabels["cb.project_path"] = root
-			pyLabels["cb.project_hash"] = volumeHash(root)
+			pyLabels["cb.project_hash"] = pathmap.VolumeHash(root)
 		} else {
 			pyLabels["cb.kind"] = "compat"
 		}
@@ -809,13 +810,13 @@ func runTool(t registry.Tool, userArgs []string) (int, error) {
 			if err != nil {
 				return 1, err
 			}
-			vol := statefulProjectVolumeID(t.StateGroup, name, root, found)
-			dst = statefulWorkspaceDestination(dst, workspaceRoot)
+			vol := pathmap.StatefulProjectVolumeID(t.StateGroup, name, root, found)
+			dst = pathmap.StatefulWorkspaceDestination(dst, workspaceRoot)
 			volSpec, err := mountSpec("volume", vol, dst)
 			if err != nil {
 				return 1, err
 			}
-			if err := ensureManagedVolume(vol, map[string]string{"cb.managed": "true", "cb.kind": "project", "cb.owner": t.StateGroup + "/" + name, "cb.project_path": root, "cb.project_hash": volumeHash(root)}); err != nil {
+			if err := ensureManagedVolume(vol, map[string]string{"cb.managed": "true", "cb.kind": "project", "cb.owner": t.StateGroup + "/" + name, "cb.project_path": root, "cb.project_hash": pathmap.VolumeHash(root)}); err != nil {
 				return 1, err
 			}
 			args = append(args, "--mount", volSpec)
@@ -825,7 +826,7 @@ func runTool(t registry.Tool, userArgs []string) (int, error) {
 			if err != nil {
 				return 1, err
 			}
-			vol := statefulSharedVolumeID(t.StateGroup, name)
+			vol := pathmap.StatefulSharedVolumeID(t.StateGroup, name)
 			volSpec, err := mountSpec("volume", vol, dst)
 			if err != nil {
 				return 1, err
@@ -861,41 +862,6 @@ func runTool(t registry.Tool, userArgs []string) (int, error) {
 	return 1, err
 }
 
-type PathMount struct{ Source, Target string }
-
-type pathMapper struct {
-	root          string
-	cwd           string
-	workspaceRoot string
-	mounts        []PathMount
-	mountBySource map[string]string
-}
-
-// normalizeToolArgs repairs shell-level argv shapes that are unambiguous from
-// the tool registry. In particular, PowerShell can hand native processes
-// `-opt=` and its value as two argv elements. For path_equals options we join
-// those back before path mapping, preserving the target tool's required syntax.
-func normalizeToolArgs(t registry.Tool, args []string) []string {
-	out := make([]string, 0, len(args))
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		joined := false
-		for _, opt := range t.PathEquals {
-			prefix := opt + "="
-			if arg == prefix && i+1 < len(args) {
-				out = append(out, prefix+args[i+1])
-				i++
-				joined = true
-				break
-			}
-		}
-		if !joined {
-			out = append(out, arg)
-		}
-	}
-	return out
-}
-
 func traceTool(reg registry.Registry, args []string) error {
 	if len(args) == 0 {
 		return errors.New("usage: cb trace TOOL [ARGS...]")
@@ -909,18 +875,18 @@ func traceTool(reg registry.Registry, args []string) error {
 	if err != nil {
 		return err
 	}
-	cwd, err = canonicalPath(cwd)
+	cwd, err = pathmap.CanonicalPath(cwd)
 	if err != nil {
 		return err
 	}
-	root, found := findProjectRoot(cwd, projectMarkersFor(t))
+	root, found := pathmap.FindProjectRoot(cwd, pathmap.ProjectMarkersFor(t))
 	if !found {
 		root = cwd
 	}
 	raw := append([]string(nil), args[1:]...)
-	normalized := normalizeToolArgs(t, raw)
-	workspaceRoot := workspaceRootFor(t, root)
-	mapped, mounts, err := mapToolArgs(t, root, cwd, workspaceRoot, raw)
+	normalized := pathmap.NormalizeToolArgs(t, raw)
+	workspaceRoot := pathmap.WorkspaceRootFor(t, root)
+	mapped, mounts, err := pathmap.MapToolArgs(t, root, cwd, workspaceRoot, raw)
 	if err != nil {
 		return err
 	}
@@ -943,124 +909,15 @@ func traceTool(reg registry.Registry, args []string) error {
 		fmt.Printf("state_group: %s\n", t.StateGroup)
 		for _, spec := range t.ProjectVolumes {
 			name, dst, _ := registry.ParseVolumeBinding(spec)
-			dst = statefulWorkspaceDestination(dst, workspaceRoot)
-			fmt.Printf("project_volume: %s -> %s\n", statefulProjectVolumeID(t.StateGroup, name, root, found), dst)
+			dst = pathmap.StatefulWorkspaceDestination(dst, workspaceRoot)
+			fmt.Printf("project_volume: %s -> %s\n", pathmap.StatefulProjectVolumeID(t.StateGroup, name, root, found), dst)
 		}
 		for _, spec := range t.SharedVolumes {
 			name, dst, _ := registry.ParseVolumeBinding(spec)
-			fmt.Printf("shared_volume:  %s -> %s\n", statefulSharedVolumeID(t.StateGroup, name), dst)
+			fmt.Printf("shared_volume:  %s -> %s\n", pathmap.StatefulSharedVolumeID(t.StateGroup, name), dst)
 		}
 	}
 	return nil
-}
-
-func mapToolArgs(t registry.Tool, root, cwd, workspaceRoot string, userArgs []string) ([]string, []PathMount, error) {
-	normalized := normalizeToolArgs(t, userArgs)
-	if runtime.GOOS != "windows" {
-		return append([]string(nil), normalized...), nil, nil
-	}
-	pm := &pathMapper{root: root, cwd: cwd, workspaceRoot: workspaceRoot, mountBySource: map[string]string{}}
-	mapped := append([]string(nil), normalized...)
-	forceNext := false
-	for i, arg := range normalized {
-		if forceNext {
-			v, err := pm.mapArg(arg, true)
-			if err != nil {
-				return nil, nil, err
-			}
-			mapped[i] = v
-			forceNext = false
-			continue
-		}
-
-		if containsString(t.PathNext, arg) {
-			mapped[i] = arg
-			forceNext = true
-			continue
-		}
-
-		eqMapped := false
-		for _, opt := range t.PathEquals {
-			prefix := opt + "="
-			if strings.HasPrefix(arg, prefix) {
-				v, err := pm.mapArg(strings.TrimPrefix(arg, prefix), true)
-				if err != nil {
-					return nil, nil, err
-				}
-				mapped[i] = prefix + v
-				eqMapped = true
-				break
-			}
-		}
-		if eqMapped {
-			continue
-		}
-
-		lastEnabled := t.PathLast && (len(t.PathLastIfAny) == 0 || anyArgPresent(normalized, t.PathLastIfAny))
-		forceLast := lastEnabled && i == len(normalized)-1 && arg != "-" && !strings.HasPrefix(arg, "-")
-		v, err := pm.mapArg(arg, forceLast)
-		if err != nil {
-			return nil, nil, err
-		}
-		mapped[i] = v
-	}
-	if forceNext {
-		return nil, nil, fmt.Errorf("tool %q: option %q requires a path argument", t.Name, normalized[len(normalized)-1])
-	}
-	return mapped, pm.mounts, nil
-}
-
-func (pm *pathMapper) mapArg(arg string, force bool) (string, error) {
-	hostPath, isPath, err := resolveWindowsPathArgMode(pm.cwd, arg, force)
-	if err != nil {
-		return "", err
-	}
-	if !isPath {
-		return arg, nil
-	}
-	if rel, ok := pathWithin(pm.root, hostPath); ok {
-		if rel == "." {
-			return pm.workspaceRoot, nil
-		}
-		return pm.workspaceRoot + "/" + filepath.ToSlash(rel), nil
-	}
-	mountRoot, err := externalMountRoot(hostPath)
-	if err != nil {
-		return "", fmt.Errorf("map argument path %q: %w", arg, err)
-	}
-	key := strings.ToLower(filepath.Clean(mountRoot))
-	target, exists := pm.mountBySource[key]
-	if !exists {
-		target = fmt.Sprintf("/cb/mounts/%d", len(pm.mounts))
-		pm.mountBySource[key] = target
-		pm.mounts = append(pm.mounts, PathMount{mountRoot, target})
-	}
-	rel, err := filepath.Rel(mountRoot, hostPath)
-	if err != nil {
-		return "", err
-	}
-	if rel == "." {
-		return target, nil
-	}
-	return target + "/" + filepath.ToSlash(rel), nil
-}
-
-func containsString(xs []string, s string) bool {
-	for _, x := range xs {
-		if x == s {
-			return true
-		}
-	}
-	return false
-}
-
-func anyArgPresent(args, needles []string) bool {
-	for _, arg := range args {
-		if containsString(needles, arg) {
-			return true
-		}
-	}
-	return false
 }
 
 func selectedHostEnv(t registry.Tool) []string {
@@ -1094,114 +951,6 @@ func selectedHostEnv(t registry.Tool) []string {
 	return out
 }
 
-// resolveWindowsPathArg recognizes the forms that can be mapped safely without
-// knowing tool-specific argument grammar:
-//
-//	C:\foo\bar      absolute Windows path
-//	.\foo / ..\foo explicit relative Windows path
-//	subdir\foo      only when it already exists on the host
-//
-// Plain strings that merely contain backslashes are left untouched.
-func resolveWindowsPathArg(cwd, arg string) (string, bool, error) {
-	return resolveWindowsPathArgMode(cwd, arg, false)
-}
-
-func resolveWindowsPathArgMode(cwd, arg string, force bool) (string, bool, error) {
-	// Never treat a package-pattern wildcard as a path, even when force is true.
-	// Windows strips trailing dots from a path component, so C:\proj\... collapses
-	// to C:\proj and silently maps to the workspace root. Declining is safe:
-	// the container's working directory is the project, so an unmapped ./...
-	// resolves correctly inside the container. This also catches D:\proj\...
-	// deliberately: failing loudly beats silently running the wrong subset.
-	if hasPackagePatternSuffix(arg) {
-		return "", false, nil
-	}
-	if isWindowsAbsPath(arg) {
-		p, err := canonicalPath(arg)
-		if err != nil {
-			return "", false, fmt.Errorf("canonicalize argument path %q: %w", arg, err)
-		}
-		return p, true, nil
-	}
-	if isExplicitWindowsRelPath(arg) || (force && !strings.HasPrefix(arg, "-") && arg != "") {
-		p, err := canonicalPath(filepath.Join(cwd, arg))
-		if err != nil {
-			return "", false, fmt.Errorf("canonicalize relative argument path %q: %w", arg, err)
-		}
-		return p, true, nil
-	}
-	if strings.Contains(arg, `\`) && !strings.ContainsAny(arg, "\r\n\t") {
-		candidate := filepath.Join(cwd, arg)
-		if _, err := os.Stat(candidate); err == nil {
-			p, err := canonicalPath(candidate)
-			if err != nil {
-				return "", false, err
-			}
-			return p, true, nil
-		}
-	}
-	return "", false, nil
-}
-func isExplicitWindowsRelPath(s string) bool {
-	return strings.HasPrefix(s, `.\`) || strings.HasPrefix(s, `..\`) ||
-		strings.HasPrefix(s, "./") || strings.HasPrefix(s, "../")
-}
-
-func hasPackagePatternSuffix(s string) bool {
-	if !strings.HasSuffix(s, "...") {
-		return false
-	}
-	prefix := s[:len(s)-3]
-	return prefix == "" || strings.HasSuffix(prefix, "/") || strings.HasSuffix(prefix, `\`)
-}
-
-func isWindowsAbsPath(s string) bool {
-	if len(s) < 3 {
-		return false
-	}
-	c := s[0]
-	isLetter := (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
-	return isLetter && s[1] == ':' && (s[2] == '\\' || s[2] == '/')
-}
-
-func pathWithin(root, p string) (string, bool) {
-	rel, err := filepath.Rel(root, p)
-	if err != nil {
-		return "", false
-	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		return "", false
-	}
-	return rel, true
-}
-
-func externalMountRoot(hostPath string) (string, error) {
-	if st, err := os.Stat(hostPath); err == nil {
-		if st.IsDir() {
-			return hostPath, nil
-		}
-		return filepath.Dir(hostPath), nil
-	} else if !os.IsNotExist(err) {
-		return "", err
-	}
-	candidate := filepath.Dir(hostPath)
-	for {
-		if st, err := os.Stat(candidate); err == nil {
-			if !st.IsDir() {
-				return "", fmt.Errorf("nearest existing ancestor is not a directory: %s", candidate)
-			}
-			return candidate, nil
-		} else if !os.IsNotExist(err) {
-			return "", err
-		}
-		parent := filepath.Dir(candidate)
-		if parent == candidate {
-			return "", fmt.Errorf("no existing ancestor for %s", hostPath)
-		}
-		candidate = parent
-	}
-}
-
 func mountSpec(kind, src, dst string) (string, error) {
 	// src is checked before dst deliberately: for the project-root bind
 	// mount, dst (workspaceRoot) is always derived from a substring of src
@@ -1219,99 +968,12 @@ func mountSpec(kind, src, dst string) (string, error) {
 	return fmt.Sprintf("type=%s,src=%s,dst=%s", kind, src, dst), nil
 }
 
-func workspaceRootFor(t registry.Tool, root string) string {
-	if t.Provider != "stateful" {
-		return "/workspace"
-	}
-	base := filepath.Base(filepath.Clean(root))
-	if base == "." || base == string(filepath.Separator) || base == "" {
-		base = "project"
-	}
-	// Windows project names cannot contain '/', so this remains a single
-	// container path segment while preserving the basename semantics tools
-	// such as `npm init` observe.
-	base = strings.ReplaceAll(base, "/", "_")
-	return "/workspace/" + base
-}
-
-func statefulWorkspaceDestination(dst, workspaceRoot string) string {
-	if dst == "/workspace" {
-		return workspaceRoot
-	}
-	if strings.HasPrefix(dst, "/workspace/") {
-		return workspaceRoot + strings.TrimPrefix(dst, "/workspace")
-	}
-	return dst
-}
-
-func projectMarkersFor(t registry.Tool) []string {
-	if len(t.ProjectMarkers) > 0 {
-		return t.ProjectMarkers
-	}
-	// Backward compatibility for registries created before v0.6, whose
-	// Python sections did not yet declare project_markers explicitly.
-	if t.Provider == "python" {
-		return []string{"pyproject.toml", "requirements.txt", "setup.py", "setup.cfg", ".git"}
-	}
-	return []string{".git"}
-}
-
-func findProjectRoot(start string, markers []string) (string, bool) {
-	dir := start
-	for {
-		for _, marker := range markers {
-			if _, err := os.Stat(filepath.Join(dir, marker)); err == nil {
-				return dir, true
-			}
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "", false
-		}
-		dir = parent
-	}
-}
-
-func volumeHash(root string) string {
-	sum := sha256.Sum256([]byte(strings.ToLower(filepath.Clean(root))))
-	return hex.EncodeToString(sum[:])[:12]
-}
-
-func statefulProjectVolumeID(group, name, root string, project bool) string {
-	_ = project // root already falls back to cwd when no marker was found
-	return "cb-" + group + "-" + name + "-" + volumeHash(root)
-}
-
-func statefulSharedVolumeID(group, name string) string { return "cb-" + group + "-" + name }
-
-func canonicalPath(p string) (string, error) {
-	abs, err := filepath.Abs(p)
-	if err != nil {
-		return "", err
-	}
-	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
-		abs = resolved
-	}
-	abs = filepath.Clean(abs)
-	if runtime.GOOS == "windows" {
-		abs = strings.ToLower(abs)
-	}
-	return abs, nil
-}
-
-func pythonEnvID(root string, project bool) string {
-	if !project {
-		return "cb-python-313-global"
-	}
-	return "cb-python-313-" + volumeHash(root)
-}
-
 func showEnv(reg registry.Registry) error {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return err
 	}
-	cwd, err = canonicalPath(cwd)
+	cwd, err = pathmap.CanonicalPath(cwd)
 	if err != nil {
 		return err
 	}
@@ -1319,13 +981,13 @@ func showEnv(reg registry.Registry) error {
 	if !ok {
 		return errors.New("python tool not configured")
 	}
-	root, found := findProjectRoot(cwd, projectMarkersFor(pt))
+	root, found := pathmap.FindProjectRoot(cwd, pathmap.ProjectMarkersFor(pt))
 	if !found {
 		root = cwd
 	}
 	fmt.Printf("cwd:          %s\nproject:      %v\nroot:         %s\n", cwd, found, root)
 	if t, ok := reg.Tools["python"]; ok {
-		fmt.Printf("python image: %s\npython env:   %s\npip cache:    cb-pip-cache\n", t.Image, pythonEnvID(root, found))
+		fmt.Printf("python image: %s\npython env:   %s\npip cache:    cb-pip-cache\n", t.Image, pathmap.PythonEnvID(root, found))
 	} else {
 		fmt.Println("python:       not configured")
 	}
@@ -1378,7 +1040,7 @@ func currentProjectState(reg registry.Registry) (map[string]stateVolume, map[str
 	if err != nil {
 		return nil, nil, err
 	}
-	cwd, err = canonicalPath(cwd)
+	cwd, err = pathmap.CanonicalPath(cwd)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1388,7 +1050,7 @@ func currentProjectState(reg registry.Registry) (map[string]stateVolume, map[str
 	for _, t := range reg.Tools {
 		switch t.Provider {
 		case "stateful":
-			root, found := findProjectRoot(cwd, projectMarkersFor(t))
+			root, found := pathmap.FindProjectRoot(cwd, pathmap.ProjectMarkersFor(t))
 			if !found {
 				root = cwd
 			}
@@ -1397,7 +1059,7 @@ func currentProjectState(reg registry.Registry) (map[string]stateVolume, map[str
 				if err != nil {
 					return nil, nil, err
 				}
-				name := statefulProjectVolumeID(t.StateGroup, logical, root, found)
+				name := pathmap.StatefulProjectVolumeID(t.StateGroup, logical, root, found)
 				project[name] = stateVolume{Name: name, Kind: "project", Owner: t.StateGroup + "/" + logical, Root: root, Current: true}
 			}
 			for _, spec := range t.SharedVolumes {
@@ -1405,13 +1067,13 @@ func currentProjectState(reg registry.Registry) (map[string]stateVolume, map[str
 				if err != nil {
 					return nil, nil, err
 				}
-				name := statefulSharedVolumeID(t.StateGroup, logical)
+				name := pathmap.StatefulSharedVolumeID(t.StateGroup, logical)
 				shared[name] = stateVolume{Name: name, Kind: "shared", Owner: t.StateGroup + "/" + logical}
 			}
 		case "python":
-			root, found := findProjectRoot(cwd, projectMarkersFor(t))
+			root, found := pathmap.FindProjectRoot(cwd, pathmap.ProjectMarkersFor(t))
 			if found {
-				name := pythonEnvID(root, true)
+				name := pathmap.PythonEnvID(root, true)
 				project[name] = stateVolume{Name: name, Kind: "project", Owner: "python313/venv", Root: root, Current: true}
 			} else {
 				shared["cb-python-313-global"] = stateVolume{Name: "cb-python-313-global", Kind: "compat", Owner: "python313/global"}
@@ -1552,7 +1214,7 @@ func gcState(reg registry.Registry, args []string) error {
 	if err != nil {
 		return err
 	}
-	cwd, err = canonicalPath(cwd)
+	cwd, err = pathmap.CanonicalPath(cwd)
 	if err != nil {
 		return err
 	}
@@ -1563,7 +1225,7 @@ func gcState(reg registry.Registry, args []string) error {
 		}
 		switch t.Provider {
 		case "stateful":
-			root, found := findProjectRoot(cwd, projectMarkersFor(t))
+			root, found := pathmap.FindProjectRoot(cwd, pathmap.ProjectMarkersFor(t))
 			if !found {
 				root = cwd
 			}
@@ -1572,12 +1234,12 @@ func gcState(reg registry.Registry, args []string) error {
 				if e != nil {
 					return e
 				}
-				candidates[statefulProjectVolumeID(t.StateGroup, logical, root, found)] = t.StateGroup + "/" + logical
+				candidates[pathmap.StatefulProjectVolumeID(t.StateGroup, logical, root, found)] = t.StateGroup + "/" + logical
 			}
 		case "python":
-			root, found := findProjectRoot(cwd, projectMarkersFor(t))
+			root, found := pathmap.FindProjectRoot(cwd, pathmap.ProjectMarkersFor(t))
 			if found {
-				candidates[pythonEnvID(root, true)] = "python313/venv"
+				candidates[pathmap.PythonEnvID(root, true)] = "python313/venv"
 			}
 		}
 	}
@@ -1673,7 +1335,7 @@ func discoverNPMGlobalBins(t registry.Tool) ([]string, error) {
 			return nil, err
 		}
 		if logical == "npm-global" {
-			globalVol = statefulSharedVolumeID(t.StateGroup, logical)
+			globalVol = pathmap.StatefulSharedVolumeID(t.StateGroup, logical)
 			break
 		}
 	}
@@ -1808,11 +1470,11 @@ func inspectTool(reg registry.Registry, args []string) error {
 	if err != nil {
 		return err
 	}
-	cwd, err = canonicalPath(cwd)
+	cwd, err = pathmap.CanonicalPath(cwd)
 	if err != nil {
 		return err
 	}
-	root, found := findProjectRoot(cwd, projectMarkersFor(t))
+	root, found := pathmap.FindProjectRoot(cwd, pathmap.ProjectMarkersFor(t))
 	if !found {
 		root = cwd
 	}
@@ -1833,7 +1495,7 @@ func inspectTool(reg registry.Registry, args []string) error {
 	if len(t.Command) > 0 {
 		fmt.Printf("command:    %#v\n", t.Command)
 	}
-	fmt.Printf("cwd:        %s\nroot:       %s\nworkspace:  %s\n", cwd, root, workspaceRootFor(t, root))
+	fmt.Printf("cwd:        %s\nroot:       %s\nworkspace:  %s\n", cwd, root, pathmap.WorkspaceRootFor(t, root))
 	if t.StateGroup != "" {
 		fmt.Printf("state_group: %s\n", t.StateGroup)
 	}
@@ -1842,17 +1504,17 @@ func inspectTool(reg registry.Registry, args []string) error {
 		if e != nil {
 			return e
 		}
-		fmt.Printf("project_volume: %s -> %s\n", statefulProjectVolumeID(t.StateGroup, logical, root, found), statefulWorkspaceDestination(dst, workspaceRootFor(t, root)))
+		fmt.Printf("project_volume: %s -> %s\n", pathmap.StatefulProjectVolumeID(t.StateGroup, logical, root, found), pathmap.StatefulWorkspaceDestination(dst, pathmap.WorkspaceRootFor(t, root)))
 	}
 	for _, spec := range t.SharedVolumes {
 		logical, dst, e := registry.ParseVolumeBinding(spec)
 		if e != nil {
 			return e
 		}
-		fmt.Printf("shared_volume:  %s -> %s\n", statefulSharedVolumeID(t.StateGroup, logical), dst)
+		fmt.Printf("shared_volume:  %s -> %s\n", pathmap.StatefulSharedVolumeID(t.StateGroup, logical), dst)
 	}
 	if t.Provider == "python" {
-		fmt.Printf("python_env: %s\npip_cache:  cb-pip-cache\n", pythonEnvID(root, found))
+		fmt.Printf("python_env: %s\npip_cache:  cb-pip-cache\n", pathmap.PythonEnvID(root, found))
 	}
 	if len(t.PathEquals) > 0 {
 		fmt.Printf("path_equals: %#v\n", t.PathEquals)
@@ -2480,9 +2142,9 @@ func runSelfTestChecksAndCleanup(reg registry.Registry, project, external string
 		}()
 	}
 
-	root, _ := canonicalPath(project)
-	defer removeDockerVolumeQuiet(pythonEnvID(root, true))
-	defer removeDockerVolumeQuiet(statefulProjectVolumeID("node24", "node-modules", root, true))
+	root, _ := pathmap.CanonicalPath(project)
+	defer removeDockerVolumeQuiet(pathmap.PythonEnvID(root, true))
+	defer removeDockerVolumeQuiet(pathmap.StatefulProjectVolumeID("node24", "node-modules", root, true))
 
 	return runSelfTestChecks(reg, project, external, release, cwd)
 }

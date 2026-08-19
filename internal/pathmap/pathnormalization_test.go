@@ -1,4 +1,4 @@
-package main
+package pathmap
 
 import (
 	"path/filepath"
@@ -138,7 +138,7 @@ func TestPathNormalizationCorpus(t *testing.T) {
 	tool := registry.Tool{Name: "demo"}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			mapped, mounts, err := mapToolArgs(tool, root, root, "/workspace", []string{tc.arg})
+			mapped, mounts, err := MapToolArgs(tool, root, root, "/workspace", []string{tc.arg})
 			if err != nil {
 				t.Fatalf("%s: err=%v", tc.name, err)
 			}

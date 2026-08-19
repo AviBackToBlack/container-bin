@@ -1,4 +1,4 @@
-package main
+package pathmap
 
 import (
 	"os"
@@ -36,7 +36,7 @@ func TestPathFormP1JunctionToRoot(t *testing.T) {
 
 	tool := registry.Tool{Name: "demo"}
 	arg := filepath.Join(link, "a.txt")
-	mapped, mounts, err := mapToolArgs(tool, resolved, resolved, "/workspace", []string{arg})
+	mapped, mounts, err := MapToolArgs(tool, resolved, resolved, "/workspace", []string{arg})
 	if err != nil {
 		t.Fatalf("P1: err=%v", err)
 	}
@@ -59,7 +59,7 @@ func TestPathFormP2JunctionEscapesRoot(t *testing.T) {
 
 	tool := registry.Tool{Name: "demo"}
 	arg := `.\escape\b.txt`
-	mapped, mounts, err := mapToolArgs(tool, root, root, "/workspace", []string{arg})
+	mapped, mounts, err := MapToolArgs(tool, root, root, "/workspace", []string{arg})
 	if err != nil {
 		t.Fatalf("P2: err=%v", err)
 	}
@@ -76,7 +76,7 @@ func TestPathFormP5CaseInsensitiveEquivalence(t *testing.T) {
 	tool := registry.Tool{Name: "demo"}
 
 	upperIn := filepath.Join(strings.ToUpper(root), "SUB", "A.TXT")
-	mapped, mounts, err := mapToolArgs(tool, root, root, "/workspace", []string{upperIn})
+	mapped, mounts, err := MapToolArgs(tool, root, root, "/workspace", []string{upperIn})
 	if err != nil {
 		t.Fatalf("P5 in-root: err=%v", err)
 	}
@@ -89,7 +89,7 @@ func TestPathFormP5CaseInsensitiveEquivalence(t *testing.T) {
 
 	upperExt := filepath.Join(strings.ToUpper(ext), "B.TXT")
 	lowerExt := filepath.Join(ext, "b.txt")
-	mapped, mounts, err = mapToolArgs(tool, root, root, "/workspace", []string{upperExt, lowerExt})
+	mapped, mounts, err = MapToolArgs(tool, root, root, "/workspace", []string{upperExt, lowerExt})
 	if err != nil {
 		t.Fatalf("P5 external: err=%v", err)
 	}
@@ -114,10 +114,10 @@ func TestPathFormP6WorkspaceBasenameLowercased(t *testing.T) {
 	mustWriteFile(t, filepath.Join(raw, "x.txt"), []byte{})
 	canon := mustCanonical(t, raw)
 
-	got := workspaceRootFor(registry.Tool{Provider: "stateful"}, canon)
+	got := WorkspaceRootFor(registry.Tool{Provider: "stateful"}, canon)
 	want := "/workspace/my-app"
 	if got != want {
-		t.Fatalf("P6: workspaceRootFor(%q) = %q, want %q", canon, got, want)
+		t.Fatalf("P6: WorkspaceRootFor(%q) = %q, want %q", canon, got, want)
 	}
 }
 
@@ -133,7 +133,7 @@ func TestPathFormP7UNCArgumentDeclined(t *testing.T) {
 		t.Fatalf("P7: isWindowsAbsPath(%q) unexpectedly true", arg)
 	}
 	in := []string{arg}
-	mapped, mounts, err := mapToolArgs(tool, root, root, "/workspace", in)
+	mapped, mounts, err := MapToolArgs(tool, root, root, "/workspace", in)
 	if err != nil {
 		t.Fatalf("P7: err=%v", err)
 	}
@@ -157,7 +157,7 @@ func TestPathFormP7UNCCoincidentalSubtreeIsMapped(t *testing.T) {
 	mustWriteFile(t, filepath.Join(root, "server", "share", "x"), []byte{})
 
 	tool := registry.Tool{Name: "demo"}
-	mapped, mounts, err := mapToolArgs(tool, root, root, "/workspace", []string{`\\server\share\x`})
+	mapped, mounts, err := MapToolArgs(tool, root, root, "/workspace", []string{`\\server\share\x`})
 	if err != nil {
 		t.Fatalf("P7 coincidental: err=%v", err)
 	}
@@ -190,7 +190,7 @@ func TestPathFormP9LongPathSyntaxDeclined(t *testing.T) {
 				t.Fatalf("P9 %s: isWindowsAbsPath(%q) unexpectedly true", tc.name, tc.arg)
 			}
 			in := []string{tc.arg}
-			mapped, mounts, err := mapToolArgs(tool, root, root, "/workspace", in)
+			mapped, mounts, err := MapToolArgs(tool, root, root, "/workspace", in)
 			if err != nil {
 				t.Fatalf("P9 %s: err=%v", tc.name, err)
 			}
@@ -220,9 +220,9 @@ func TestPathFormP11TrailingDotsAndSpaces(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := canonicalPath(tc.arg)
+			got, err := CanonicalPath(tc.arg)
 			if err != nil {
-				t.Fatalf("P11 %s: canonicalPath(%q): %v", tc.name, tc.arg, err)
+				t.Fatalf("P11 %s: CanonicalPath(%q): %v", tc.name, tc.arg, err)
 			}
 			if got != plain {
 				t.Fatalf("P11 %s: canonical=%q, want %q", tc.name, got, plain)
@@ -234,7 +234,7 @@ func TestPathFormP11TrailingDotsAndSpaces(t *testing.T) {
 	// argument reaches the tool as the stripped name, not as a literal.
 	tool := registry.Tool{Name: "demo"}
 	in := []string{`.\foo.`}
-	mapped, mounts, err := mapToolArgs(tool, root, root, "/workspace", in)
+	mapped, mounts, err := MapToolArgs(tool, root, root, "/workspace", in)
 	if err != nil {
 		t.Fatalf("P11 end-to-end: err=%v", err)
 	}
@@ -264,7 +264,7 @@ func TestPathFormP13DeclinedArgumentsPassByteForByte(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			in := []string{tc.arg}
-			mapped, mounts, err := mapToolArgs(tool, root, root, "/workspace", in)
+			mapped, mounts, err := MapToolArgs(tool, root, root, "/workspace", in)
 			if err != nil {
 				t.Fatalf("P13 %s: err=%v", tc.name, err)
 			}

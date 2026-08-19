@@ -1,4 +1,4 @@
-package main
+package pathmap
 
 import (
 	"os"
@@ -13,9 +13,9 @@ import (
 
 func mustCanonical(t *testing.T, p string) string {
 	t.Helper()
-	c, err := canonicalPath(p)
+	c, err := CanonicalPath(p)
 	if err != nil {
-		t.Fatalf("canonicalPath(%q): %v", p, err)
+		t.Fatalf("CanonicalPath(%q): %v", p, err)
 	}
 	return c
 }
@@ -34,7 +34,7 @@ func TestNormalizeToolArgsJoinsSplitValue(t *testing.T) {
 	tool := registry.Tool{Name: "demo", PathEquals: []string{"--file"}}
 	in := []string{"--file=", "value", "rest"}
 	want := []string{"--file=value", "rest"}
-	got := normalizeToolArgs(tool, in)
+	got := NormalizeToolArgs(tool, in)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("A1: got %#v, want %#v", got, want)
 	}
@@ -43,7 +43,7 @@ func TestNormalizeToolArgsJoinsSplitValue(t *testing.T) {
 func TestNormalizeToolArgsTrailingBarePrefix(t *testing.T) {
 	tool := registry.Tool{Name: "demo", PathEquals: []string{"--file"}}
 	in := []string{"validate", "--file="}
-	got := normalizeToolArgs(tool, in)
+	got := NormalizeToolArgs(tool, in)
 	if !reflect.DeepEqual(got, in) {
 		t.Fatalf("A2: got %#v, want unchanged %#v", got, in)
 	}
@@ -52,7 +52,7 @@ func TestNormalizeToolArgsTrailingBarePrefix(t *testing.T) {
 func TestNormalizeToolArgsEmptyPathEquals(t *testing.T) {
 	tool := registry.Tool{Name: "demo"}
 	in := []string{"--file=", "value", "x"}
-	got := normalizeToolArgs(tool, in)
+	got := NormalizeToolArgs(tool, in)
 	if !reflect.DeepEqual(got, in) {
 		t.Fatalf("A3: got %#v, want unchanged %#v", got, in)
 	}
@@ -64,7 +64,7 @@ func TestMapToolArgsNonWindowsContract(t *testing.T) {
 	}
 	tool := registry.Tool{Name: "demo", PathEquals: []string{"--file"}}
 	in := []string{"--file=", "value", "rest"}
-	mapped, mounts, err := mapToolArgs(tool, "root", "cwd", "/workspace", in)
+	mapped, mounts, err := MapToolArgs(tool, "root", "cwd", "/workspace", in)
 	if err != nil {
 		t.Fatalf("A4: err=%v", err)
 	}
@@ -137,7 +137,7 @@ func TestWorkspaceRootFor(t *testing.T) {
 		{"stateful", "/workspace/myproj"},
 	}
 	for _, tc := range cases {
-		got := workspaceRootFor(registry.Tool{Provider: tc.provider}, root)
+		got := WorkspaceRootFor(registry.Tool{Provider: tc.provider}, root)
 		if got != tc.want {
 			t.Fatalf("A7 provider %q: got %q, want %q", tc.provider, got, tc.want)
 		}
@@ -173,7 +173,7 @@ func TestMapToolArgsAbsoluteInsideRoot(t *testing.T) {
 	root, _ := windowsFixtures(t)
 	tool := registry.Tool{Name: "demo"}
 	in := []string{filepath.Join(root, "sub", "a.txt")}
-	mapped, mounts, err := mapToolArgs(tool, root, root, "/workspace", in)
+	mapped, mounts, err := MapToolArgs(tool, root, root, "/workspace", in)
 	if err != nil {
 		t.Fatalf("B1: err=%v", err)
 	}
@@ -190,7 +190,7 @@ func TestMapToolArgsRootItself(t *testing.T) {
 	root, _ := windowsFixtures(t)
 	tool := registry.Tool{Name: "demo"}
 	in := []string{root}
-	mapped, mounts, err := mapToolArgs(tool, root, root, "/workspace", in)
+	mapped, mounts, err := MapToolArgs(tool, root, root, "/workspace", in)
 	if err != nil {
 		t.Fatalf("B2: err=%v", err)
 	}
@@ -207,7 +207,7 @@ func TestMapToolArgsNonPathArgs(t *testing.T) {
 	root, _ := windowsFixtures(t)
 	tool := registry.Tool{Name: "demo"}
 	in := []string{"-n", "hello", "{.items}"}
-	mapped, mounts, err := mapToolArgs(tool, root, root, "/workspace", in)
+	mapped, mounts, err := MapToolArgs(tool, root, root, "/workspace", in)
 	if err != nil {
 		t.Fatalf("B3: err=%v", err)
 	}
@@ -223,7 +223,7 @@ func TestMapToolArgsExternalAbsolute(t *testing.T) {
 	root, ext := windowsFixtures(t)
 	tool := registry.Tool{Name: "demo"}
 	in := []string{filepath.Join(ext, "b.txt")}
-	mapped, mounts, err := mapToolArgs(tool, root, root, "/workspace", in)
+	mapped, mounts, err := MapToolArgs(tool, root, root, "/workspace", in)
 	if err != nil {
 		t.Fatalf("B4: err=%v", err)
 	}
@@ -240,7 +240,7 @@ func TestMapToolArgsExternalDedup(t *testing.T) {
 	root, ext := windowsFixtures(t)
 	tool := registry.Tool{Name: "demo"}
 	in := []string{filepath.Join(ext, "b.txt"), filepath.Join(ext, "c.txt")}
-	mapped, mounts, err := mapToolArgs(tool, root, root, "/workspace", in)
+	mapped, mounts, err := MapToolArgs(tool, root, root, "/workspace", in)
 	if err != nil {
 		t.Fatalf("B5: err=%v", err)
 	}
@@ -259,7 +259,7 @@ func TestMapToolArgsExternalDedupCaseInsensitive(t *testing.T) {
 	lower := filepath.Join(ext, "b.txt")
 	upper := filepath.Join(strings.ToUpper(ext), "B.TXT")
 	in := []string{lower, upper}
-	mapped, mounts, err := mapToolArgs(tool, root, root, "/workspace", in)
+	mapped, mounts, err := MapToolArgs(tool, root, root, "/workspace", in)
 	if err != nil {
 		t.Fatalf("B6: err=%v", err)
 	}
@@ -293,7 +293,7 @@ func TestMapToolArgsDistinctExternalRoots(t *testing.T) {
 
 	tool := registry.Tool{Name: "demo"}
 	in := []string{filepath.Join(ext1, "x1.txt"), filepath.Join(ext2, "x2.txt")}
-	mapped, mounts, err := mapToolArgs(tool, root, root, "/workspace", in)
+	mapped, mounts, err := MapToolArgs(tool, root, root, "/workspace", in)
 	if err != nil {
 		t.Fatalf("B7: err=%v", err)
 	}
@@ -313,7 +313,7 @@ func TestMapToolArgsPathNext(t *testing.T) {
 
 	file := filepath.Join(ext, "b.txt")
 	in := []string{"-f", file}
-	mapped, mounts, err := mapToolArgs(tool, root, root, "/workspace", in)
+	mapped, mounts, err := MapToolArgs(tool, root, root, "/workspace", in)
 	if err != nil {
 		t.Fatalf("B8 absolute: err=%v", err)
 	}
@@ -326,7 +326,7 @@ func TestMapToolArgsPathNext(t *testing.T) {
 	}
 
 	in2 := []string{"-f", "data.json"}
-	mapped2, mounts2, err2 := mapToolArgs(tool, root, ext, "/workspace", in2)
+	mapped2, mounts2, err2 := MapToolArgs(tool, root, ext, "/workspace", in2)
 	if err2 != nil {
 		t.Fatalf("B8 relative: err=%v", err2)
 	}
@@ -343,7 +343,7 @@ func TestMapToolArgsPathNextDangling(t *testing.T) {
 	root, _ := windowsFixtures(t)
 	tool := registry.Tool{Name: "tf", PathNext: []string{"-f"}}
 	in := []string{"-f"}
-	_, _, err := mapToolArgs(tool, root, root, "/workspace", in)
+	_, _, err := MapToolArgs(tool, root, root, "/workspace", in)
 	if err == nil {
 		t.Fatalf("B9: expected error, got nil")
 	}
@@ -357,7 +357,7 @@ func TestMapToolArgsPathEquals(t *testing.T) {
 	root, _ := windowsFixtures(t)
 	tool := registry.Tool{Name: "demo", PathEquals: []string{"--file"}}
 	in := []string{"--file=" + filepath.Join(root, "sub", "a.txt")}
-	mapped, mounts, err := mapToolArgs(tool, root, root, "/workspace", in)
+	mapped, mounts, err := MapToolArgs(tool, root, root, "/workspace", in)
 	if err != nil {
 		t.Fatalf("B10: err=%v", err)
 	}
@@ -384,7 +384,7 @@ func TestMapToolArgsPathLast(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			mapped, mounts, err := mapToolArgs(tool, root, root, "/workspace", tc.in)
+			mapped, mounts, err := MapToolArgs(tool, root, root, "/workspace", tc.in)
 			if err != nil {
 				t.Fatalf("B11 %s: err=%v", tc.name, err)
 			}
@@ -403,7 +403,7 @@ func TestMapToolArgsPathLastIfAny(t *testing.T) {
 	tool := registry.Tool{Name: "demo", PathLast: true, PathLastIfAny: []string{"-o"}}
 
 	in1 := []string{"-o", "data.json"}
-	mapped1, mounts1, err1 := mapToolArgs(tool, root, ext, "/workspace", in1)
+	mapped1, mounts1, err1 := MapToolArgs(tool, root, ext, "/workspace", in1)
 	if err1 != nil {
 		t.Fatalf("B12 with -o: err=%v", err1)
 	}
@@ -416,7 +416,7 @@ func TestMapToolArgsPathLastIfAny(t *testing.T) {
 	}
 
 	in2 := []string{"data.json"}
-	mapped2, mounts2, err2 := mapToolArgs(tool, root, ext, "/workspace", in2)
+	mapped2, mounts2, err2 := MapToolArgs(tool, root, ext, "/workspace", in2)
 	if err2 != nil {
 		t.Fatalf("B12 without -o: err=%v", err2)
 	}
@@ -432,7 +432,7 @@ func TestMapToolArgsExternalMissingAncestor(t *testing.T) {
 	root, ext := windowsFixtures(t)
 	tool := registry.Tool{Name: "demo"}
 	in := []string{filepath.Join(ext, "nope", "out.txt")}
-	mapped, mounts, err := mapToolArgs(tool, root, root, "/workspace", in)
+	mapped, mounts, err := MapToolArgs(tool, root, root, "/workspace", in)
 	if err != nil {
 		t.Fatalf("B13: err=%v", err)
 	}
@@ -449,7 +449,7 @@ func TestMapToolArgsStatefulWorkspaceRoot(t *testing.T) {
 	root, _ := windowsFixtures(t)
 	tool := registry.Tool{Name: "demo"}
 	in := []string{filepath.Join(root, "sub", "a.txt")}
-	mapped, mounts, err := mapToolArgs(tool, root, root, "/workspace/proj", in)
+	mapped, mounts, err := MapToolArgs(tool, root, root, "/workspace/proj", in)
 	if err != nil {
 		t.Fatalf("B14: err=%v", err)
 	}
@@ -514,7 +514,7 @@ func TestMapToolArgsPackagePattern(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			mapped, mounts, err := mapToolArgs(tc.tool, root, root, "/workspace", tc.in)
+			mapped, mounts, err := MapToolArgs(tc.tool, root, root, "/workspace", tc.in)
 			if err != nil {
 				t.Fatalf("PP %s: err=%v", tc.name, err)
 			}

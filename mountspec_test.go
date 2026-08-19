@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AviBackToBlack/container-bin/internal/pathmap"
 	"github.com/AviBackToBlack/container-bin/internal/registry"
 )
 
@@ -104,7 +105,7 @@ func TestMountSpecBothCommas(t *testing.T) {
 func TestMountSpecWorkspaceRootComposition(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "My, Project")
 	tool := registry.Tool{Provider: "stateful"}
-	workspaceRoot := workspaceRootFor(tool, root)
+	workspaceRoot := pathmap.WorkspaceRootFor(tool, root)
 
 	got, err := mountSpec("bind", "/clean/src", workspaceRoot)
 	if err == nil {
@@ -127,7 +128,7 @@ func TestMountSpecWorkspaceRootComposition(t *testing.T) {
 func TestRootBindMountCommaFailsClosedOnSrc(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "My, Project")
 	tool := registry.Tool{Provider: "stateful"}
-	workspaceRoot := workspaceRootFor(tool, root) // same root as below, exactly like runTool
+	workspaceRoot := pathmap.WorkspaceRootFor(tool, root) // same root as below, exactly like runTool
 
 	got, err := mountSpec("bind", root, workspaceRoot)
 	if err == nil {
