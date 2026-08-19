@@ -37,6 +37,7 @@ type Tool struct {
 	ProjectVolumes []string // NAME:CONTAINER_PATH, project-scoped named volumes
 	SharedVolumes  []string // NAME:CONTAINER_PATH, shared named volumes
 	HostMounts     []string // SOURCE:/CONTAINER_PATH:ro|rw, explicit host bind mounts
+	CwdMode        string   // "project" or "isolated"; empty means "project"
 }
 
 type Registry struct {
@@ -64,6 +65,7 @@ schema_version = 1
 # project_volumes            => ["name:/container/path"] scoped by project root
 # shared_volumes             => ["name:/container/path"] shared across projects
 # host_mounts                => ["%USERPROFILE%\\.claude:/root/.claude:ro"] explicit host bind mounts
+# cwd_mode                   => "project" (default) or "isolated" (ignore CWD, no project bind mount)
 
 [tools.python]
 image = "python:3.13-slim"
@@ -409,6 +411,12 @@ func ParseTOML(s string) (Registry, error) {
 				return reg, fmt.Errorf("line %d host_mounts: %w", lineNo, err)
 			}
 			t.HostMounts = v
+		case "cwd_mode":
+			v, err := toml.ParseQuoted(value)
+			if err != nil {
+				return reg, fmt.Errorf("line %d cwd_mode: %w", lineNo, err)
+			}
+			t.CwdMode = strings.ToLower(v)
 		default:
 			return reg, fmt.Errorf("line %d: unsupported key %q", lineNo, key)
 		}
@@ -444,6 +452,14 @@ func ParseTOML(s string) (Registry, error) {
 			}
 		default:
 			return reg, fmt.Errorf("tool %q: unsupported provider %q", name, t.Provider)
+		}
+		switch t.CwdMode {
+		case "", "project", "isolated":
+		default:
+			return reg, fmt.Errorf("tool %q: cwd_mode must be \"project\" or \"isolated\"", name)
+		}
+		if t.CwdMode == "isolated" && len(t.ProjectVolumes) > 0 {
+			return reg, fmt.Errorf("tool %q: cwd_mode = \"isolated\" cannot declare project_volumes", name)
 		}
 		if err := validateHostMounts(t); err != nil {
 			return reg, fmt.Errorf("tool %q: %w", name, err)

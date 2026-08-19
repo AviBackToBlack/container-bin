@@ -18,6 +18,22 @@ import (
 	"github.com/AviBackToBlack/container-bin/internal/registry"
 )
 
+// isolatedRoot is a sentinel project root for cwd_mode = "isolated".
+// It is intentionally not a real Windows path: the drive letter "?" is not a
+// valid Windows volume, so pathmap.pathWithin can never match any host path
+// that pathmap.CanonicalPath could produce. MapToolArgs therefore treats every
+// path argument as outside the project and routes it through the existing
+// external /cb/mounts/N path, exactly as the design requires.
+const IsolatedRoot = "?:\\no-project"
+
+type runContext struct {
+	cwd           string
+	root          string
+	workspaceRoot string
+	containerWD   string
+	found         bool
+}
+
 // interactiveTerminal is intentionally conservative: Docker gets a TTY only
 // when both stdin and stdout are character devices. Pipes/redirection and
 // process-captured output remain plain -i, preserving automation semantics.
@@ -39,50 +55,108 @@ func RunTool(t registry.Tool, userArgs []string) (int, error) {
 	if err != nil {
 		return 1, err
 	}
+
+	ctx, err := resolveRunContext(t, cwd)
+	if err != nil {
+		return 1, err
+	}
+
+	imageRef, err := lockfile.RuntimeImageForTool(t)
+	if err != nil {
+		return 1, err
+	}
+
+	args, err := buildDockerArgs(t, userArgs, ctx, imageRef, interactiveTerminal())
+	if err != nil {
+		return 1, err
+	}
+
+	if err := ensureDockerVolumes(t, ctx); err != nil {
+		return 1, err
+	}
+
+	cmd := exec.Command("docker", args...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr, cmd.Env = os.Stdin, os.Stdout, os.Stderr, os.Environ()
+	err = cmd.Run()
+	if err == nil {
+		return 0, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode(), nil
+	}
+	return 1, err
+}
+
+func resolveRunContext(t registry.Tool, cwd string) (runContext, error) {
+	if t.CwdMode == "isolated" {
+		return runContext{
+			cwd:           cwd,
+			root:          IsolatedRoot,
+			workspaceRoot: "/root",
+			containerWD:   "/root",
+			found:         false,
+		}, nil
+	}
+
 	root, found := pathmap.FindProjectRoot(cwd, pathmap.ProjectMarkersFor(t))
 	if !found {
 		root = cwd
 	}
 	rel, err := filepath.Rel(root, cwd)
 	if err != nil {
-		return 1, err
+		return runContext{}, err
 	}
 	workspaceRoot := pathmap.WorkspaceRootFor(t, root)
 	containerWD := workspaceRoot
 	if rel != "." {
 		containerWD += "/" + filepath.ToSlash(rel)
 	}
+	return runContext{
+		cwd:           cwd,
+		root:          root,
+		workspaceRoot: workspaceRoot,
+		containerWD:   containerWD,
+		found:         found,
+	}, nil
+}
 
-	mappedUserArgs, pathMounts, err := pathmap.MapToolArgs(t, root, cwd, workspaceRoot, userArgs)
+func buildDockerArgs(t registry.Tool, userArgs []string, ctx runContext, imageRef string, tty bool) ([]string, error) {
+	mappedUserArgs, pathMounts, err := pathmap.MapToolArgs(t, ctx.root, ctx.cwd, ctx.workspaceRoot, userArgs)
 	if err != nil {
-		return 1, err
+		return nil, err
 	}
-	imageRef, err := lockfile.RuntimeImageForTool(t)
-	if err != nil {
-		return 1, err
-	}
+
 	args := []string{"run", "--rm", "-i"}
-	if interactiveTerminal() {
+	if tty {
 		args = append(args, "-t")
 	}
-	args = append(args, "--workdir", containerWD)
-	rootSpec, err := MountSpec("bind", root, workspaceRoot)
-	if err != nil {
-		return 1, err
+	args = append(args, "--workdir", ctx.containerWD)
+
+	// In project mode the host CWD (or discovered project root) is bind-mounted
+	// into the container workspace. In isolated mode no such bind mount exists.
+	if t.CwdMode != "isolated" {
+		rootSpec, err := MountSpec("bind", ctx.root, ctx.workspaceRoot)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, "--mount", rootSpec)
 	}
-	args = append(args, "--mount", rootSpec)
+
 	for _, m := range pathMounts {
 		mount, err := MountSpec("bind", m.Source, m.Target)
 		if err != nil {
-			return 1, err
+			return nil, err
 		}
 		args = append(args, "--mount", mount)
 	}
+
 	hostMountArgs, err := buildHostMountArgs(t.HostMounts)
 	if err != nil {
-		return 1, err
+		return nil, err
 	}
 	args = append(args, hostMountArgs...)
+
 	for _, name := range selectedHostEnv(t) {
 		args = append(args, "-e", name)
 	}
@@ -92,28 +166,14 @@ func RunTool(t registry.Tool, userArgs []string) (int, error) {
 
 	switch t.Provider {
 	case "python":
-		envID := pathmap.PythonEnvID(root, found)
-		pyLabels := map[string]string{"cb.managed": "true", "cb.owner": "python313/venv"}
-		if found {
-			pyLabels["cb.kind"] = "project"
-			pyLabels["cb.project_path"] = root
-			pyLabels["cb.project_hash"] = pathmap.VolumeHash(root)
-		} else {
-			pyLabels["cb.kind"] = "compat"
-		}
+		envID := pathmap.PythonEnvID(ctx.root, ctx.found)
 		venvSpec, err := MountSpec("volume", envID, "/venv")
 		if err != nil {
-			return 1, err
+			return nil, err
 		}
 		pipCacheSpec, err := MountSpec("volume", "cb-pip-cache", "/root/.cache/pip")
 		if err != nil {
-			return 1, err
-		}
-		if err := dockervol.EnsureManaged(envID, pyLabels); err != nil {
-			return 1, err
-		}
-		if err := dockervol.EnsureManaged("cb-pip-cache", map[string]string{"cb.managed": "true", "cb.kind": "shared", "cb.owner": "python313/pip-cache"}); err != nil {
-			return 1, err
+			return nil, err
 		}
 		args = append(args,
 			"--mount", venvSpec,
@@ -133,31 +193,25 @@ func RunTool(t registry.Tool, userArgs []string) (int, error) {
 		for _, spec := range t.ProjectVolumes {
 			name, dst, err := registry.ParseVolumeBinding(spec)
 			if err != nil {
-				return 1, err
+				return nil, err
 			}
-			vol := pathmap.StatefulProjectVolumeID(t.StateGroup, name, root, found)
-			dst = pathmap.StatefulWorkspaceDestination(dst, workspaceRoot)
+			vol := pathmap.StatefulProjectVolumeID(t.StateGroup, name, ctx.root, ctx.found)
+			dst = pathmap.StatefulWorkspaceDestination(dst, ctx.workspaceRoot)
 			volSpec, err := MountSpec("volume", vol, dst)
 			if err != nil {
-				return 1, err
-			}
-			if err := dockervol.EnsureManaged(vol, map[string]string{"cb.managed": "true", "cb.kind": "project", "cb.owner": t.StateGroup + "/" + name, "cb.project_path": root, "cb.project_hash": pathmap.VolumeHash(root)}); err != nil {
-				return 1, err
+				return nil, err
 			}
 			args = append(args, "--mount", volSpec)
 		}
 		for _, spec := range t.SharedVolumes {
 			name, dst, err := registry.ParseVolumeBinding(spec)
 			if err != nil {
-				return 1, err
+				return nil, err
 			}
 			vol := pathmap.StatefulSharedVolumeID(t.StateGroup, name)
 			volSpec, err := MountSpec("volume", vol, dst)
 			if err != nil {
-				return 1, err
-			}
-			if err := dockervol.EnsureManaged(vol, map[string]string{"cb.managed": "true", "cb.kind": "shared", "cb.owner": t.StateGroup + "/" + name}); err != nil {
-				return 1, err
+				return nil, err
 			}
 			args = append(args, "--mount", volSpec)
 		}
@@ -171,20 +225,53 @@ func RunTool(t registry.Tool, userArgs []string) (int, error) {
 		args = append(args, t.ArgsPrefix...)
 		args = append(args, mappedUserArgs...)
 	default:
-		return 1, fmt.Errorf("unsupported provider %q", t.Provider)
+		return nil, fmt.Errorf("unsupported provider %q", t.Provider)
 	}
 
-	cmd := exec.Command("docker", args...)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr, cmd.Env = os.Stdin, os.Stdout, os.Stderr, os.Environ()
-	err = cmd.Run()
-	if err == nil {
-		return 0, nil
+	return args, nil
+}
+
+func ensureDockerVolumes(t registry.Tool, ctx runContext) error {
+	switch t.Provider {
+	case "python":
+		envID := pathmap.PythonEnvID(ctx.root, ctx.found)
+		pyLabels := map[string]string{"cb.managed": "true", "cb.owner": "python313/venv"}
+		if ctx.found {
+			pyLabels["cb.kind"] = "project"
+			pyLabels["cb.project_path"] = ctx.root
+			pyLabels["cb.project_hash"] = pathmap.VolumeHash(ctx.root)
+		} else {
+			pyLabels["cb.kind"] = "compat"
+		}
+		if err := dockervol.EnsureManaged(envID, pyLabels); err != nil {
+			return err
+		}
+		if err := dockervol.EnsureManaged("cb-pip-cache", map[string]string{"cb.managed": "true", "cb.kind": "shared", "cb.owner": "python313/pip-cache"}); err != nil {
+			return err
+		}
+	case "stateful":
+		for _, spec := range t.ProjectVolumes {
+			name, _, err := registry.ParseVolumeBinding(spec)
+			if err != nil {
+				return err
+			}
+			vol := pathmap.StatefulProjectVolumeID(t.StateGroup, name, ctx.root, ctx.found)
+			if err := dockervol.EnsureManaged(vol, map[string]string{"cb.managed": "true", "cb.kind": "project", "cb.owner": t.StateGroup + "/" + name, "cb.project_path": ctx.root, "cb.project_hash": pathmap.VolumeHash(ctx.root)}); err != nil {
+				return err
+			}
+		}
+		for _, spec := range t.SharedVolumes {
+			name, _, err := registry.ParseVolumeBinding(spec)
+			if err != nil {
+				return err
+			}
+			vol := pathmap.StatefulSharedVolumeID(t.StateGroup, name)
+			if err := dockervol.EnsureManaged(vol, map[string]string{"cb.managed": "true", "cb.kind": "shared", "cb.owner": t.StateGroup + "/" + name}); err != nil {
+				return err
+			}
+		}
 	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
-		return exitErr.ExitCode(), nil
-	}
-	return 1, err
+	return nil
 }
 
 func selectedHostEnv(t registry.Tool) []string {
@@ -263,7 +350,7 @@ func MountSpecMode(kind, src, dst, mode string) (string, error) {
 // ExpandHostMountSource resolves the one host variable container-bin
 // understands in a host_mounts source. A literal Windows absolute path is
 // returned unchanged. registry.ParseHostMount has already rejected any other
-// %...% token, so this never needs to guess about anything it hasn't seen.
+// %...% token, so this never needs to guess about anything it hasn’t seen.
 func ExpandHostMountSource(source string) (string, error) {
 	if strings.HasPrefix(source, "%USERPROFILE%") {
 		home, err := os.UserHomeDir()

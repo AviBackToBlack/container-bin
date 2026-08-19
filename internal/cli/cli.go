@@ -60,13 +60,24 @@ func Trace(reg registry.Registry, args []string) error {
 	if err != nil {
 		return err
 	}
-	root, found := pathmap.FindProjectRoot(cwd, pathmap.ProjectMarkersFor(t))
-	if !found {
-		root = cwd
-	}
+
 	raw := append([]string(nil), args[1:]...)
 	normalized := pathmap.NormalizeToolArgs(t, raw)
-	workspaceRoot := pathmap.WorkspaceRootFor(t, root)
+
+	var root, workspaceRoot string
+	var found bool
+	if t.CwdMode == "isolated" {
+		root = dockerrun.IsolatedRoot
+		workspaceRoot = "/root"
+		found = false
+	} else {
+		root, found = pathmap.FindProjectRoot(cwd, pathmap.ProjectMarkersFor(t))
+		if !found {
+			root = cwd
+		}
+		workspaceRoot = pathmap.WorkspaceRootFor(t, root)
+	}
+
 	mapped, mounts, err := pathmap.MapToolArgs(t, root, cwd, workspaceRoot, raw)
 	if err != nil {
 		return err
@@ -75,13 +86,23 @@ func Trace(reg registry.Registry, args []string) error {
 	fmt.Printf("image:      %s\n", t.Image)
 	fmt.Printf("provider:   %s\n", t.Provider)
 	fmt.Printf("cwd:        %s\n", cwd)
-	fmt.Printf("root:       %s\n", root)
-	fmt.Printf("workspace:  %s\n", workspaceRoot)
+	if t.CwdMode == "isolated" {
+		fmt.Printf("cwd_mode:   isolated\n")
+		fmt.Printf("workdir:    /root\n")
+		fmt.Printf("project_bind_mount: (none)\n")
+	} else {
+		fmt.Printf("root:       %s\n", root)
+		fmt.Printf("workspace:  %s\n", workspaceRoot)
+	}
 	fmt.Printf("raw:        %#v\n", raw)
 	fmt.Printf("normalized: %#v\n", normalized)
 	fmt.Printf("mapped:     %#v\n", mapped)
 	if len(mounts) == 0 {
-		fmt.Printf("mounts:     (none beyond %s)\n", workspaceRoot)
+		if t.CwdMode == "isolated" {
+			fmt.Printf("mounts:     (none beyond explicit host/cb mounts)\n")
+		} else {
+			fmt.Printf("mounts:     (none beyond %s)\n", workspaceRoot)
+		}
 	} else {
 		fmt.Printf("mounts:     %#v\n", mounts)
 	}
@@ -297,10 +318,21 @@ func Inspect(reg registry.Registry, args []string) error {
 	if err != nil {
 		return err
 	}
-	root, found := pathmap.FindProjectRoot(cwd, pathmap.ProjectMarkersFor(t))
-	if !found {
-		root = cwd
+
+	var root, workspaceRoot string
+	var found bool
+	if t.CwdMode == "isolated" {
+		root = ""
+		found = false
+		workspaceRoot = "/root"
+	} else {
+		root, found = pathmap.FindProjectRoot(cwd, pathmap.ProjectMarkersFor(t))
+		if !found {
+			root = cwd
+		}
+		workspaceRoot = pathmap.WorkspaceRootFor(t, root)
 	}
+
 	fmt.Printf("name:       %s\nimage:      %s\nprovider:   %s\n", t.Name, t.Image, t.Provider)
 	lock, lockPath, lerr := lockfile.LoadForRegistry()
 	if lerr != nil {
@@ -318,7 +350,17 @@ func Inspect(reg registry.Registry, args []string) error {
 	if len(t.Command) > 0 {
 		fmt.Printf("command:    %#v\n", t.Command)
 	}
-	fmt.Printf("cwd:        %s\nroot:       %s\nworkspace:  %s\n", cwd, root, pathmap.WorkspaceRootFor(t, root))
+	if t.CwdMode == "isolated" {
+		fmt.Printf("cwd_mode:   isolated\n")
+	}
+	fmt.Printf("cwd:        %s\n", cwd)
+	if t.CwdMode == "isolated" {
+		fmt.Printf("workdir:    /root\n")
+		fmt.Printf("project_bind_mount: (none)\n")
+	} else {
+		fmt.Printf("root:       %s\n", root)
+		fmt.Printf("workspace:  %s\n", workspaceRoot)
+	}
 	if t.StateGroup != "" {
 		fmt.Printf("state_group: %s\n", t.StateGroup)
 	}
@@ -327,7 +369,7 @@ func Inspect(reg registry.Registry, args []string) error {
 		if e != nil {
 			return e
 		}
-		fmt.Printf("project_volume: %s -> %s\n", pathmap.StatefulProjectVolumeID(t.StateGroup, logical, root, found), pathmap.StatefulWorkspaceDestination(dst, pathmap.WorkspaceRootFor(t, root)))
+		fmt.Printf("project_volume: %s -> %s\n", pathmap.StatefulProjectVolumeID(t.StateGroup, logical, root, found), pathmap.StatefulWorkspaceDestination(dst, workspaceRoot))
 	}
 	for _, spec := range t.SharedVolumes {
 		logical, dst, e := registry.ParseVolumeBinding(spec)

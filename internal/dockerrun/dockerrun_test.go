@@ -3,10 +3,12 @@ package dockerrun
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/AviBackToBlack/container-bin/internal/pathmap"
 	"github.com/AviBackToBlack/container-bin/internal/registry"
 )
 
@@ -175,6 +177,139 @@ host_mounts = ["%USERPROFILE%/.claude:/root/.claude:ro"]
 	}
 	if !strings.Contains(err.Error(), "UNC") {
 		t.Fatalf("error does not mention UNC: %v", err)
+	}
+}
+
+func TestBuildDockerArgsDefaultProjectModeIsUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	root, err := pathmap.CanonicalPath(dir)
+	if err != nil {
+		t.Fatalf("canonical path: %v", err)
+	}
+	ctx := runContext{
+		cwd:           root,
+		root:          root,
+		workspaceRoot: "/workspace",
+		containerWD:   "/workspace",
+		found:         false,
+	}
+	tool := registry.Tool{Name: "demo", Image: "demo:1", Provider: "stateless"}
+	got, err := buildDockerArgs(tool, nil, ctx, "demo:1", false)
+	if err != nil {
+		t.Fatalf("buildDockerArgs: %v", err)
+	}
+	want := []string{
+		"run", "--rm", "-i",
+		"--workdir", "/workspace",
+		"--mount", "type=bind,src=" + root + ",dst=/workspace",
+		"demo:1",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("default project args mismatch:\ngot  %#v\nwant %#v", got, want)
+	}
+}
+
+func TestBuildDockerArgsEmptyCwdModeMatchesProject(t *testing.T) {
+	dir := t.TempDir()
+	root, err := pathmap.CanonicalPath(dir)
+	if err != nil {
+		t.Fatalf("canonical path: %v", err)
+	}
+	ctx := runContext{
+		cwd:           root,
+		root:          root,
+		workspaceRoot: "/workspace",
+		containerWD:   "/workspace",
+		found:         false,
+	}
+	empty := registry.Tool{Name: "demo", Image: "demo:1", Provider: "stateless", CwdMode: ""}
+	project := registry.Tool{Name: "demo", Image: "demo:1", Provider: "stateless", CwdMode: "project"}
+	emptyArgs, err := buildDockerArgs(empty, nil, ctx, "demo:1", false)
+	if err != nil {
+		t.Fatalf("buildDockerArgs empty: %v", err)
+	}
+	projectArgs, err := buildDockerArgs(project, nil, ctx, "demo:1", false)
+	if err != nil {
+		t.Fatalf("buildDockerArgs project: %v", err)
+	}
+	if !reflect.DeepEqual(emptyArgs, projectArgs) {
+		t.Fatalf("empty and project cwd_mode differ:\nempty  %#v\nproject %#v", emptyArgs, projectArgs)
+	}
+}
+
+func TestBuildDockerArgsIsolatedNoCwdMount(t *testing.T) {
+	dir := t.TempDir()
+	cwd, err := pathmap.CanonicalPath(dir)
+	if err != nil {
+		t.Fatalf("canonical path: %v", err)
+	}
+	ctx := runContext{
+		cwd:           cwd,
+		root:          IsolatedRoot,
+		workspaceRoot: "/root",
+		containerWD:   "/root",
+		found:         false,
+	}
+	tool := registry.Tool{Name: "demo", Image: "demo:1", Provider: "stateless", CwdMode: "isolated"}
+	args, err := buildDockerArgs(tool, nil, ctx, "demo:1", false)
+	if err != nil {
+		t.Fatalf("buildDockerArgs: %v", err)
+	}
+	want := []string{
+		"run", "--rm", "-i",
+		"--workdir", "/root",
+		"demo:1",
+	}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("isolated args = %#v, want %#v", args, want)
+	}
+	joined := strings.Join(args, " ")
+	if strings.Contains(joined, cwd) {
+		t.Fatalf("isolated args must not contain the host CWD; got %q", joined)
+	}
+}
+
+func TestBuildDockerArgsIsolatedExternalPath(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows path mapping is required for external-path assertions")
+	}
+
+	rootDir := t.TempDir()
+	root, err := pathmap.CanonicalPath(rootDir)
+	if err != nil {
+		t.Fatalf("canonical root: %v", err)
+	}
+	extDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(extDir, "file.txt"), []byte{}, 0644); err != nil {
+		t.Fatalf("write external file: %v", err)
+	}
+	ext, err := pathmap.CanonicalPath(extDir)
+	if err != nil {
+		t.Fatalf("canonical ext: %v", err)
+	}
+
+	ctx := runContext{
+		cwd:           root,
+		root:          IsolatedRoot,
+		workspaceRoot: "/root",
+		containerWD:   "/root",
+		found:         false,
+	}
+	tool := registry.Tool{Name: "demo", Image: "demo:1", Provider: "stateless", CwdMode: "isolated"}
+	args, err := buildDockerArgs(tool, []string{filepath.Join(ext, "file.txt")}, ctx, "demo:1", false)
+	if err != nil {
+		t.Fatalf("buildDockerArgs: %v", err)
+	}
+
+	want := []string{
+		"run", "--rm", "-i",
+		"--workdir", "/root",
+		"--mount", "type=bind,src=" + ext + ",dst=/cb/mounts/0",
+		"demo:1",
+		"/cb/mounts/0/file.txt",
+	}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("isolated external args mismatch:\ngot  %#v\nwant %#v", args, want)
 	}
 }
 
