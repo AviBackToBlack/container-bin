@@ -539,7 +539,31 @@ func ParseHostMount(spec string) (source, target, mode string, err error) {
 	if !strings.HasPrefix(target, "/") {
 		return "", "", "", errors.New("host_mounts container path must be absolute")
 	}
+	// Reject ".." path segments outright, before cleaning: path.Clean collapses
+	// a traversal like "/workspace/.." to "/", which is not itself in the
+	// reserved-namespace list validateHostMounts checks against, so a naive
+	// "clean, then compare against reserved prefixes" order would let a
+	// declared target ESCAPE the very check it's meant to satisfy. There is no
+	// legitimate reason for a host_mounts target to contain "..": it should
+	// always be a direct absolute container path the profile author wrote
+	// intentionally. Failing this loudly, before any normalization, keeps the
+	// reserved-namespace check meaningful regardless of what "." segments
+	// (which ARE legitimate, e.g. for collision-detection equivalence) get
+	// cleaned away afterward.
+	for _, seg := range strings.Split(target, "/") {
+		if seg == ".." {
+			return "", "", "", fmt.Errorf("host_mounts container path %q must not contain \"..\"", target)
+		}
+	}
 	target = path.Clean(target)
+	// Defense in depth: no legal traversal-free target should ever clean to
+	// bare "/" (the shortest reserved path is a single segment below root),
+	// but reject it explicitly rather than relying on that reasoning holding
+	// forever as the reserved-namespace list evolves. A host_mounts entry at
+	// "/" would shadow every container-bin-managed mount.
+	if target == "/" {
+		return "", "", "", errors.New("host_mounts container path must not be the filesystem root")
+	}
 	if source == "" {
 		return "", "", "", errors.New("host_mounts source must not be empty")
 	}

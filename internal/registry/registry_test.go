@@ -563,6 +563,15 @@ provider = "stateless"
 	mustFail("shared_volume_collision", "shared_volumes = "+toml.Array([]string{"cache:/root/.cache"})+"\nhost_mounts = "+toml.Array([]string{"C:\\\\Video:/root/.cache:ro"})+"\n")
 	mustFail("shared_volume_collision_equivalent", "shared_volumes = "+toml.Array([]string{"cache:/root/./.cache"})+"\nhost_mounts = "+toml.Array([]string{"C:\\\\Video:/root/.cache:ro"})+"\n")
 
+	// path.Clean("/workspace/..") == "/", which is not itself in the reserved
+	// list -- a naive clean-then-compare order would let a ".."-traversal
+	// target escape the reserved-namespace check entirely and mount at the
+	// filesystem root, shadowing every container-bin-managed mount. These
+	// must be rejected outright, before any normalization collapses them.
+	mustFail("workspace_traversal_to_root", "host_mounts = "+toml.Array([]string{"C:\\\\data:/workspace/..:ro"})+"\n")
+	mustFail("cb_traversal_to_root", "host_mounts = "+toml.Array([]string{"C:\\\\data:/cb/..:ro"})+"\n")
+	mustFail("bare_traversal_segment", "host_mounts = "+toml.Array([]string{"C:\\\\data:/root/../etc:ro"})+"\n")
+
 	// ParseVolumeBinding places no requirement that a project_volumes
 	// destination live under /workspace -- that's only true by convention
 	// for this repo's built-in profiles, not enforced by the schema -- so a
