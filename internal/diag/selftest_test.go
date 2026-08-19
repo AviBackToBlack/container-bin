@@ -1,4 +1,4 @@
-package main
+package diag
 
 import (
 	"encoding/json"
@@ -365,9 +365,9 @@ func TestParseSelfTestArgs(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			gotJSON, gotRelease, err := parseSelfTestArgs(c.args)
+			gotJSON, gotRelease, err := ParseSelfTestArgs(c.args)
 			if (err != nil) != c.wantErr {
-				t.Fatalf("parseSelfTestArgs(%v) err = %v, wantErr %v", c.args, err, c.wantErr)
+				t.Fatalf("ParseSelfTestArgs(%v) err = %v, wantErr %v", c.args, err, c.wantErr)
 			}
 			if !c.wantErr {
 				if gotJSON != c.wantJSON {
