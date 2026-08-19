@@ -24,8 +24,8 @@ func TestParseDefaultRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(reg.Tools) != 13 {
-		t.Fatalf("expected 13 tools, got %d", len(reg.Tools))
+	if len(reg.Tools) != 16 {
+		t.Fatalf("expected 16 tools, got %d", len(reg.Tools))
 	}
 	jq := reg.Tools["jq"]
 	if jq.Provider != "stateless" || jq.Image != "ghcr.io/jqlang/jq:latest" {
@@ -120,7 +120,7 @@ func TestDefaultRegistryHasV06Tools(t *testing.T) {
 
 func TestDefaultToolSections(t *testing.T) {
 	sections := DefaultToolSections()
-	for _, name := range []string{"python", "yq", "terraform", "ffmpeg", "node", "npm", "npx", "go", "gofmt"} {
+	for _, name := range []string{"python", "yq", "terraform", "ffmpeg", "node", "node22", "npm", "npm22", "npx", "npx22", "go", "gofmt"} {
 		if !strings.Contains(sections[name], "[tools."+name+"]") {
 			t.Fatalf("bad section for %s: %q", name, sections[name])
 		}
@@ -380,5 +380,41 @@ func TestGoProfilesDeclareNoForcedPathSemantics(t *testing.T) {
 	}
 	if len(gofmtTool.PathNext) != 0 || len(gofmtTool.PathEquals) != 0 {
 		t.Fatalf("gofmt must not declare forced path semantics: %+v", gofmtTool)
+	}
+}
+
+// Node 24 is the default runtime, but it is not a guarantee that every npm
+// package is ABI-compatible with it. Node 22 is the supported LTS alternative,
+// with fully isolated state even though the logical volume names are identical.
+func TestNode22ProfilesParseAndVolumes(t *testing.T) {
+	reg, err := ParseTOML(DefaultTOML)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"node22", "npm22", "npx22"} {
+		tool, ok := reg.Tools[name]
+		if !ok {
+			t.Fatalf("missing default tool %q", name)
+		}
+		if tool.Image != "node:22-slim" {
+			t.Fatalf("%s image = %q, want node:22-slim", name, tool.Image)
+		}
+		if tool.StateGroup != "node22" {
+			t.Fatalf("%s state_group = %q, want node22", name, tool.StateGroup)
+		}
+	}
+	pairs := []struct{ old, new string }{
+		{"node", "node22"},
+		{"npm", "npm22"},
+		{"npx", "npx22"},
+	}
+	for _, p := range pairs {
+		oldTool, newTool := reg.Tools[p.old], reg.Tools[p.new]
+		if !reflect.DeepEqual(oldTool.ProjectVolumes, newTool.ProjectVolumes) {
+			t.Fatalf("%s and %s project_volumes differ: %#v vs %#v", p.old, p.new, oldTool.ProjectVolumes, newTool.ProjectVolumes)
+		}
+		if !reflect.DeepEqual(oldTool.SharedVolumes, newTool.SharedVolumes) {
+			t.Fatalf("%s and %s shared_volumes differ: %#v vs %#v", p.old, p.new, oldTool.SharedVolumes, newTool.SharedVolumes)
+		}
 	}
 }

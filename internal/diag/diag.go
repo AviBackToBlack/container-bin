@@ -505,6 +505,7 @@ type selfTestStep struct {
 // populated in this slice's order, so a step whose depID has not been
 // inserted yet would see a zero-value selfTestCheck instead of the real
 // dependency's status. TestSelfTestStepsDependencyOrder pins this invariant.
+// Node 22 self-test steps are deliberately deferred to a separate scoping pass.
 var selfTestSteps = []selfTestStep{
 	{id: "python-image-local", tool: "python", depID: "docker", errFunc: func(o toolSelfTestOutcome) *string { return o.ImageLocalErr }},
 	{id: "python-persist-write", tool: "python", depID: "python-image-local", errFunc: func(o toolSelfTestOutcome) *string { return o.PersistWriteErr }},

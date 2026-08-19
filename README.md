@@ -117,6 +117,7 @@ cb lock
 | `python`, `python3` | `python:3.13-slim` | python (project `/venv` in a named volume) |
 | `pip`, `pip3` | `python:3.13-slim` | python |
 | `node`, `npm`, `npx` | `node:24-slim` | stateful (`node24` state group) |
+| `node22`, `npm22`, `npx22` | `node:22-slim` | stateful (`node22` state group) |
 | `go`, `gofmt` | `golang:1.24` | stateful (`go124` state group) |
 | `jq` | `ghcr.io/jqlang/jq:latest` | stateless |
 | `yq` | `mikefarah/yq:latest` | stateless |
@@ -196,7 +197,11 @@ dependencies live in a project-scoped named volume mounted at the project's
 — contents live in the volume). There's a shared npm cache and a persistent
 npm global prefix. Projects are mounted with their **real basename**
 (`D:\TEMP\node-demo-3` → `/workspace/node-demo-3`) because tools like
-`npm init` derive metadata from it.
+`npm init` derive metadata from it. Node 24 is the default runtime, but it is
+not a guarantee that every npm package is ABI-compatible with it. For packages
+whose native addons need a different Node ABI, `node22`/`npm22`/`npx22` are a
+second, independent Node-major runtime with their own `node22` state group,
+fully isolating project `node_modules`, the npm cache and the npm global prefix; upgrading an existing installation adds these profiles automatically, but they are not yet locked, so run `cb lock` or `cb update --all` before using them.
 
 ## Dynamic npm CLI exposure
 
@@ -206,11 +211,18 @@ cb expose npm
 cowsay "hello from a container"
 ```
 
-`cb expose npm` discovers binaries in the persistent npm global prefix, adds
-registry profiles for them, and creates Windows shims — `cowsay.exe` appears on
-PATH without Node ever touching the host. `cb unexpose cowsay` removes the shim
-and profile without deleting the underlying npm state. Registry mutations are
-validated and written atomically; a failed validation refuses the update.
+`cb expose` takes the name of any npm-shaped stateful profile already in the
+registry (`npm`, `npm22`, ...) and discovers binaries in that profile's
+persistent npm global prefix. It adds registry profiles for them that inherit
+the source profile's image and `state_group`, and creates Windows shims —
+`cowsay.exe` appears on PATH without Node ever touching the host. To expose a
+binary installed under the Node 22 runtime, use `cb expose npm22 <binary>`.
+Exposed profiles are keyed by binary name only, so a binary already exposed
+from one runtime cannot also be exposed from the other under the same name —
+`cb unexpose` it first if you need to switch which runtime backs it.
+`cb unexpose cowsay` removes the shim and profile without deleting the
+underlying npm state. Registry mutations are validated and written atomically;
+a failed validation refuses the update.
 
 ## Image locking and explicit updates
 
@@ -229,7 +241,9 @@ Runtime behavior is fail-closed:
   **fails** and asks for `cb update TOOL` or `cb lock`.
 
 Tools sharing an image share one lock entry (`node`, `npm`, `npx` and all
-npm-exposed tools ride the single `node:24-slim` entry).
+npm-exposed tools ride the single `node:24-slim` entry). The Node 22 runtime
+family (`node22`, `npm22`, `npx22` and anything exposed from `npm22`) ride a
+separate `node:22-slim` lock entry.
 
 ## State inspection and garbage collection
 
