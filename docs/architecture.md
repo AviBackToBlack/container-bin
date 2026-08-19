@@ -12,6 +12,7 @@ NAME.exe (hardlink to cb.exe)
   → registry profile lookup     container-bin.toml, schema-validated, fail-closed
   → argv normalization          repair PowerShell-split "-opt=" "value" pairs
   → path mapping                conservative Windows→container translation
+  → host_mounts resolution      explicit registry-declared bind mounts, provider-agnostic
   → provider assembly           stateless | python | stateful volume/env setup
   → image lock resolution       container-bin.lock digest, fail-closed
   → docker run --rm ...         stdio passthrough, exit code preserved
@@ -121,6 +122,23 @@ The project volume mounts *over* the project's `node_modules` path inside the
 container. Docker requires the mountpoint to exist, so an empty directory may
 appear on the host; package contents live only in the named volume. This keeps
 node_modules I/O on the Linux side (fast) and the host tree clean.
+
+## Host mounts
+
+`host_mounts` is a separate mechanism from the path mapping above: instead of
+*inferring* a mount from an argument, a registry profile *declares* a fixed
+host source, container target, and `ro`/`rw` mode outright. It is
+provider-agnostic — resolved once per `RunTool` invocation, right after path
+mapping's own external mounts and before the provider-specific volume/env
+setup — and uses the same `pathmap.CanonicalPath` every other host path in
+this codebase goes through, not a second normalization implementation.
+Registry-load-time validation (reserved namespaces, duplicate/collision
+detection) is entirely separate from the environment-dependent resolution
+(variable expansion, existence, UNC rejection) that happens at run time; see
+[README.md](../README.md#explicit-host-bind-mounts-host_mounts) for the field
+syntax and [docs/security-model.md](security-model.md) for the trust-boundary
+discussion — this section only covers where the mechanism sits in the
+pipeline, not repeating either.
 
 ## Image locking
 
