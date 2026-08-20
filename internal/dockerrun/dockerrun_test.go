@@ -237,6 +237,47 @@ func TestBuildDockerArgsEmptyCwdModeMatchesProject(t *testing.T) {
 	}
 }
 
+// TestResolveRunContextIsolated exercises resolveRunContext's own isolated
+// branch directly (Copilot flagged that the other isolated tests all
+// hand-build a runContext, the same gap GLM caught for the default-mode
+// tests in round 2 -- a regression in resolveRunContext's isolated branch
+// could silently restore a real root/workdir while those builder-only tests
+// stayed green).
+func TestResolveRunContextIsolated(t *testing.T) {
+	dir := t.TempDir()
+	cwd, err := pathmap.CanonicalPath(dir)
+	if err != nil {
+		t.Fatalf("canonical path: %v", err)
+	}
+	tool := registry.Tool{Name: "demo", Image: "demo:1", Provider: "stateless", CwdMode: "isolated"}
+	ctx, err := resolveRunContext(tool, cwd)
+	if err != nil {
+		t.Fatalf("resolveRunContext: %v", err)
+	}
+	want := runContext{
+		cwd:           cwd,
+		root:          IsolatedRoot,
+		workspaceRoot: "/root",
+		containerWD:   "/root",
+		found:         false,
+	}
+	if !reflect.DeepEqual(ctx, want) {
+		t.Fatalf("resolveRunContext isolated mismatch:\ngot  %+v\nwant %+v", ctx, want)
+	}
+
+	args, err := buildDockerArgs(tool, nil, ctx, "demo:1", false)
+	if err != nil {
+		t.Fatalf("buildDockerArgs: %v", err)
+	}
+	wantArgs := []string{"run", "--rm", "-i", "--workdir", "/root", "demo:1"}
+	if !reflect.DeepEqual(args, wantArgs) {
+		t.Fatalf("end-to-end isolated args = %#v, want %#v", args, wantArgs)
+	}
+	if strings.Contains(strings.Join(args, " "), cwd) {
+		t.Fatalf("end-to-end isolated args must not contain the host CWD; got %q", args)
+	}
+}
+
 func TestBuildDockerArgsIsolatedNoCwdMount(t *testing.T) {
 	dir := t.TempDir()
 	cwd, err := pathmap.CanonicalPath(dir)

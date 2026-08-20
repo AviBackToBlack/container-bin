@@ -201,11 +201,16 @@ there. In isolated mode, ContainerBin skips project-root detection entirely,
 sets `--workdir /root`, and does not bind-mount the host CWD at all. Any
 argument that looks like a host path is still mapped, but because no path can be
 "inside the project" it always uses the existing external-mount path and lands
-under `/cb/mounts/N`. `cwd_mode = "isolated"` cannot be combined with
-`project_volumes` (a project-scoped volume conceptually requires a project
-identity), but `shared_volumes`, `host_mounts` and environment allowlisting work
-exactly as they do in project mode. Exposed profiles created by `cb expose`
-from an npm-shaped source profile do **not** inherit that source's `cwd_mode`.
+under `/cb/mounts/N`. `cwd_mode = "isolated"` cannot be combined with:
+
+- `project_volumes` (a project-scoped volume conceptually requires a project identity);
+- `project_markers` (dead configuration once project-root detection is skipped);
+- `provider = "python"` (the python provider has its own project/compat venv split that
+  isolated mode would otherwise silently collapse onto the shared global compat environment).
+
+`shared_volumes`, `host_mounts` and environment allowlisting all work exactly as they do in
+project mode. Exposed profiles created by `cb expose` from an npm-shaped source profile do
+**not** inherit that source's `cwd_mode`.
 
 ## Windows path mapping
 
