@@ -313,6 +313,97 @@ func TestBuildDockerArgsIsolatedExternalPath(t *testing.T) {
 	}
 }
 
+func TestResolveRunContextDefaultNoMarker(t *testing.T) {
+	dir := t.TempDir()
+	cwd, err := pathmap.CanonicalPath(dir)
+	if err != nil {
+		t.Fatalf("canonical path: %v", err)
+	}
+
+	tool := registry.Tool{Name: "demo", Image: "demo:1", Provider: "stateless"}
+	ctx, err := resolveRunContext(tool, cwd)
+	if err != nil {
+		t.Fatalf("resolveRunContext: %v", err)
+	}
+
+	want := runContext{
+		cwd:           cwd,
+		root:          cwd,
+		workspaceRoot: "/workspace",
+		containerWD:   "/workspace",
+		found:         false,
+	}
+	if !reflect.DeepEqual(ctx, want) {
+		t.Fatalf("resolveRunContext no-marker mismatch:\ngot  %+v\nwant %+v", ctx, want)
+	}
+}
+
+func TestResolveRunContextNestedUnderMarker(t *testing.T) {
+	parent := t.TempDir()
+	if err := os.WriteFile(filepath.Join(parent, ".git"), []byte{}, 0644); err != nil {
+		t.Fatalf("write .git marker: %v", err)
+	}
+	child := filepath.Join(parent, "subdir")
+	if err := os.MkdirAll(child, 0755); err != nil {
+		t.Fatalf("mkdir child: %v", err)
+	}
+
+	cwd, err := pathmap.CanonicalPath(child)
+	if err != nil {
+		t.Fatalf("canonical child: %v", err)
+	}
+	parentCanon, err := pathmap.CanonicalPath(parent)
+	if err != nil {
+		t.Fatalf("canonical parent: %v", err)
+	}
+
+	tool := registry.Tool{Name: "demo", Image: "demo:1", Provider: "stateless"}
+	ctx, err := resolveRunContext(tool, cwd)
+	if err != nil {
+		t.Fatalf("resolveRunContext: %v", err)
+	}
+
+	want := runContext{
+		cwd:           cwd,
+		root:          parentCanon,
+		workspaceRoot: "/workspace",
+		containerWD:   "/workspace/subdir",
+		found:         true,
+	}
+	if !reflect.DeepEqual(ctx, want) {
+		t.Fatalf("resolveRunContext nested mismatch:\ngot  %+v\nwant %+v", ctx, want)
+	}
+}
+
+func TestDefaultModeEndToEndArgsUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	cwd, err := pathmap.CanonicalPath(dir)
+	if err != nil {
+		t.Fatalf("canonical path: %v", err)
+	}
+
+	tool := registry.Tool{Name: "demo", Image: "demo:1", Provider: "stateless"}
+	ctx, err := resolveRunContext(tool, cwd)
+	if err != nil {
+		t.Fatalf("resolveRunContext: %v", err)
+	}
+
+	args, err := buildDockerArgs(tool, nil, ctx, "demo:1", false)
+	if err != nil {
+		t.Fatalf("buildDockerArgs: %v", err)
+	}
+
+	want := []string{
+		"run", "--rm", "-i",
+		"--workdir", "/workspace",
+		"--mount", "type=bind,src=" + cwd + ",dst=/workspace",
+		"demo:1",
+	}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("default end-to-end args mismatch:\ngot  %#v\nwant %#v", args, want)
+	}
+}
+
 func TestBuildHostMountArgsCanonicalizesBeforeStat(t *testing.T) {
 	homeDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(homeDir, ".claude"), 0755); err != nil {
