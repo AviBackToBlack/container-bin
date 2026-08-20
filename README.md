@@ -204,7 +204,8 @@ argument that looks like a host path is still mapped, but because no path can be
 under `/cb/mounts/N`. `cwd_mode = "isolated"` cannot be combined with
 `project_volumes` (a project-scoped volume conceptually requires a project
 identity), but `shared_volumes`, `host_mounts` and environment allowlisting work
-exactly as they do in project mode.
+exactly as they do in project mode. Exposed profiles created by `cb expose`
+from an npm-shaped source profile do **not** inherit that source's `cwd_mode`.
 
 ## Windows path mapping
 

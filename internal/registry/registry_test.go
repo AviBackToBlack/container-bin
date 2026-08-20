@@ -727,6 +727,36 @@ shared_volumes = ["cache:/root/.cache"]
 	}
 }
 
+func TestIsolatedRejectsPythonProvider(t *testing.T) {
+	_, err := ParseTOML(`[tools.x]
+image = "python:3.13-slim"
+provider = "python"
+role = "python"
+cwd_mode = "isolated"
+`)
+	if err == nil {
+		t.Fatal("expected error for python provider with cwd_mode = isolated")
+	}
+	if !strings.Contains(err.Error(), `cwd_mode = "isolated" is not supported for the python provider`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestIsolatedRejectsProjectMarkers(t *testing.T) {
+	_, err := ParseTOML(`[tools.x]
+image = "x:1"
+provider = "stateless"
+cwd_mode = "isolated"
+project_markers = [".git"]
+`)
+	if err == nil {
+		t.Fatal("expected error for project_markers with cwd_mode = isolated")
+	}
+	if !strings.Contains(err.Error(), `cwd_mode = "isolated" cannot declare project_markers`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestHostMountDefaultTOMLComment(t *testing.T) {
 	// The default TOML must still parse and the host_mounts comment must not
 	// create an extra tool or confuse the parser.

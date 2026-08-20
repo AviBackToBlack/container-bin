@@ -461,6 +461,12 @@ func ParseTOML(s string) (Registry, error) {
 		if t.CwdMode == "isolated" && len(t.ProjectVolumes) > 0 {
 			return reg, fmt.Errorf("tool %q: cwd_mode = \"isolated\" cannot declare project_volumes", name)
 		}
+		if t.CwdMode == "isolated" && t.Provider == "python" {
+			return reg, fmt.Errorf("tool %q: cwd_mode = \"isolated\" is not supported for the python provider", name)
+		}
+		if t.CwdMode == "isolated" && len(t.ProjectMarkers) > 0 {
+			return reg, fmt.Errorf("tool %q: cwd_mode = \"isolated\" cannot declare project_markers", name)
+		}
 		if err := validateHostMounts(t); err != nil {
 			return reg, fmt.Errorf("tool %q: %w", name, err)
 		}
