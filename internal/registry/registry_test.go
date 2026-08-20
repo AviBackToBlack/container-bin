@@ -651,6 +651,112 @@ state_group = "ygroup"
 	}
 }
 
+func TestCwdModeParsing(t *testing.T) {
+	cases := []struct {
+		mode string
+		want string
+	}{
+		{"", ""},
+		{"project", "project"},
+		{"PROJECT", "project"},
+		{"isolated", "isolated"},
+		{"Isolated", "isolated"},
+	}
+	for _, tc := range cases {
+		src := `[tools.x]
+image = "x:1"
+provider = "stateless"
+`
+		if tc.mode != "" {
+			src += "cwd_mode = " + toml.Quote(tc.mode) + "\n"
+		}
+		reg, err := ParseTOML(src)
+		if err != nil {
+			t.Fatalf("mode %q: %v", tc.mode, err)
+		}
+		if got := reg.Tools["x"].CwdMode; got != tc.want {
+			t.Fatalf("mode %q: CwdMode = %q, want %q", tc.mode, got, tc.want)
+		}
+	}
+}
+
+func TestCwdModeInvalidRejected(t *testing.T) {
+	_, err := ParseTOML(`[tools.x]
+image = "x:1"
+provider = "stateless"
+cwd_mode = "limbo"
+`)
+	if err == nil {
+		t.Fatal("expected error for invalid cwd_mode")
+	}
+	if !strings.Contains(err.Error(), `cwd_mode must be "project" or "isolated"`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestIsolatedRejectsProjectVolumes(t *testing.T) {
+	_, err := ParseTOML(`[tools.x]
+image = "x:1"
+provider = "stateful"
+state_group = "g"
+cwd_mode = "isolated"
+project_volumes = ["data:/workspace/data"]
+shared_volumes = ["cache:/root/.cache"]
+`)
+	if err == nil {
+		t.Fatal("expected error for project_volumes with cwd_mode = isolated")
+	}
+	if !strings.Contains(err.Error(), `cwd_mode = "isolated" cannot declare project_volumes`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestIsolatedAllowsSharedVolumes(t *testing.T) {
+	reg, err := ParseTOML(`[tools.x]
+image = "x:1"
+provider = "stateful"
+state_group = "g"
+cwd_mode = "isolated"
+shared_volumes = ["cache:/root/.cache"]
+`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if reg.Tools["x"].CwdMode != "isolated" {
+		t.Fatalf("CwdMode = %q, want isolated", reg.Tools["x"].CwdMode)
+	}
+}
+
+func TestIsolatedRejectsPythonProvider(t *testing.T) {
+	_, err := ParseTOML(`[tools.x]
+image = "python:3.13-slim"
+provider = "python"
+role = "python"
+cwd_mode = "isolated"
+`)
+	if err == nil {
+		t.Fatal("expected error for python provider with cwd_mode = isolated")
+	}
+	if !strings.Contains(err.Error(), `cwd_mode = "isolated" is not supported for the python provider`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestIsolatedRejectsProjectMarkers(t *testing.T) {
+	_, err := ParseTOML(`[tools.x]
+image = "x:1"
+provider = "stateless"
+cwd_mode = "isolated"
+project_markers = [".git"]
+`)
+	if err == nil {
+		t.Fatal("expected error for project_markers with cwd_mode = isolated")
+	}
+	if !strings.Contains(err.Error(), `cwd_mode = "isolated" cannot declare project_markers`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestHostMountDefaultTOMLComment(t *testing.T) {
 	// The default TOML must still parse and the host_mounts comment must not
 	// create an extra tool or confuse the parser.

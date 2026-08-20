@@ -139,8 +139,8 @@ env_prefixes = ["TF_", "AWS_", "ARM_"]  # only these host vars enter the contain
 
 Semantics include `command`, `args_prefix`, `path_next`, `path_equals`,
 `path_last`, `path_last_if_any`, `env_names`, `env_prefixes`, `env_set`,
-`project_markers`, `state_group`, `project_volumes`, `shared_volumes` and
-`host_mounts`. Unknown keys **fail validation** instead of being silently
+`project_markers`, `state_group`, `project_volumes`, `shared_volumes`,
+`host_mounts` and `cwd_mode`. Unknown keys **fail validation** instead of being silently
 ignored, and a `schema_version` newer than the binary supports fails closed.
 Edit the file, then run `cb install` to reconcile shims.
 
@@ -188,6 +188,29 @@ claimed by `host_mounts`, on any provider.
 > **not** inherit that source's `host_mounts`; host access never propagates
 > implicitly to an auto-generated shim. A profile that genuinely needs a host
 > mount must declare it explicitly.
+
+### Isolated launcher mode (`cwd_mode`)
+
+`cwd_mode` defaults to `"project"`, which preserves the normal behavior of
+walking up from the current working directory to find project markers and
+bind-mounting the project into the container at `/workspace`. Set it to
+`"isolated"` for tools that may be launched from an arbitrary working directory
+that is not itself meaningful — for example, a background service or a GUI/MCP
+launcher that inherits `C:\Windows\System32` as its CWD and invokes a shim from
+there. In isolated mode, ContainerBin skips project-root detection entirely,
+sets `--workdir /root`, and does not bind-mount the host CWD at all. Any
+argument that looks like a host path is still mapped, but because no path can be
+"inside the project" it always uses the existing external-mount path and lands
+under `/cb/mounts/N`. `cwd_mode = "isolated"` cannot be combined with:
+
+- `project_volumes` (a project-scoped volume conceptually requires a project identity);
+- `project_markers` (dead configuration once project-root detection is skipped);
+- `provider = "python"` (the python provider has its own project/compat venv split that
+  isolated mode would otherwise silently collapse onto the shared global compat environment).
+
+`shared_volumes`, `host_mounts` and environment allowlisting all work exactly as they do in
+project mode. Exposed profiles created by `cb expose` from an npm-shaped source profile do
+**not** inherit that source's `cwd_mode`.
 
 ## Windows path mapping
 

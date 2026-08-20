@@ -272,6 +272,145 @@ host_mounts = ["%USERPROFILE%/does-not-exist:/root/missing:ro"]
 	}
 }
 
+func TestInspectDefaultOmitsCwdMode(t *testing.T) {
+	dir := t.TempDir()
+	old, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(old)
+
+	reg, err := registry.ParseTOML(`[tools.demo]
+image = "demo:1"
+provider = "stateless"
+`)
+	if err != nil {
+		t.Fatalf("parse registry: %v", err)
+	}
+
+	out, err := captureStdout(func() error { return Inspect(reg, []string{"demo"}) })
+	if err != nil {
+		t.Fatalf("capture: %v", err)
+	}
+	if strings.Contains(out, "cwd_mode") {
+		t.Fatalf("default inspect output should not contain cwd_mode:\n%s", out)
+	}
+}
+
+func TestInspectPrintsCwdModeIsolated(t *testing.T) {
+	dir := t.TempDir()
+	old, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(old)
+
+	reg, err := registry.ParseTOML(`[tools.demo]
+image = "demo:1"
+provider = "stateful"
+state_group = "g"
+cwd_mode = "isolated"
+shared_volumes = ["cache:/root/.cache"]
+`)
+	if err != nil {
+		t.Fatalf("parse registry: %v", err)
+	}
+
+	out, err := captureStdout(func() error { return Inspect(reg, []string{"demo"}) })
+	if err != nil {
+		t.Fatalf("capture: %v", err)
+	}
+	if !strings.Contains(out, "cwd_mode:   isolated") {
+		t.Fatalf("inspect output missing cwd_mode: isolated:\n%s", out)
+	}
+	if !strings.Contains(out, "workdir:    /root") {
+		t.Fatalf("inspect output missing /root workdir:\n%s", out)
+	}
+	if !strings.Contains(out, "project_bind_mount: (none)") {
+		t.Fatalf("inspect output missing no-project-mount marker:\n%s", out)
+	}
+	if strings.Contains(out, "\nroot:") {
+		t.Fatalf("isolated inspect output should not print a project root:\n%s", out)
+	}
+	if strings.Contains(out, "\nworkspace:") {
+		t.Fatalf("isolated inspect output should not print a workspace:\n%s", out)
+	}
+}
+
+func TestTraceDefaultStillPrintsRootAndWorkspace(t *testing.T) {
+	dir := t.TempDir()
+	old, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(old)
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte{}, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	reg, err := registry.ParseTOML(`[tools.demo]
+image = "demo:1"
+provider = "stateless"
+`)
+	if err != nil {
+		t.Fatalf("parse registry: %v", err)
+	}
+
+	out, err := captureStdout(func() error { return Trace(reg, []string{"demo"}) })
+	if err != nil {
+		t.Fatalf("capture: %v", err)
+	}
+	if !strings.Contains(out, "\nroot:") {
+		t.Fatalf("default trace output missing root line:\n%s", out)
+	}
+	if !strings.Contains(out, "\nworkspace:") {
+		t.Fatalf("default trace output missing workspace line:\n%s", out)
+	}
+	if strings.Contains(out, "cwd_mode") {
+		t.Fatalf("default trace output should not contain cwd_mode:\n%s", out)
+	}
+}
+
+func TestTraceIsolatedNoProjectMount(t *testing.T) {
+	dir := t.TempDir()
+	old, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(old)
+
+	reg, err := registry.ParseTOML(`[tools.demo]
+image = "demo:1"
+provider = "stateful"
+state_group = "g"
+cwd_mode = "isolated"
+shared_volumes = ["cache:/root/.cache"]
+`)
+	if err != nil {
+		t.Fatalf("parse registry: %v", err)
+	}
+
+	out, err := captureStdout(func() error { return Trace(reg, []string{"demo"}) })
+	if err != nil {
+		t.Fatalf("capture: %v", err)
+	}
+	if !strings.Contains(out, "cwd_mode:   isolated") {
+		t.Fatalf("trace output missing cwd_mode: isolated:\n%s", out)
+	}
+	if !strings.Contains(out, "workdir:    /root") {
+		t.Fatalf("trace output missing /root workdir:\n%s", out)
+	}
+	if !strings.Contains(out, "project_bind_mount: (none)") {
+		t.Fatalf("trace output missing no-project-mount marker:\n%s", out)
+	}
+	if strings.Contains(out, "\nroot:") {
+		t.Fatalf("isolated trace output should not print a project root:\n%s", out)
+	}
+	if strings.Contains(out, "\nworkspace:") {
+		t.Fatalf("isolated trace output should not print a workspace:\n%s", out)
+	}
+}
+
 func TestTraceHostMountUNCWouldFail(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("UNC resolution is only meaningful on Windows")
