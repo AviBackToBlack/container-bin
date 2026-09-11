@@ -7,6 +7,12 @@ updates:
     schedule:
       interval: weekly
     labels: ["dependencies", "github-actions"]
+    groups:
+      # init/analyze must move in lockstep or CodeQL fails with a version
+      # mismatch; keep them (and any future sub-actions) in one PR.
+      codeql-action:
+        patterns:
+          - "github/codeql-action*"
 
   # Currently zero third-party Go dependencies (intentional); this keeps
   # the toolchain directive and any future modules covered anyway.
