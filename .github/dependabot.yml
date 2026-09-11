@@ -1,23 +1,48 @@
 version: 2
+
 updates:
-  # Keep GitHub Actions SHA pins current (pins are full commit SHAs;
-  # Dependabot updates both the SHA and the version comment).
+  # Keep GitHub Actions SHA pins current. Dependabot updates both the full SHA
+  # and the human-readable version comment.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Dublin
+    rebase-strategy: disabled
+    open-pull-requests-limit: 5
     labels: ["dependencies", "github-actions"]
+    commit-message:
+      prefix: "ci(deps)"
     groups:
-      # init/analyze must move in lockstep or CodeQL fails with a version
-      # mismatch; keep them (and any future sub-actions) in one PR.
-      codeql-action:
-        patterns:
-          - "github/codeql-action*"
+      github-actions:
+        applies-to: version-updates
+        patterns: ["*"]
+      github-actions-security:
+        applies-to: security-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
 
-  # Currently zero third-party Go dependencies (intentional); this keeps
-  # the toolchain directive and any future modules covered anyway.
+  # ContainerBin intentionally has no third-party Go runtime dependencies today,
+  # but keep the toolchain directive and any future modules covered.
   - package-ecosystem: gomod
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
+      time: "06:10"
+      timezone: Europe/Dublin
+    rebase-strategy: disabled
+    open-pull-requests-limit: 5
     labels: ["dependencies", "go"]
+    commit-message:
+      prefix: "deps"
+    groups:
+      routine:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      security-minor-patch:
+        applies-to: security-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
