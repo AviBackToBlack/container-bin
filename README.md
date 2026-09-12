@@ -524,7 +524,14 @@ Licensed under the [Apache License 2.0](LICENSE).
 ## Release verification
 
 Release binaries are built by a tag-triggered GitHub Actions workflow with
-`SHA256SUMS` checksums and GitHub build provenance attestation. Verify with:
+`SHA256SUMS` checksums and GitHub build provenance attestation. First compare
+the downloaded binary hash with the `cb.exe` entry in `SHA256SUMS`:
+
+```powershell
+Get-FileHash .\cb.exe -Algorithm SHA256
+```
+
+Then verify its GitHub provenance attestation:
 
 ```powershell
 gh attestation verify cb.exe --repo AviBackToBlack/container-bin
