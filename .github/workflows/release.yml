@@ -119,10 +119,58 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  reproducibility:
+    name: Reproduce release bundle independently
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Download first-run bundle
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: container-bin-release-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: first
+
+      - name: Rebuild and compare byte-for-byte
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            VERSION="${GITHUB_REF_NAME}"
+          else
+            VERSION="v0.0.0-dev.${GITHUB_SHA:0:12}"
+          fi
+          ARCHIVE="container-bin-${VERSION}-windows-amd64.zip"
+          mkdir -p second
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
+            go build -trimpath -buildvcs=false \
+              -ldflags "-s -w -X main.version=${VERSION}" \
+              -o second/cb.exe .
+          cp LICENSE README.md second/
+          touch -d '1980-01-01 00:00:00 UTC' second/cb.exe second/LICENSE second/README.md
+          (
+            cd second
+            zip -X "${ARCHIVE}" cb.exe LICENSE README.md >/dev/null
+          )
+          cmp first/cb.exe second/cb.exe
+          cmp "first/${ARCHIVE}" "second/${ARCHIVE}"
+          echo 'independent runner reproduced binary and archive byte-for-byte'
+
   release:
     name: Draft release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, reproducibility]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -165,10 +213,29 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            echo "::error::Release ${GITHUB_REF_NAME} already exists; refusing to create provenance or overwrite assets."
+          API="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}"
+          BODY="$(mktemp)"
+          if ! HTTP_STATUS="$(curl --silent --show-error \
+            --output "$BODY" --write-out '%{http_code}' \
+            -H 'Accept: application/vnd.github+json' \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "$API")"; then
+            echo "::error::Release lookup failed at the transport layer; refusing to continue."
             exit 1
           fi
+          case "$HTTP_STATUS" in
+            404) ;;
+            200)
+              echo "::error::Release ${GITHUB_REF_NAME} already exists; refusing to create provenance or overwrite assets."
+              exit 1
+              ;;
+            *)
+              echo "::error::Release lookup returned HTTP ${HTTP_STATUS}; refusing to continue."
+              cat "$BODY" >&2
+              exit 1
+              ;;
+          esac
 
       - name: Attest release artifacts
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
@@ -183,10 +250,29 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            echo "::error::Release ${GITHUB_REF_NAME} appeared during this run; refusing to overwrite or clobber assets."
+          API="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}"
+          BODY="$(mktemp)"
+          if ! HTTP_STATUS="$(curl --silent --show-error \
+            --output "$BODY" --write-out '%{http_code}' \
+            -H 'Accept: application/vnd.github+json' \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "$API")"; then
+            echo "::error::Final release lookup failed at the transport layer; refusing to publish."
             exit 1
           fi
+          case "$HTTP_STATUS" in
+            404) ;;
+            200)
+              echo "::error::Release ${GITHUB_REF_NAME} appeared during this run; refusing to overwrite or clobber assets."
+              exit 1
+              ;;
+            *)
+              echo "::error::Final release lookup returned HTTP ${HTTP_STATUS}; refusing to publish."
+              cat "$BODY" >&2
+              exit 1
+              ;;
+          esac
           gh release create "${GITHUB_REF_NAME}" \
             --repo "${GITHUB_REPOSITORY}" \
             --verify-tag \
