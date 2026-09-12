@@ -1,75 +1,196 @@
-# Tag-triggered release build.
-#
-# Deliberately a small transparent workflow instead of GoReleaser: one
-# stdlib-only Go binary for one platform does not justify a release
-# framework dependency in the supply chain.
-#
-# Creates a DRAFT release — the maintainer reviews and publishes manually.
+# Build/test/package on every PR and main push with read-only permissions.
+# Publishing is a separate tag-only privileged job and always creates a DRAFT
+# release for human inspection before publication.
 name: Release
 
 on:
   push:
+    branches: [main]
     tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  release:
-    name: Build and draft release
-    runs-on: ubuntu-latest
+  build:
+    name: Build release bundle
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
-      contents: write      # create the draft release and upload assets
-      id-token: write      # provenance attestation (OIDC)
-      attestations: write  # provenance attestation
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           check-latest: true
 
+      - name: Validate release tag
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Release tag must be SemVer-like vMAJOR.MINOR.PATCH or a prerelease form; got ${GITHUB_REF_NAME}"
+            exit 1
+          fi
+
       - name: Test
         run: go test ./...
 
-      - name: Build cb.exe (windows/amd64, reproducible flags)
-        env:
-          GOOS: windows
-          GOARCH: amd64
-          CGO_ENABLED: "0"
+      - name: Build deterministic release bundle
+        shell: bash
         run: |
-          VERSION="${GITHUB_REF_NAME}"
-          echo "Building version ${VERSION}"
-          go build -trimpath -buildvcs=false \
-            -ldflags "-s -w -X main.version=${VERSION}" \
-            -o cb.exe .
-
-      - name: Package archive and checksums
-        run: |
-          VERSION="${GITHUB_REF_NAME}"
+          set -euo pipefail
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            VERSION="${GITHUB_REF_NAME}"
+          else
+            VERSION="v0.0.0-dev.${GITHUB_SHA:0:12}"
+          fi
           ARCHIVE="container-bin-${VERSION}-windows-amd64.zip"
-          zip "${ARCHIVE}" cb.exe LICENSE README.md
-          sha256sum cb.exe "${ARCHIVE}" > SHA256SUMS
-          cat SHA256SUMS
+          mkdir -p dist
+
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
+            go build -trimpath -buildvcs=false \
+              -ldflags "-s -w -X main.version=${VERSION}" \
+              -o dist/cb.exe .
+
+          cp LICENSE README.md dist/
+          # ZIP stores DOS timestamps. Normalize them and strip extra metadata so
+          # separate runners/checkouts produce byte-identical archives.
+          touch -d '1980-01-01 00:00:00 UTC' dist/cb.exe dist/LICENSE dist/README.md
+          (
+            cd dist
+            zip -X "${ARCHIVE}" cb.exe LICENSE README.md
+            sha256sum cb.exe "${ARCHIVE}" > SHA256SUMS
+          )
+          rm dist/LICENSE dist/README.md
+          cat dist/SHA256SUMS
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
           echo "ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
 
-      - name: Attest build provenance
+      - name: Verify checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum -c SHA256SUMS)
+
+      - name: Verify reproducibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/repro"
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
+            go build -trimpath -buildvcs=false \
+              -ldflags "-s -w -X main.version=${VERSION}" \
+              -o "$RUNNER_TEMP/repro/cb.exe" .
+          cp LICENSE README.md "$RUNNER_TEMP/repro/"
+          touch -d '1980-01-01 00:00:00 UTC' \
+            "$RUNNER_TEMP/repro/cb.exe" \
+            "$RUNNER_TEMP/repro/LICENSE" \
+            "$RUNNER_TEMP/repro/README.md"
+          (
+            cd "$RUNNER_TEMP/repro"
+            zip -X "${ARCHIVE}" cb.exe LICENSE README.md >/dev/null
+          )
+          sha256sum dist/cb.exe "$RUNNER_TEMP/repro/cb.exe"
+          sha256sum "dist/${ARCHIVE}" "$RUNNER_TEMP/repro/${ARCHIVE}"
+          cmp dist/cb.exe "$RUNNER_TEMP/repro/cb.exe"
+          cmp "dist/${ARCHIVE}" "$RUNNER_TEMP/repro/${ARCHIVE}"
+          echo 'binary and archive are reproducible'
+
+      - name: Upload verified release bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: container-bin-release-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            dist/cb.exe
+            dist/*.zip
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Draft release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download verified build output
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: container-bin-release-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: dist
+
+      - name: Re-verify downloaded checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(find dist -maxdepth 1 -type f -name '*.zip' | wc -l)" -eq 1
+          test -f dist/cb.exe
+          test -f dist/SHA256SUMS
+          (cd dist && sha256sum -c SHA256SUMS)
+
+      - name: Refuse to release an untrusted tag commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEFAULT_BRANCH="$(gh api "repos/${GITHUB_REPOSITORY}" --jq .default_branch)"
+          DEFAULT_SHA="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${DEFAULT_BRANCH}" --jq .object.sha)"
+          COMPARE_STATUS="$(gh api "repos/${GITHUB_REPOSITORY}/compare/${GITHUB_SHA}...${DEFAULT_SHA}" --jq .status)"
+          if [[ "${COMPARE_STATUS}" != "ahead" && "${COMPARE_STATUS}" != "identical" ]]; then
+            echo "::error::Tag commit ${GITHUB_SHA} is not in trusted ${DEFAULT_BRANCH} history (compare status: ${COMPARE_STATUS})."
+            exit 1
+          fi
+
+      - name: Refuse to mutate an existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "::error::Release ${GITHUB_REF_NAME} already exists; refusing to create provenance or overwrite assets."
+            exit 1
+          fi
+
+      - name: Attest release artifacts
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-path: |
-            cb.exe
-            ${{ env.ARCHIVE }}
+            dist/cb.exe
+            dist/*.zip
 
-      - name: Create draft release
+      - name: Create immutable-ready draft release
         env:
           GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
+          set -euo pipefail
+          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "::error::Release ${GITHUB_REF_NAME} appeared during this run; refusing to overwrite or clobber assets."
+            exit 1
+          fi
           gh release create "${GITHUB_REF_NAME}" \
             --repo "${GITHUB_REPOSITORY}" \
+            --verify-tag \
             --draft \
             --title "ContainerBin ${GITHUB_REF_NAME}" \
             --generate-notes \
-            cb.exe "${ARCHIVE}" SHA256SUMS
+            dist/cb.exe dist/*.zip dist/SHA256SUMS
