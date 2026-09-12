@@ -33,6 +33,7 @@ jobs:
         with:
           go-version-file: go.mod
           check-latest: true
+          cache: false
 
       - name: Validate release tag
         if: startsWith(github.ref, 'refs/tags/')
@@ -135,6 +136,7 @@ jobs:
         with:
           go-version-file: go.mod
           check-latest: true
+          cache: false
 
       - name: Download first-run bundle
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
