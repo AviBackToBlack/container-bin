@@ -43,6 +43,73 @@ func Setup(cfgPath, version string) error {
 	return diag.Doctor(reg, cfgPath)
 }
 
+func renderAddedToolSection(name, image string) string {
+	return fmt.Sprintf("\n# Added by cb add\n[tools.%s]\nimage = %s\nprovider = \"stateless\"\n", name, toml.Quote(image))
+}
+
+// Add appends the smallest useful profile: a stateless tool that runs its
+// image entrypoint. More privileged behavior (environment, state, mounts and
+// path rules) remains an explicit registry edit rather than inferred defaults.
+func Add(reg registry.Registry, cfgPath string, args []string) error {
+	return add(reg, cfgPath, args, registry.InstallShims)
+}
+
+func add(reg registry.Registry, cfgPath string, args []string, install func(registry.Registry) error) error {
+	if len(args) != 3 || args[1] != "--image" || args[0] == "" || args[2] == "" {
+		return errors.New("usage: cb add TOOL --image IMAGE")
+	}
+	name := strings.ToLower(args[0])
+	image := args[2]
+	if !registry.ValidToolName(name) {
+		return fmt.Errorf("invalid tool name %q (use lowercase letters, digits, '-' or '_')", args[0])
+	}
+	if registry.ReservedToolName(name) {
+		return fmt.Errorf("tool name %q is reserved and cannot be installed as a shim", name)
+	}
+	if _, exists := reg.Tools[name]; exists {
+		return fmt.Errorf("tool %q already exists; edit its registry section explicitly", name)
+	}
+	if strings.ContainsAny(image, " \t\r\n") {
+		return errors.New("image reference must not contain whitespace")
+	}
+	if strings.HasPrefix(image, "-") {
+		return errors.New("image reference must not start with '-'")
+	}
+	lockExists := false
+	if _, err := os.Stat(lockfile.PathFor(cfgPath)); err == nil {
+		lockExists = true
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("check lockfile before adding profile: %w", err)
+	}
+
+	if err := registry.EnsureFile(cfgPath); err != nil {
+		return err
+	}
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		return err
+	}
+	combined := append(append([]byte{}, data...), []byte(renderAddedToolSection(name, image))...)
+	newReg, err := registry.ParseTOML(string(combined))
+	if err != nil {
+		return fmt.Errorf("refusing registry update: %w", err)
+	}
+	if err := atomicio.WriteFile(cfgPath, combined, 0644); err != nil {
+		return err
+	}
+	if err := install(newReg); err != nil {
+		return fmt.Errorf("profile %q was added, but shim installation failed: %w; run `cb install` to retry", name, err)
+	}
+
+	fmt.Printf("added %s -> %s (stateless)\n", name, image)
+	if lockExists {
+		fmt.Printf("lockfile is now incomplete; run `cb update %s` or `cb lock` before using the shim\n", name)
+	} else {
+		fmt.Println("run `cb lock` to pin configured images before relying on the shim")
+	}
+	return nil
+}
+
 func Trace(reg registry.Registry, args []string) error {
 	if len(args) == 0 {
 		return errors.New("usage: cb trace TOOL [ARGS...]")
