@@ -175,7 +175,7 @@ func invokedName(argv0 string) string {
 }
 
 func isManagementInvocation(invoked string) bool {
-	return invoked == "cb" || invoked == "container-bin" || strings.HasPrefix(invoked, "cb-v")
+	return invoked == "cb" || invoked == "container-bin" || registry.IsVersionedBinaryName(invoked)
 }
 
 // handleBootstrapCommand serves commands that must remain available when the

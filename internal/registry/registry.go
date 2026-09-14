@@ -495,15 +495,22 @@ func ReservedToolName(s string) bool {
 	case "cb", "container-bin", "con", "prn", "aux", "nul":
 		return true
 	}
-	// main() treats any argv[0] starting with "cb-v" as the management CLI
-	// (versioned binary names), so such a shim could never dispatch to a tool.
-	if strings.HasPrefix(s, "cb-v") {
+	// main() uses the same predicate for argv[0] dispatch, so a versioned cb
+	// binary name can never collide with a tool shim.
+	if IsVersionedBinaryName(s) {
 		return true
 	}
 	if len(s) == 4 && (strings.HasPrefix(s, "com") || strings.HasPrefix(s, "lpt")) && s[3] >= '1' && s[3] <= '9' {
 		return true
 	}
 	return false
+}
+
+// IsVersionedBinaryName recognizes release binary names such as cb-v1.2.3.
+// Requiring a digit immediately after cb-v keeps ordinary tool names such as
+// cb-vault available while preserving versioned management-binary dispatch.
+func IsVersionedBinaryName(s string) bool {
+	return len(s) > len("cb-v") && strings.HasPrefix(s, "cb-v") && s[len("cb-v")] >= '0' && s[len("cb-v")] <= '9'
 }
 
 func validEnvAssignment(s string) bool {

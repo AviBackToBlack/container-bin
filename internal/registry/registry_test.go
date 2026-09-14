@@ -297,15 +297,24 @@ func TestReservedToolNames(t *testing.T) {
 	}
 }
 
-func TestReservedCbVersionPrefixNames(t *testing.T) {
-	for _, name := range []string{"cb-v", "cb-vault", "cb-version"} {
+func TestVersionedBinaryNameMatchesReservation(t *testing.T) {
+	for _, name := range []string{"cb-v0", "cb-v1.2.3", "cb-v9-preview"} {
+		if !IsVersionedBinaryName(name) {
+			t.Fatalf("%q should be recognized as a versioned binary", name)
+		}
 		if !ReservedToolName(name) {
-			t.Fatalf("%q should be reserved (cb-v* never dispatches to a tool)", name)
+			t.Fatalf("%q should be reserved", name)
 		}
 	}
-	for _, name := range []string{"cb-x", "cbv", "vault"} {
+	for _, name := range []string{"cb-v", "cb-vault", "cb-version", "cb-vx", "cb-x", "cbv", "vault"} {
+		if IsVersionedBinaryName(name) {
+			t.Fatalf("%q should not be recognized as a versioned binary", name)
+		}
 		if ReservedToolName(name) {
 			t.Fatalf("%q should not be reserved", name)
+		}
+		if _, err := ParseTOML("[tools." + name + "]\nimage = \"x:1\"\nprovider = \"stateless\"\n"); err != nil {
+			t.Fatalf("registry rejected available tool name %q: %v", name, err)
 		}
 	}
 }
