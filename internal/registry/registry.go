@@ -300,6 +300,39 @@ env_prefixes = ["NUGETPACKAGESOURCECREDENTIALS_"]
 env_names = ["DOTNET_ENVIRONMENT", "ASPNETCORE_ENVIRONMENT", "DOTNET_SYSTEM_GLOBALIZATION_INVARIANT", "DOTNET_SYSTEM_NET_HTTP_USESOCKETSHTTPHANDLER", "DOTNET_ROLL_FORWARD", "DOTNET_ROLL_FORWARD_TO_PRERELEASE", "DOTNET_EnableDiagnostics", "DOTNET_USE_POLLING_FILE_WATCHER", "NUGET_XMLDOC_MODE", "NUGET_CERT_REVOCATION_MODE", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"]
 # No forced path rules: arguments after commands such as dotnet run -- belong
 # to the child program. Absolute and explicit relative paths use the general mapper.
+
+[tools.ruby]
+image = "ruby:4.0-trixie"
+provider = "stateful"
+command = ["ruby"]
+state_group = "ruby40"
+project_markers = ["Gemfile", "Gemfile.lock", "gems.rb", "gems.locked", ".ruby-version", ".git"]
+shared_volumes = ["gems:/cb/ruby-gems"]
+env_set = ["GEM_HOME=/cb/ruby-gems", "GEM_PATH=/cb/ruby-gems:/usr/local/lib/ruby/gems/4.0.0", "PATH=/cb/ruby-gems/bin:/usr/local/bundle/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"]
+env_names = ["RUBY_YJIT_ENABLE", "RUBY_THREAD_VM_STACK_SIZE", "RUBY_FIBER_MACHINE_STACK_SIZE", "RUBY_FIBER_VM_STACK_SIZE", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"]
+
+[tools.gem]
+image = "ruby:4.0-trixie"
+provider = "stateful"
+command = ["gem"]
+state_group = "ruby40"
+project_markers = ["Gemfile", "Gemfile.lock", "gems.rb", "gems.locked", ".ruby-version", ".git"]
+shared_volumes = ["gems:/cb/ruby-gems", "spec-cache:/cb/ruby-spec-cache"]
+env_set = ["GEM_HOME=/cb/ruby-gems", "GEM_PATH=/cb/ruby-gems:/usr/local/lib/ruby/gems/4.0.0", "GEM_SPEC_CACHE=/cb/ruby-spec-cache", "PATH=/cb/ruby-gems/bin:/usr/local/bundle/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"]
+env_names = ["RUBYGEMS_HOST", "RUBYGEMS_API_KEY", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "HTTP_PROXY_USER", "HTTP_PROXY_PASS", "http_proxy", "https_proxy", "no_proxy"]
+
+[tools.bundle]
+image = "ruby:4.0-trixie"
+provider = "stateful"
+command = ["bundle"]
+state_group = "ruby40"
+project_markers = ["Gemfile", "Gemfile.lock", "gems.rb", "gems.locked", ".ruby-version", ".git"]
+project_volumes = ["bundle:/cb/bundle"]
+shared_volumes = ["gems:/cb/ruby-gems", "spec-cache:/cb/ruby-spec-cache", "bundle-cache:/cb/bundle-cache"]
+env_set = ["GEM_HOME=/cb/ruby-gems", "GEM_PATH=/cb/ruby-gems:/usr/local/lib/ruby/gems/4.0.0", "GEM_SPEC_CACHE=/cb/ruby-spec-cache", "BUNDLE_PATH=/cb/bundle", "BUNDLE_APP_CONFIG=/cb/bundle/.config", "BUNDLE_USER_CACHE=/cb/bundle-cache", "BUNDLE_SILENCE_ROOT_WARNING=1", "PATH=/cb/ruby-gems/bin:/usr/local/bundle/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"]
+env_names = ["BUNDLE_WITH", "BUNDLE_WITHOUT", "BUNDLE_JOBS", "BUNDLE_RETRY", "BUNDLE_FROZEN", "BUNDLE_DEPLOYMENT", "BUNDLE_CLEAN", "BUNDLE_FORCE_RUBY_PLATFORM", "BUNDLE_DISABLE_LOCAL_BRANCH_CHECK", "RUBYGEMS_HOST", "RUBYGEMS_API_KEY", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "HTTP_PROXY_USER", "HTTP_PROXY_PASS", "http_proxy", "https_proxy", "no_proxy"]
+# No forced path rules: Ruby code and arguments after bundle exec are opaque to
+# container-bin. Absolute and explicit relative paths use the general mapper.
 `
 
 func Default() Registry {

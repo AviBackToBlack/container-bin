@@ -26,11 +26,11 @@ func TestParseDefaultRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(reg.Tools) != 21 {
-		t.Fatalf("expected 21 tools, got %d", len(reg.Tools))
+	if len(reg.Tools) != 24 {
+		t.Fatalf("expected 24 tools, got %d", len(reg.Tools))
 	}
-	if len(reg.ToolNames()) != 24 {
-		t.Fatalf("expected 24 invokable shim names, got %d", len(reg.ToolNames()))
+	if len(reg.ToolNames()) != 27 {
+		t.Fatalf("expected 27 invokable shim names, got %d", len(reg.ToolNames()))
 	}
 	jq := reg.Tools["jq"]
 	if jq.Provider != "stateless" || jq.Image != "ghcr.io/jqlang/jq:latest" {
@@ -156,7 +156,7 @@ func TestDefaultRegistryHasV06Tools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"python", "pip", "jq", "yq", "terraform", "ffmpeg", "node24", "npm24", "npx24", "go", "gofmt", "rustc", "cargo", "uv", "uvx", "dotnet"} {
+	for _, name := range []string{"python", "pip", "jq", "yq", "terraform", "ffmpeg", "node24", "npm24", "npx24", "go", "gofmt", "rustc", "cargo", "uv", "uvx", "dotnet", "ruby", "gem", "bundle"} {
 		if _, ok := reg.Tools[name]; !ok {
 			t.Fatalf("missing default tool %q", name)
 		}
@@ -173,7 +173,7 @@ func TestDefaultRegistryHasV06Tools(t *testing.T) {
 
 func TestDefaultToolSections(t *testing.T) {
 	sections := DefaultToolSections()
-	for _, name := range []string{"python", "yq", "terraform", "ffmpeg", "node24", "node22", "npm24", "npm22", "npx24", "npx22", "go", "gofmt", "rustc", "cargo", "uv", "uvx", "dotnet"} {
+	for _, name := range []string{"python", "yq", "terraform", "ffmpeg", "node24", "node22", "npm24", "npm22", "npx24", "npx22", "go", "gofmt", "rustc", "cargo", "uv", "uvx", "dotnet", "ruby", "gem", "bundle"} {
 		if !strings.Contains(sections[name], "[tools."+name+"]") {
 			t.Fatalf("bad section for %s: %q", name, sections[name])
 		}
@@ -673,6 +673,63 @@ func TestDotnetProfile(t *testing.T) {
 	}
 }
 
+func TestRubyGemBundleProfiles(t *testing.T) {
+	reg, err := ParseTOML(DefaultTOML)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const image = "ruby:4.0-trixie"
+	for _, name := range []string{"ruby", "gem", "bundle"} {
+		tool := reg.Tools[name]
+		if tool.Image != image || tool.Provider != "stateful" || tool.StateGroup != "ruby40" || !reflect.DeepEqual(tool.Command, []string{name}) {
+			t.Fatalf("bad %s profile: %+v", name, tool)
+		}
+		if !containsString(tool.ProjectMarkers, "Gemfile") || !containsString(tool.ProjectMarkers, "Gemfile.lock") {
+			t.Fatalf("%s project markers do not cover Bundler projects: %#v", name, tool.ProjectMarkers)
+		}
+		if !containsString(tool.SharedVolumes, "gems:/cb/ruby-gems") {
+			t.Fatalf("%s missing shared gem home: %#v", name, tool.SharedVolumes)
+		}
+		for _, entry := range []string{
+			"GEM_HOME=/cb/ruby-gems",
+			"GEM_PATH=/cb/ruby-gems:/usr/local/lib/ruby/gems/4.0.0",
+			"PATH=/cb/ruby-gems/bin:/usr/local/bundle/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin",
+		} {
+			if !containsString(tool.EnvSet, entry) {
+				t.Fatalf("%s env_set missing %q: %#v", name, entry, tool.EnvSet)
+			}
+		}
+		if len(tool.PathNext) != 0 || len(tool.PathEquals) != 0 || tool.PathLast {
+			t.Fatalf("%s must not force path semantics: %+v", name, tool)
+		}
+		for _, pathVariable := range []string{"GEM_HOME", "GEM_PATH", "GEM_SPEC_CACHE", "GEMRC", "RUBYGEMS_GEMDEPS", "BUNDLE_PATH", "BUNDLE_GEMFILE", "BUNDLE_APP_CONFIG", "BUNDLE_USER_CACHE"} {
+			if containsString(tool.EnvNames, pathVariable) {
+				t.Fatalf("%s env allowlist must not include path-valued %q", name, pathVariable)
+			}
+		}
+	}
+
+	if len(reg.Tools["ruby"].ProjectVolumes) != 0 || len(reg.Tools["gem"].ProjectVolumes) != 0 {
+		t.Fatal("ruby and gem must not allocate Bundler project state")
+	}
+	bundle := reg.Tools["bundle"]
+	if !reflect.DeepEqual(bundle.ProjectVolumes, []string{"bundle:/cb/bundle"}) {
+		t.Fatalf("bundle project_volumes = %#v", bundle.ProjectVolumes)
+	}
+	for _, entry := range []string{
+		"GEM_SPEC_CACHE=/cb/ruby-spec-cache",
+		"BUNDLE_PATH=/cb/bundle",
+		"BUNDLE_APP_CONFIG=/cb/bundle/.config",
+		"BUNDLE_USER_CACHE=/cb/bundle-cache",
+		"BUNDLE_SILENCE_ROOT_WARNING=1",
+	} {
+		if !containsString(bundle.EnvSet, entry) {
+			t.Fatalf("bundle env_set missing %q: %#v", entry, bundle.EnvSet)
+		}
+	}
+}
+
 // Node 24 is the default runtime, but it is not a guarantee that every npm
 // package is ABI-compatible with it. Node 22 is the supported LTS alternative,
 // with fully isolated state even though the logical volume names are identical.
@@ -1052,7 +1109,7 @@ func TestHostMountDefaultTOMLComment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(reg.Tools) != 21 {
-		t.Fatalf("expected 21 tools, got %d", len(reg.Tools))
+	if len(reg.Tools) != 24 {
+		t.Fatalf("expected 24 tools, got %d", len(reg.Tools))
 	}
 }

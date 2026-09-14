@@ -4,10 +4,10 @@
 installing the runtimes on the host.**
 
 ContainerBin makes commands such as `python`, `pip`, `node`, `npm`, `npx`,
-`uv`, `uvx`, `go`, `cargo`, `rustc`, `dotnet`, `jq`, `yq`, `terraform` and `ffmpeg` look like ordinary
+`uv`, `uvx`, `go`, `cargo`, `rustc`, `dotnet`, `ruby`, `gem`, `bundle`, `jq`, `yq`, `terraform` and `ffmpeg` look like ordinary
 Windows executables while their real implementations run inside disposable
 Linux containers on Docker Desktop. Your Windows installation stays clean: no
-Python, Node, Go, Rust, uv or .NET SDK on the host — just one small Go binary,
+Python, Node, Go, Rust, uv, .NET SDK or Ruby on the host — just one small Go binary,
 `cb.exe`.
 
 ```powershell
@@ -126,6 +126,7 @@ cb lock
 | `cargo` | `rust:1.98.1-slim-bookworm` | stateful (`rust198` state group) |
 | `uv`, `uvx` | `ghcr.io/astral-sh/uv:0.12-python3.13-trixie-slim` | stateful (`uv012-py313` state group) |
 | `dotnet` | `mcr.microsoft.com/dotnet/sdk:10.0` | stateful (`dotnet10` state group) |
+| `ruby`, `gem`, `bundle` | `ruby:4.0-trixie` | stateful (`ruby40` state group) |
 | `jq` | `ghcr.io/jqlang/jq:latest` | stateless |
 | `yq` | `mikefarah/yq:latest` | stateless |
 | `terraform` | `hashicorp/terraform:latest` | stateless (`-chdir` path semantics) |
@@ -429,6 +430,31 @@ intentionally comes first on the profile's `PATH`, so a global tool named
 Existing installations gain `dotnet` on `cb install`. An older lockfile does
 not include the SDK image, so run `cb update dotnet` (or regenerate the lock
 with `cb lock`) before first use in locked mode.
+
+## Ruby and gem state
+
+`ruby`, `gem` and `bundle` use the full official Ruby 4.0 image rather than the
+slim variant, because development workflows frequently need its compiler and
+system headers for native extensions. They share a Ruby-ABI-specific `ruby40`
+state group and one image-lock entry.
+
+`gem install rake` writes to a persistent shared gem home that is on the
+container `PATH`, so later Ruby invocations can load the gem or find its
+executables (for example, `ruby -S rake`). Bundler dependencies live in a
+per-project `/cb/bundle` volume, while its download cache is shared. `Gemfile`
+and `Gemfile.lock` remain in the host project; installed Linux gems and native
+extensions remain in Docker volumes rather than leaking onto Windows.
+
+Only selected non-path Ruby/Bundler settings, repository credentials and proxy
+variables cross into the container. Host values such as `GEM_HOME`, `GEM_PATH`,
+`BUNDLE_PATH` and `BUNDLE_GEMFILE` are deliberately ignored because Windows
+paths are meaningless in the Linux image. Gem executables are usable inside
+the Ruby containers; standalone Windows shims for them require the future
+generic exposure support tracked by RM-26.
+
+Existing installations gain all three profiles on `cb install`. An older
+lockfile does not include their image, so run `cb update ruby` (or regenerate
+the lock with `cb lock`) before first use in locked mode.
 
 ## Dynamic global CLI exposure
 
