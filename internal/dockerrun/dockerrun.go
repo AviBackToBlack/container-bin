@@ -4,13 +4,16 @@
 package dockerrun
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/AviBackToBlack/container-bin/internal/dockervol"
 	"github.com/AviBackToBlack/container-bin/internal/lockfile"
@@ -74,6 +77,9 @@ func RunTool(t registry.Tool, userArgs []string) (int, error) {
 	if err := ensureDockerVolumes(t, ctx); err != nil {
 		return 1, err
 	}
+	if err := writeDockerRunTrace(os.Stderr, t, ctx, args); err != nil {
+		return 1, err
+	}
 
 	cmd := exec.Command("docker", args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr, cmd.Env = os.Stdin, os.Stdout, os.Stderr, os.Environ()
@@ -86,6 +92,67 @@ func RunTool(t registry.Tool, userArgs []string) (int, error) {
 		return exitErr.ExitCode(), nil
 	}
 	return 1, err
+}
+
+type dockerRunTrace struct {
+	SchemaVersion int      `json:"schema_version"`
+	Timestamp     string   `json:"timestamp"`
+	Event         string   `json:"event"`
+	Tool          string   `json:"tool"`
+	CWD           string   `json:"cwd"`
+	ProjectRoot   string   `json:"project_root"`
+	ProjectFound  bool     `json:"project_found"`
+	Workspace     string   `json:"workspace"`
+	Argv          []string `json:"argv"`
+}
+
+// writeDockerRunTrace records the actual, post-mapping docker argv selected by
+// RunTool. Debug output goes to stderr so stdout remains the invoked tool's
+// stream. An explicitly configured log is append-only JSON Lines; failure to
+// write it fails the invocation rather than pretending diagnostics were saved.
+func writeDockerRunTrace(stderr io.Writer, t registry.Tool, ctx runContext, args []string) error {
+	if os.Getenv("CB_DEBUG") != "1" {
+		return nil
+	}
+
+	trace := dockerRunTrace{
+		SchemaVersion: 1,
+		Timestamp:     time.Now().UTC().Format(time.RFC3339Nano),
+		Event:         "docker_run",
+		Tool:          t.Name,
+		CWD:           ctx.cwd,
+		ProjectRoot:   ctx.root,
+		ProjectFound:  ctx.found,
+		Workspace:     ctx.workspaceRoot,
+		Argv:          append([]string{"docker"}, args...),
+	}
+	line, err := json.Marshal(trace)
+	if err != nil {
+		return fmt.Errorf("encode CB_DEBUG trace: %w", err)
+	}
+	line = append(line, '\n')
+
+	if logPath := strings.TrimSpace(os.Getenv("CB_DEBUG_LOG")); logPath != "" {
+		if !filepath.IsAbs(logPath) {
+			return fmt.Errorf("CB_DEBUG_LOG must be an absolute path: %s", logPath)
+		}
+		logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+		if err != nil {
+			return fmt.Errorf("open CB_DEBUG_LOG %s: %w", logPath, err)
+		}
+		if _, err := logFile.Write(line); err != nil {
+			_ = logFile.Close()
+			return fmt.Errorf("write CB_DEBUG_LOG %s: %w", logPath, err)
+		}
+		if err := logFile.Close(); err != nil {
+			return fmt.Errorf("close CB_DEBUG_LOG %s: %w", logPath, err)
+		}
+	}
+
+	if _, err := stderr.Write(line); err != nil {
+		return fmt.Errorf("write CB_DEBUG trace to stderr: %w", err)
+	}
+	return nil
 }
 
 func resolveRunContext(t registry.Tool, cwd string) (runContext, error) {
