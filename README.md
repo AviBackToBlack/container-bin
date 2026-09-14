@@ -176,6 +176,9 @@ Targets under `/workspace`, `/cb`, `/venv` and `/root/.cache/pip` are reserved
 for container-bin's own project workspace and managed state mounts (the last
 two are the python provider's fixed venv/pip-cache paths) and cannot be
 claimed by `host_mounts`, on any provider.
+`project_volumes` and `shared_volumes` may intentionally use paths under
+`/workspace` and `/cb`, but cannot target `/venv`, `/root/.cache/pip` or their
+descendants because those paths are owned by the python provider.
 
 > A `host_mounts` entry grants the configured Docker image direct access to the
 > named host files or directories. ContainerBin is **not a security sandbox**;

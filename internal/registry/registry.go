@@ -533,6 +533,16 @@ func ParseVolumeBinding(spec string) (string, string, error) {
 	if !strings.HasPrefix(dst, "/") {
 		return "", "", errors.New("container path must be absolute")
 	}
+	cleanDst := path.Clean(dst)
+	// Stateful volume declarations are expected to use locations chosen by
+	// the profile, but the legacy python provider owns these two fixed paths.
+	// Letting a project/shared volume claim either path (or a child of it)
+	// creates a duplicate or partially shadowed provider mount at run time.
+	for _, reserved := range []string{"/venv", "/root/.cache/pip"} {
+		if pathContainsOrEquals(reserved, cleanDst) {
+			return "", "", fmt.Errorf("container path %q is reserved for python provider state", dst)
+		}
+	}
 	return name, dst, nil
 }
 
