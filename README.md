@@ -129,6 +129,11 @@ cb lock
 `container-bin.toml` lives next to `cb.exe` and describes every tool
 declaratively:
 
+Bootstrap commands do not read or validate that file: `cb version` (also
+`--version`/`-V`), `cb help` (also `--help`/`-h` and bare `cb`) and `cb config`
+remain available when the registry is missing, corrupt, or newer than the
+installed binary. This keeps version-skew diagnosis usable before repair.
+
 ```toml
 [tools.terraform]
 image = "hashicorp/terraform:latest"
