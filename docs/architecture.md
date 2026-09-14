@@ -177,6 +177,8 @@ commands remain lock-free. `cb` loads the registry once before dispatch, outside
 dispatch and read-only commands. Every mutating command re-reads the registry
 after acquiring the lock, so the pre-dispatch snapshot is never used for a
 write and cannot cause a lost update.
+`cb backup` also holds this lock—not because it mutates configuration, but so a
+registry/lock snapshot cannot straddle another command's atomic replacement.
 A killed `cb` can leave the lock file behind; the next invocation refuses to
 mutate the registry and tells the user to delete it.
 
@@ -204,6 +206,8 @@ main            argv[0] dispatch, subcommand switch, version, usage,
 internal/cli    setup, install, expose, unexpose, uninstall, inspect, trace,
                 env, backup, restore, lock, update
   ↓
+internal/statearchive  labeled-volume selection, manifest/checksum/tar
+                       validation, Docker helper backup/restore
 internal/diag   doctor, self-test, bugreport, verdict functions, redaction
   ↓
 internal/dockerrun   docker run assembly, TTY decision, host-env selection,

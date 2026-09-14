@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"archive/zip"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -442,5 +443,86 @@ host_mounts = ["%USERPROFILE%/.claude:/root/.claude:ro"]
 	}
 	if !strings.Contains(out, "[would fail: resolves to a UNC path, which Docker Desktop cannot share]") {
 		t.Fatalf("trace output missing UNC would-fail annotation:\n%s", out)
+	}
+}
+
+func TestParseBackupArgs(t *testing.T) {
+	tests := []struct {
+		name      string
+		args      []string
+		wantPath  string
+		wantState []string
+		wantErr   bool
+	}{
+		{"plain_default", nil, "", nil, false},
+		{"plain_path", []string{"backup.zip"}, "backup.zip", nil, false},
+		{"state_default_path", []string{"--state", "cb-demo-cache"}, "", []string{"cb-demo-cache"}, false},
+		{"state_named_path", []string{"backup.zip", "--state", "cb-a", "cb-b"}, "backup.zip", []string{"cb-a", "cb-b"}, false},
+		{"state_missing_name", []string{"--state"}, "", nil, true},
+		{"duplicate_flag", []string{"--state", "cb-a", "--state", "cb-b"}, "", nil, true},
+		{"unknown_flag", []string{"--all"}, "", nil, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			path, state, err := parseBackupArgs(tc.args)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("error = %v, wantErr=%v", err, tc.wantErr)
+			}
+			if path != tc.wantPath || !reflect.DeepEqual(state, tc.wantState) {
+				t.Fatalf("got path=%q state=%#v, want path=%q state=%#v", path, state, tc.wantPath, tc.wantState)
+			}
+		})
+	}
+}
+
+func TestParseRestoreArgs(t *testing.T) {
+	path, apply, state, err := parseRestoreArgs([]string{"backup.zip", "--state", "--apply"})
+	if err != nil || path != "backup.zip" || !apply || !state {
+		t.Fatalf("got path=%q apply=%v state=%v err=%v", path, apply, state, err)
+	}
+	for _, args := range [][]string{nil, {"--state"}, {"backup.zip", "--apply", "--apply"}, {"backup.zip", "--unknown"}} {
+		if _, _, _, err := parseRestoreArgs(args); err == nil {
+			t.Fatalf("expected error for %#v", args)
+		}
+	}
+}
+
+func TestPlainBackupIsValidAndNeverOverwrites(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "container-bin.toml")
+	out := filepath.Join(dir, "backup.zip")
+	if err := os.WriteFile(cfg, []byte(registry.DefaultTOML), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Backup(cfg, []string{out}, "test"); err != nil {
+		t.Fatal(err)
+	}
+	zr, err := zip.OpenReader(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, f := range zr.File {
+		seen[f.Name] = true
+	}
+	zr.Close()
+	for _, name := range []string{"container-bin.toml", "backup-info.txt"} {
+		if !seen[name] {
+			t.Fatalf("backup missing %s", name)
+		}
+	}
+	before, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Backup(cfg, []string{out}, "test"); err == nil {
+		t.Fatal("expected existing backup path to be refused")
+	}
+	after, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(after, before) {
+		t.Fatal("refused backup modified the existing archive")
 	}
 }
