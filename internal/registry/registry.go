@@ -207,6 +207,19 @@ shared_volumes = ["gomodcache:/go/pkg/mod", "gobuild:/root/.cache/go-build", "go
 # file operands are already mapped by the general path-shape rules.
 # Do not allowlist path-valued variables; Windows paths are meaningless inside the Linux container
 env_names = ["GOFLAGS", "GOPROXY", "GONOPROXY", "GOPRIVATE", "GOSUMDB", "GONOSUMDB", "GOINSECURE", "GOOS", "GOARCH", "GOARM", "CGO_ENABLED", "GOTOOLCHAIN", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"]
+
+[tools.dotnet]
+image = "mcr.microsoft.com/dotnet/sdk:10.0"
+provider = "stateful"
+command = ["dotnet"]
+state_group = "dotnet10"
+project_markers = ["global.json", "Directory.Build.props", "Directory.Build.targets", "Directory.Packages.props", "NuGet.Config", "nuget.config", ".git"]
+shared_volumes = ["nuget-packages:/root/.nuget/packages", "nuget-config:/root/.nuget/NuGet", "dotnet-home:/root/.dotnet"]
+env_set = ["DOTNET_CLI_HOME=/root", "NUGET_PACKAGES=/root/.nuget/packages", "DOTNET_CLI_TELEMETRY_OPTOUT=1", "DOTNET_NOLOGO=1", "DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1", "PATH=/root/.dotnet/tools:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"]
+env_prefixes = ["NUGETPACKAGESOURCECREDENTIALS_"]
+env_names = ["DOTNET_ENVIRONMENT", "ASPNETCORE_ENVIRONMENT", "DOTNET_SYSTEM_GLOBALIZATION_INVARIANT", "DOTNET_SYSTEM_NET_HTTP_USESOCKETSHTTPHANDLER", "DOTNET_ROLL_FORWARD", "DOTNET_ROLL_FORWARD_TO_PRERELEASE", "DOTNET_EnableDiagnostics", "NUGET_XMLDOC_MODE", "NUGET_CERT_REVOCATION_MODE", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"]
+# No forced path rules: arguments after commands such as dotnet run -- belong
+# to the child program. Absolute and explicit relative paths use the general mapper.
 `
 
 func Default() Registry {

@@ -4,10 +4,11 @@
 installing the runtimes on the host.**
 
 ContainerBin makes commands such as `python`, `pip`, `node`, `npm`, `npx`,
-`jq`, `yq`, `terraform` and `ffmpeg` look like ordinary Windows executables
-while their real implementations run inside disposable Linux containers on
-Docker Desktop. Your Windows installation stays clean: no Python, no Node, no
-Terraform on the host — just one small Go binary, `cb.exe`.
+`dotnet`, `jq`, `yq`, `terraform` and `ffmpeg` look like ordinary Windows
+executables while their real implementations run inside disposable Linux
+containers on Docker Desktop. Your Windows installation stays clean: no
+Python, Node, .NET SDK or Terraform on the host — just one small Go binary,
+`cb.exe`.
 
 ```powershell
 PS D:\Work\demo> pip install requests
@@ -119,6 +120,7 @@ cb lock
 | `node`, `npm`, `npx` | `node:24-slim` | stateful (`node24` state group) |
 | `node22`, `npm22`, `npx22` | `node:22-slim` | stateful (`node22` state group) |
 | `go`, `gofmt` | `golang:1.24` | stateful (`go124` state group) |
+| `dotnet` | `mcr.microsoft.com/dotnet/sdk:10.0` | stateful (`dotnet10` state group) |
 | `jq` | `ghcr.io/jqlang/jq:latest` | stateless |
 | `yq` | `mikefarah/yq:latest` | stateless |
 | `terraform` | `hashicorp/terraform:latest` | stateless (`-chdir` path semantics) |
@@ -265,6 +267,31 @@ not a guarantee that every npm package is ABI-compatible with it. For packages
 whose native addons need a different Node ABI, `node22`/`npm22`/`npx22` are a
 second, independent Node-major runtime with their own `node22` state group,
 fully isolating project `node_modules`, the npm cache and the npm global prefix; upgrading an existing installation adds these profiles automatically, but they are not yet locked, so run `cb lock` or `cb update --all` before using them.
+
+## .NET SDK state
+
+`dotnet` uses Microsoft's .NET 10 LTS SDK image. NuGet packages, user-level
+NuGet configuration and global .NET tools persist in shared managed volumes;
+`/root/.dotnet/tools` is on the container `PATH`. Telemetry and first-run setup
+noise are disabled by the profile. NuGet package-source
+credentials and selected runtime/network controls are forwarded explicitly,
+while path-valued Windows settings such as `DOTNET_ROOT`, `DOTNET_CLI_HOME` and
+`NUGET_PACKAGES` are not.
+
+Project `bin` and `obj` directories deliberately remain in the host project
+tree instead of Docker volumes, so build output is visible to editors and
+other Windows processes. The SDK runs on Linux: framework-dependent IL remains
+portable, but native apphosts and self-contained publishes target Linux unless
+you explicitly select a Windows runtime identifier such as `-r win-x64`.
+
+`dotnet tool install --global TOOL` persists under `/root/.dotnet`; inspect it
+later with `dotnet tool list --global`. The executable is available inside the
+dotnet container, while creating a standalone Windows shim for it requires the
+future generic exposure support tracked by RM-26.
+
+Existing installations gain `dotnet` on `cb install`. An older lockfile does
+not include the SDK image, so run `cb update dotnet` (or regenerate the lock
+with `cb lock`) before first use in locked mode.
 
 ## Dynamic npm CLI exposure
 

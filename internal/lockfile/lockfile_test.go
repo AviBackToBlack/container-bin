@@ -89,6 +89,14 @@ func TestConfiguredImagesIncludesNode22(t *testing.T) {
 	}
 }
 
+func TestConfiguredImagesIncludesDotnetSDK(t *testing.T) {
+	got := ConfiguredImages(registry.Default())
+	const image = "mcr.microsoft.com/dotnet/sdk:10.0"
+	if !containsString(got, image) {
+		t.Fatalf("ConfiguredImages missing %q; got %v", image, got)
+	}
+}
+
 func containsString(xs []string, s string) bool {
 	for _, x := range xs {
 		if x == s {
