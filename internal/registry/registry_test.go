@@ -26,11 +26,11 @@ func TestParseDefaultRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(reg.Tools) != 20 {
-		t.Fatalf("expected 20 tools, got %d", len(reg.Tools))
+	if len(reg.Tools) != 21 {
+		t.Fatalf("expected 21 tools, got %d", len(reg.Tools))
 	}
-	if len(reg.ToolNames()) != 23 {
-		t.Fatalf("expected 23 invokable shim names, got %d", len(reg.ToolNames()))
+	if len(reg.ToolNames()) != 24 {
+		t.Fatalf("expected 24 invokable shim names, got %d", len(reg.ToolNames()))
 	}
 	jq := reg.Tools["jq"]
 	if jq.Provider != "stateless" || jq.Image != "ghcr.io/jqlang/jq:latest" {
@@ -156,7 +156,7 @@ func TestDefaultRegistryHasV06Tools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"python", "pip", "jq", "yq", "terraform", "ffmpeg", "node24", "npm24", "npx24", "go", "gofmt", "rustc", "cargo", "uv", "uvx"} {
+	for _, name := range []string{"python", "pip", "jq", "yq", "terraform", "ffmpeg", "node24", "npm24", "npx24", "go", "gofmt", "rustc", "cargo", "uv", "uvx", "dotnet"} {
 		if _, ok := reg.Tools[name]; !ok {
 			t.Fatalf("missing default tool %q", name)
 		}
@@ -173,7 +173,7 @@ func TestDefaultRegistryHasV06Tools(t *testing.T) {
 
 func TestDefaultToolSections(t *testing.T) {
 	sections := DefaultToolSections()
-	for _, name := range []string{"python", "yq", "terraform", "ffmpeg", "node24", "node22", "npm24", "npm22", "npx24", "npx22", "go", "gofmt", "rustc", "cargo", "uv", "uvx"} {
+	for _, name := range []string{"python", "yq", "terraform", "ffmpeg", "node24", "node22", "npm24", "npm22", "npx24", "npx22", "go", "gofmt", "rustc", "cargo", "uv", "uvx", "dotnet"} {
 		if !strings.Contains(sections[name], "[tools."+name+"]") {
 			t.Fatalf("bad section for %s: %q", name, sections[name])
 		}
@@ -624,6 +624,52 @@ func TestUVProfiles(t *testing.T) {
 	}
 }
 
+func TestDotnetProfile(t *testing.T) {
+	reg, err := ParseTOML(DefaultTOML)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dotnet := reg.Tools["dotnet"]
+	if dotnet.Image != "mcr.microsoft.com/dotnet/sdk:10.0" || dotnet.Provider != "stateful" || dotnet.StateGroup != "dotnet10" || !reflect.DeepEqual(dotnet.Command, []string{"dotnet"}) {
+		t.Fatalf("bad dotnet profile: %+v", dotnet)
+	}
+	wantVolumes := []string{
+		"nuget-packages:/root/.nuget/packages",
+		"nuget-config:/root/.nuget/NuGet",
+		"dotnet-home:/root/.dotnet",
+	}
+	if !reflect.DeepEqual(dotnet.SharedVolumes, wantVolumes) {
+		t.Fatalf("dotnet shared_volumes = %#v, want %#v", dotnet.SharedVolumes, wantVolumes)
+	}
+	if len(dotnet.ProjectVolumes) != 0 {
+		t.Fatalf("dotnet build output must stay host-visible, got project_volumes %#v", dotnet.ProjectVolumes)
+	}
+	for _, entry := range []string{
+		"DOTNET_CLI_HOME=/root",
+		"NUGET_PACKAGES=/root/.nuget/packages",
+		"DOTNET_CLI_TELEMETRY_OPTOUT=1",
+		"DOTNET_NOLOGO=1",
+		"DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1",
+		"PATH=/root/.dotnet/tools:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+	} {
+		if !containsString(dotnet.EnvSet, entry) {
+			t.Fatalf("dotnet env_set missing %q: %#v", entry, dotnet.EnvSet)
+		}
+	}
+	if !containsString(dotnet.EnvPrefixes, "NUGETPACKAGESOURCECREDENTIALS_") {
+		t.Fatalf("dotnet env_prefixes missing NuGet source credentials: %#v", dotnet.EnvPrefixes)
+	}
+	for _, pathVariable := range []string{"DOTNET_ROOT", "DOTNET_CLI_HOME", "NUGET_PACKAGES", "NUGET_HTTP_CACHE_PATH", "NUGET_PLUGIN_PATHS", "NUGET_CREDENTIALPROVIDERS_PATH", "MSBuildSDKsPath"} {
+		if containsString(dotnet.EnvNames, pathVariable) {
+			t.Fatalf("dotnet env allowlist must not include path-valued %q", pathVariable)
+		}
+	}
+	if len(dotnet.PathNext) != 0 || len(dotnet.PathEquals) != 0 || dotnet.PathLast {
+		t.Fatalf("dotnet must not force path semantics: %+v", dotnet)
+	}
+}
+
 // Node 24 is the default runtime, but it is not a guarantee that every npm
 // package is ABI-compatible with it. Node 22 is the supported LTS alternative,
 // with fully isolated state even though the logical volume names are identical.
@@ -1003,7 +1049,7 @@ func TestHostMountDefaultTOMLComment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(reg.Tools) != 20 {
-		t.Fatalf("expected 20 tools, got %d", len(reg.Tools))
+	if len(reg.Tools) != 21 {
+		t.Fatalf("expected 21 tools, got %d", len(reg.Tools))
 	}
 }

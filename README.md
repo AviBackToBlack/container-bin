@@ -4,10 +4,10 @@
 installing the runtimes on the host.**
 
 ContainerBin makes commands such as `python`, `pip`, `node`, `npm`, `npx`,
-`uv`, `uvx`, `go`, `cargo`, `rustc`, `jq`, `yq`, `terraform` and `ffmpeg` look like ordinary
+`uv`, `uvx`, `go`, `cargo`, `rustc`, `dotnet`, `jq`, `yq`, `terraform` and `ffmpeg` look like ordinary
 Windows executables while their real implementations run inside disposable
 Linux containers on Docker Desktop. Your Windows installation stays clean: no
-Python, Node, Go, Rust or uv toolchain on the host — just one small Go binary,
+Python, Node, Go, Rust, uv or .NET SDK on the host — just one small Go binary,
 `cb.exe`.
 
 ```powershell
@@ -125,6 +125,7 @@ cb lock
 | `rustc` | `rust:1.98.1-slim-bookworm` | stateless |
 | `cargo` | `rust:1.98.1-slim-bookworm` | stateful (`rust198` state group) |
 | `uv`, `uvx` | `ghcr.io/astral-sh/uv:0.12-python3.13-trixie-slim` | stateful (`uv012-py313` state group) |
+| `dotnet` | `mcr.microsoft.com/dotnet/sdk:10.0` | stateful (`dotnet10` state group) |
 | `jq` | `ghcr.io/jqlang/jq:latest` | stateless |
 | `yq` | `mikefarah/yq:latest` | stateless |
 | `terraform` | `hashicorp/terraform:latest` | stateless (`-chdir` path semantics) |
@@ -396,6 +397,31 @@ path-shaped arguments still receive the generic mapping.
 Existing installations gain `uv` and `uvx` on `cb install`. An older lockfile
 does not include their image, so run `cb update uv` (or regenerate the lock with
 `cb lock`) before first use in locked mode.
+
+## .NET SDK state
+
+`dotnet` uses Microsoft's .NET 10 LTS SDK image. NuGet packages, user-level
+NuGet configuration and global .NET tools persist in shared managed volumes;
+`/root/.dotnet/tools` is on the container `PATH`. Telemetry and first-run setup
+noise are disabled by the profile. NuGet package-source
+credentials and selected runtime/network controls are forwarded explicitly,
+while path-valued Windows settings such as `DOTNET_ROOT`, `DOTNET_CLI_HOME` and
+`NUGET_PACKAGES` are not.
+
+Project `bin` and `obj` directories deliberately remain in the host project
+tree instead of Docker volumes, so build output is visible to editors and
+other Windows processes. The SDK runs on Linux: framework-dependent IL remains
+portable, but native apphosts and self-contained publishes target Linux unless
+you explicitly select a Windows runtime identifier such as `-r win-x64`.
+
+`dotnet tool install --global TOOL` persists under `/root/.dotnet`; inspect it
+later with `dotnet tool list --global`. The executable is available inside the
+dotnet container, while creating a standalone Windows shim for it requires the
+future generic exposure support tracked by RM-26.
+
+Existing installations gain `dotnet` on `cb install`. An older lockfile does
+not include the SDK image, so run `cb update dotnet` (or regenerate the lock
+with `cb lock`) before first use in locked mode.
 
 ## Dynamic global CLI exposure
 

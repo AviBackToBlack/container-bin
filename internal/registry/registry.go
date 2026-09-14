@@ -287,6 +287,19 @@ env_set = ["UV_CACHE_DIR=/root/.cache/uv", "UV_TOOL_DIR=/cb/uv-tools", "UV_TOOL_
 env_prefixes = ["UV_INDEX_"]
 env_names = ["UV_INDEX", "UV_DEFAULT_INDEX", "UV_EXTRA_INDEX_URL", "UV_NO_INDEX", "UV_NATIVE_TLS", "UV_OFFLINE", "UV_NO_CACHE", "UV_NO_PROGRESS", "UV_COLOR", "UV_HTTP_TIMEOUT", "UV_HTTP_RETRIES", "UV_CONCURRENT_DOWNLOADS", "UV_CONCURRENT_BUILDS", "UV_CONCURRENT_INSTALLS", "UV_INSECURE_HOST", "UV_KEYRING_PROVIDER", "UV_PRERELEASE", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"]
 path_equals = ["--project", "--directory", "--config-file", "--cache-dir"]
+
+[tools.dotnet]
+image = "mcr.microsoft.com/dotnet/sdk:10.0"
+provider = "stateful"
+command = ["dotnet"]
+state_group = "dotnet10"
+project_markers = ["global.json", "Directory.Build.props", "Directory.Build.targets", "Directory.Packages.props", "NuGet.Config", "nuget.config", ".git"]
+shared_volumes = ["nuget-packages:/root/.nuget/packages", "nuget-config:/root/.nuget/NuGet", "dotnet-home:/root/.dotnet"]
+env_set = ["DOTNET_CLI_HOME=/root", "NUGET_PACKAGES=/root/.nuget/packages", "DOTNET_CLI_TELEMETRY_OPTOUT=1", "DOTNET_NOLOGO=1", "DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1", "PATH=/root/.dotnet/tools:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"]
+env_prefixes = ["NUGETPACKAGESOURCECREDENTIALS_"]
+env_names = ["DOTNET_ENVIRONMENT", "ASPNETCORE_ENVIRONMENT", "DOTNET_SYSTEM_GLOBALIZATION_INVARIANT", "DOTNET_SYSTEM_NET_HTTP_USESOCKETSHTTPHANDLER", "DOTNET_ROLL_FORWARD", "DOTNET_ROLL_FORWARD_TO_PRERELEASE", "DOTNET_EnableDiagnostics", "NUGET_XMLDOC_MODE", "NUGET_CERT_REVOCATION_MODE", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"]
+# No forced path rules: arguments after commands such as dotnet run -- belong
+# to the child program. Absolute and explicit relative paths use the general mapper.
 `
 
 func Default() Registry {
