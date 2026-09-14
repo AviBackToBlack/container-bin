@@ -38,7 +38,7 @@ func main() {
 	}
 
 	if !isManagementInvocation(invoked) {
-		tool, ok := reg.Tools[invoked]
+		tool, _, ok := reg.Resolve(invoked)
 		if !ok {
 			fatalf("no tool profile for %q (registry: %s)", invoked, cfgPath)
 		}
@@ -102,6 +102,20 @@ func main() {
 		}
 	case "list":
 		registry.ListTools(reg, cfgPath)
+	case "default":
+		if len(os.Args) > 2 && os.Args[2] == "set" {
+			if err := withMutationLock(cfgPath, func() error {
+				fresh, _, err := registry.Load()
+				if err != nil {
+					return err
+				}
+				return cli.Default(fresh, cfgPath, os.Args[2:])
+			}); err != nil {
+				fatalf("default: %v", err)
+			}
+		} else if err := cli.Default(reg, cfgPath, os.Args[2:]); err != nil {
+			fatalf("default: %v", err)
+		}
 	case "trace":
 		if err := cli.Trace(reg, os.Args[2:]); err != nil {
 			fatalf("trace: %v", err)
@@ -233,6 +247,7 @@ Commands:
   cb restore   validate/restore a backup (dry-run unless --apply; state is opt-in)
   cb self-test [--json] [--release] run offline end-to-end compatibility checks
   cb list      list configured tool profiles
+  cb default   list defaults; "cb default set FAMILY VERSION" switches a family
   cb trace     show raw/normalized/mapped argv for a tool without running it
   cb env       show project root and Python environment selected for cwd
   cb state     list container-bin Docker volumes and mark current/shared state

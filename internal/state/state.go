@@ -195,8 +195,14 @@ func GC(reg registry.Registry, args []string) error {
 		return err
 	}
 	candidates := map[string]string{}
+	resolvedFilter := ""
+	if filter != "" {
+		if _, resolved, ok := reg.Resolve(filter); ok {
+			resolvedFilter = resolved
+		}
+	}
 	for _, t := range reg.Tools {
-		if filter != "" && filter != t.Name && filter != t.StateGroup && !(filter == "python" && t.Provider == "python") {
+		if filter != "" && filter != t.Name && resolvedFilter != t.Name && filter != t.StateGroup && !(filter == "python" && t.Provider == "python") {
 			continue
 		}
 		switch t.Provider {

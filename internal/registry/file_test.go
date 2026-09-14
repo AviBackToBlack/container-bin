@@ -154,10 +154,13 @@ provider = "stateless"
 	if _, ok := reg.Tools["jq2"]; !ok {
 		t.Fatal("custom jq2 was lost")
 	}
-	for _, name := range []string{"python3", "pip", "pip3", "jq", "yq", "terraform", "ffmpeg", "node", "npm", "npx", "go", "gofmt"} {
+	for _, name := range []string{"python3", "pip", "pip3", "jq", "yq", "terraform", "ffmpeg", "node24", "npm24", "npx24", "go", "gofmt"} {
 		if _, ok := reg.Tools[name]; !ok {
 			t.Fatalf("missing migrated tool %q", name)
 		}
+	}
+	if _, resolved, ok := reg.Resolve("node"); !ok || resolved != "node24" {
+		t.Fatalf("node alias resolved to %q, ok=%v", resolved, ok)
 	}
 }
 
@@ -211,11 +214,21 @@ provider = "stateless"
 // untouched.
 func TestAppendMissingDefaultToolsUpgradesPreRM11(t *testing.T) {
 	sections := DefaultToolSections()
-	preRM11 := []string{"python", "python3", "pip", "pip3", "jq", "yq", "terraform", "ffmpeg", "node", "npm", "npx", "go", "gofmt"}
+	preRM11 := []string{"python", "python3", "pip", "pip3", "jq", "yq", "terraform", "ffmpeg", "go", "gofmt"}
 	var b strings.Builder
 	b.WriteString("schema_version = 1\n")
 	for _, name := range preRM11 {
 		b.WriteString(sections[name])
+	}
+	for _, pair := range [][2]string{{"node24", "node"}, {"npm24", "npm"}, {"npx24", "npx"}} {
+		section := sections[pair[0]]
+		section = strings.Replace(section, "[tools."+pair[0]+"]", "[tools."+pair[1]+"]", 1)
+		for _, key := range []string{"default_family", "default_version", "default_alias"} {
+			start := strings.Index(section, key+" = ")
+			end := strings.Index(section[start:], "\n")
+			section = section[:start] + section[start+end+1:]
+		}
+		b.WriteString(section)
 	}
 	b.WriteString("\n[tools.jq2]\nimage = \"ghcr.io/jqlang/jq:latest\"\nprovider = \"stateless\"\n")
 
@@ -243,14 +256,76 @@ func TestAppendMissingDefaultToolsUpgradesPreRM11(t *testing.T) {
 			t.Fatalf("missing upgraded tool %q", name)
 		}
 	}
-	if reg.Tools["node"].Image != "node:24-slim" {
-		t.Fatalf("existing node profile was modified: %q", reg.Tools["node"].Image)
+	if reg.Tools["node24"].Image != "node:24-slim" {
+		t.Fatalf("migrated node24 profile has image %q", reg.Tools["node24"].Image)
 	}
 	if reg.Tools["node22"].Image != "node:22-slim" {
 		t.Fatalf("bad node22 image: %q", reg.Tools["node22"].Image)
 	}
 	if !strings.Contains(string(data), "# Added by container-bin dev") {
 		t.Fatal("upgrade comment missing")
+	}
+	if reg.SchemaVersion != 2 {
+		t.Fatalf("schema = %d, want 2", reg.SchemaVersion)
+	}
+	if _, resolved, ok := reg.Resolve("npm"); !ok || resolved != "npm24" {
+		t.Fatalf("npm alias resolved to %q, ok=%v", resolved, ok)
+	}
+}
+
+func TestSetDefaultVersionRewritesOnlySelection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "container-bin.toml")
+	if err := os.WriteFile(path, []byte(DefaultTOML), 0644); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SetDefaultVersion(path, "NODE", "22"); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := strings.Replace(string(before), "version = \"24\"", "version = \"22\"", 1)
+	if string(after) != want {
+		t.Fatal("default update changed content beyond the selected version line")
+	}
+	reg, err := ParseTOML(string(after))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, alias := range []string{"node", "npm", "npx"} {
+		if _, resolved, ok := reg.Resolve(alias); !ok || resolved != alias+"22" {
+			t.Fatalf("%s resolved to %q, ok=%v", alias, resolved, ok)
+		}
+	}
+	if err := SetDefaultVersion(path, "node", "26"); err == nil || !strings.Contains(err.Error(), "available: 22, 24") {
+		t.Fatalf("unexpected unavailable-version error: %v", err)
+	}
+}
+
+func TestV1UpgradeRefusesCustomizedLegacyNode(t *testing.T) {
+	sections := DefaultToolSections()
+	legacy := strings.Replace(sections["node24"], "[tools.node24]", "[tools.node]", 1)
+	legacy = strings.ReplaceAll(legacy, "default_family = \"node\"\n", "")
+	legacy = strings.ReplaceAll(legacy, "default_version = \"24\"\n", "")
+	legacy = strings.ReplaceAll(legacy, "default_alias = \"node\"\n", "")
+	legacy = strings.Replace(legacy, "image = \"node:24-slim\"", "image = \"node:20-slim\"", 1)
+	path := filepath.Join(t.TempDir(), "container-bin.toml")
+	if err := os.WriteFile(path, []byte("schema_version = 1\n"+legacy), 0644); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(path)
+	err := AppendMissingDefaultTools(path, "dev")
+	if err == nil || !strings.Contains(err.Error(), "customized [tools.node]") {
+		t.Fatalf("error = %v", err)
+	}
+	after, _ := os.ReadFile(path)
+	if string(after) != string(before) {
+		t.Fatal("failed migration modified the registry")
 	}
 }
 

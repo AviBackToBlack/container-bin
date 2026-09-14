@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -45,6 +46,9 @@ func AppendMissingDefaultTools(path, version string) error {
 	if err != nil {
 		return err
 	}
+	if reg.SchemaVersion == 1 {
+		return upgradeV1Registry(path, data, reg, version)
+	}
 	defaults := DefaultToolSections()
 	var names []string
 	for name := range defaults {
@@ -52,20 +56,153 @@ func AppendMissingDefaultTools(path, version string) error {
 			names = append(names, name)
 		}
 	}
-	if len(names) == 0 {
+	familySections := DefaultFamilySections()
+	var families []string
+	for family := range familySections {
+		if _, exists := reg.Defaults[family]; !exists {
+			families = append(families, family)
+		}
+	}
+	if len(names) == 0 && len(families) == 0 {
 		return nil
 	}
 	sort.Strings(names)
+	sort.Strings(families)
 	var b strings.Builder
 	b.Write(data)
 	if len(data) > 0 && data[len(data)-1] != '\n' {
 		b.WriteByte('\n')
 	}
 	b.WriteString("\n# Added by container-bin " + version + "\n")
+	for _, family := range families {
+		b.WriteString(familySections[family])
+	}
 	for _, name := range names {
 		b.WriteString(defaults[name])
 	}
+	if _, err := ParseTOML(b.String()); err != nil {
+		return fmt.Errorf("refusing registry upgrade: %w", err)
+	}
 	return atomicio.WriteFile(path, []byte(b.String()), 0644)
+}
+
+type v1DefaultMigration struct {
+	oldName string
+	newName string
+	family  string
+	version string
+	alias   string
+}
+
+var v1NodeMigrations = []v1DefaultMigration{
+	{oldName: "node", newName: "node24", family: "node", version: "24", alias: "node"},
+	{oldName: "npm", newName: "npm24", family: "node", version: "24", alias: "npm"},
+	{oldName: "npx", newName: "npx24", family: "node", version: "24", alias: "npx"},
+	{oldName: "node22", newName: "node22", family: "node", version: "22", alias: "node"},
+	{oldName: "npm22", newName: "npm22", family: "node", version: "22", alias: "npm"},
+	{oldName: "npx22", newName: "npx22", family: "node", version: "22", alias: "npx"},
+}
+
+// upgradeV1Registry introduces versioned Node 24 profiles and explicit alias
+// metadata in one atomic rewrite. Only semantically stock built-ins are
+// migrated: a customized legacy profile may not actually represent Node 24,
+// so assigning it a version label would violate the registry's fail-closed
+// contract.
+func upgradeV1Registry(path string, data []byte, reg Registry, cbVersion string) error {
+	desired := Default()
+	migrations := map[string]v1DefaultMigration{}
+	existingNames := map[string]bool{}
+	for name := range reg.Tools {
+		existingNames[name] = true
+	}
+	for _, migration := range v1NodeMigrations {
+		tool, exists := reg.Tools[migration.oldName]
+		if !exists {
+			continue
+		}
+		if migration.oldName != migration.newName {
+			if _, collision := reg.Tools[migration.newName]; collision {
+				return fmt.Errorf("cannot migrate [tools.%s]: [tools.%s] already exists; reconcile the profiles manually, then rerun cb install", migration.oldName, migration.newName)
+			}
+		}
+		want := desired.Tools[migration.newName]
+		tool.Name, want.Name = "", ""
+		want.DefaultFamily, want.DefaultVersion, want.DefaultAlias = "", "", ""
+		if !reflect.DeepEqual(tool, want) {
+			return fmt.Errorf("cannot automatically version customized [tools.%s]; rename it to an explicit versioned profile and add default alias metadata manually, then rerun cb install", migration.oldName)
+		}
+		migrations[migration.oldName] = migration
+		delete(existingNames, migration.oldName)
+		existingNames[migration.newName] = true
+	}
+
+	newline := "\n"
+	if strings.Contains(string(data), "\r\n") {
+		newline = "\r\n"
+	}
+	var out strings.Builder
+	foundSchema := false
+	for _, raw := range strings.SplitAfter(string(data), "\n") {
+		line := strings.TrimSuffix(raw, "\n")
+		line = strings.TrimSuffix(line, "\r")
+		trim := strings.TrimSpace(line)
+		if strings.HasPrefix(trim, "schema_version") {
+			foundSchema = true
+			out.WriteString("schema_version = 2" + newline)
+			continue
+		}
+		if strings.HasPrefix(trim, "[tools.") && strings.HasSuffix(trim, "]") {
+			name := strings.ToLower(strings.TrimSuffix(strings.TrimPrefix(trim, "[tools."), "]"))
+			if migration, ok := migrations[name]; ok {
+				out.WriteString("[tools." + migration.newName + "]" + newline)
+				out.WriteString("default_family = \"" + migration.family + "\"" + newline)
+				out.WriteString("default_version = \"" + migration.version + "\"" + newline)
+				out.WriteString("default_alias = \"" + migration.alias + "\"" + newline)
+				continue
+			}
+		}
+		out.WriteString(raw)
+	}
+	if !foundSchema {
+		body := out.String()
+		out.Reset()
+		out.WriteString("schema_version = 2" + newline)
+		out.WriteString(body)
+		if len(body) > 0 && !strings.HasSuffix(body, "\n") {
+			out.WriteString(newline)
+		}
+	}
+	if out.Len() > 0 {
+		text := out.String()
+		if !strings.HasSuffix(text, "\n") {
+			out.WriteString(newline)
+		}
+	}
+	out.WriteString(newline + "# Added by container-bin " + cbVersion + newline)
+	familySections := DefaultFamilySections()
+	var families []string
+	for family := range familySections {
+		families = append(families, family)
+	}
+	sort.Strings(families)
+	for _, family := range families {
+		out.WriteString(strings.ReplaceAll(familySections[family], "\n", newline))
+	}
+	sections := DefaultToolSections()
+	var missing []string
+	for name := range sections {
+		if !existingNames[name] {
+			missing = append(missing, name)
+		}
+	}
+	sort.Strings(missing)
+	for _, name := range missing {
+		out.WriteString(strings.ReplaceAll(sections[name], "\n", newline))
+	}
+	if _, err := ParseTOML(out.String()); err != nil {
+		return fmt.Errorf("refusing registry v1 to v2 upgrade: %w", err)
+	}
+	return atomicio.WriteFile(path, []byte(out.String()), 0644)
 }
 
 func Load() (Registry, string, error) {
@@ -91,6 +228,65 @@ func Load() (Registry, string, error) {
 	}
 	reg, err := ParseTOML(string(data))
 	return reg, path, err
+}
+
+func SetDefaultVersion(path, family, version string) error {
+	family, version = strings.ToLower(family), strings.ToLower(version)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	reg, err := ParseTOML(string(data))
+	if err != nil {
+		return err
+	}
+	info, ok := reg.DefaultInfo(family)
+	if !ok {
+		return fmt.Errorf("default family %q not found", family)
+	}
+	available := false
+	for _, candidate := range info.Versions {
+		if candidate == version {
+			available = true
+			break
+		}
+	}
+	if !available {
+		return fmt.Errorf("version %q is not configured for default family %q (available: %s)", version, family, strings.Join(info.Versions, ", "))
+	}
+	if info.Selected == version {
+		return nil
+	}
+
+	newline := "\n"
+	if strings.Contains(string(data), "\r\n") {
+		newline = "\r\n"
+	}
+	var out strings.Builder
+	inFamily, replaced := false, false
+	for _, raw := range strings.SplitAfter(string(data), "\n") {
+		line := strings.TrimSuffix(strings.TrimSuffix(raw, "\n"), "\r")
+		trim := strings.TrimSpace(line)
+		if strings.HasPrefix(trim, "[") && strings.HasSuffix(trim, "]") {
+			inFamily = strings.EqualFold(trim, "[defaults."+family+"]")
+		}
+		if inFamily && strings.HasPrefix(trim, "version") {
+			key := strings.TrimSpace(strings.SplitN(trim, "=", 2)[0])
+			if key == "version" {
+				out.WriteString("version = \"" + version + "\"" + newline)
+				replaced = true
+				continue
+			}
+		}
+		out.WriteString(raw)
+	}
+	if !replaced {
+		return fmt.Errorf("default family %q has no writable version key", family)
+	}
+	if _, err := ParseTOML(out.String()); err != nil {
+		return fmt.Errorf("refusing default update: %w", err)
+	}
+	return atomicio.WriteFile(path, []byte(out.String()), 0644)
 }
 
 func validateBackup(bak string) error {
@@ -142,11 +338,7 @@ func InstallShims(reg Registry) error {
 		return err
 	}
 	dir := filepath.Dir(exe)
-	names := make([]string, 0, len(reg.Tools))
-	for name := range reg.Tools {
-		names = append(names, name)
-	}
-	sort.Strings(names)
+	names := reg.ToolNames()
 	for _, name := range names {
 		dst := filepath.Join(dir, name+".exe")
 		mode, err := installShim(exe, dst, os.Link, copyFile, os.Rename)
