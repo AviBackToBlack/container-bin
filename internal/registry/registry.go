@@ -238,6 +238,25 @@ shared_volumes = ["gomodcache:/go/pkg/mod", "gobuild:/root/.cache/go-build", "go
 # file operands are already mapped by the general path-shape rules.
 # Do not allowlist path-valued variables; Windows paths are meaningless inside the Linux container
 env_names = ["GOFLAGS", "GOPROXY", "GONOPROXY", "GOPRIVATE", "GOSUMDB", "GONOSUMDB", "GOINSECURE", "GOOS", "GOARCH", "GOARM", "CGO_ENABLED", "GOTOOLCHAIN", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"]
+
+[tools.rustc]
+image = "rust:1.98.1-slim-bookworm"
+provider = "stateless"
+command = ["rustc"]
+project_markers = ["Cargo.toml", "rust-toolchain.toml", "rust-toolchain", ".git"]
+
+[tools.cargo]
+image = "rust:1.98.1-slim-bookworm"
+provider = "stateful"
+command = ["cargo"]
+state_group = "rust198"
+project_markers = ["Cargo.toml", "rust-toolchain.toml", "rust-toolchain", ".git"]
+shared_volumes = ["registry:/usr/local/cargo/registry", "git:/usr/local/cargo/git", "global:/cb/cargo-global"]
+env_set = ["CARGO_INSTALL_ROOT=/cb/cargo-global", "PATH=/cb/cargo-global/bin:/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"]
+env_prefixes = ["CARGO_REGISTRIES_"]
+env_names = ["CARGO_NET_OFFLINE", "CARGO_TERM_COLOR", "CARGO_HTTP_TIMEOUT", "CARGO_HTTP_MULTIPLEXING", "CARGO_HTTP_LOW_SPEED_LIMIT", "RUST_BACKTRACE", "RUST_LOG", "RUSTFLAGS", "RUSTDOCFLAGS", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"]
+path_next = ["--target-dir"]
+path_equals = ["--target-dir"]
 `
 
 func Default() Registry {

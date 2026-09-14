@@ -26,11 +26,11 @@ func TestParseDefaultRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(reg.Tools) != 16 {
-		t.Fatalf("expected 16 tools, got %d", len(reg.Tools))
+	if len(reg.Tools) != 18 {
+		t.Fatalf("expected 18 tools, got %d", len(reg.Tools))
 	}
-	if len(reg.ToolNames()) != 19 {
-		t.Fatalf("expected 19 invokable shim names, got %d", len(reg.ToolNames()))
+	if len(reg.ToolNames()) != 21 {
+		t.Fatalf("expected 21 invokable shim names, got %d", len(reg.ToolNames()))
 	}
 	jq := reg.Tools["jq"]
 	if jq.Provider != "stateless" || jq.Image != "ghcr.io/jqlang/jq:latest" {
@@ -156,7 +156,7 @@ func TestDefaultRegistryHasV06Tools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"python", "pip", "jq", "yq", "terraform", "ffmpeg", "node24", "npm24", "npx24", "go", "gofmt"} {
+	for _, name := range []string{"python", "pip", "jq", "yq", "terraform", "ffmpeg", "node24", "npm24", "npx24", "go", "gofmt", "rustc", "cargo"} {
 		if _, ok := reg.Tools[name]; !ok {
 			t.Fatalf("missing default tool %q", name)
 		}
@@ -173,7 +173,7 @@ func TestDefaultRegistryHasV06Tools(t *testing.T) {
 
 func TestDefaultToolSections(t *testing.T) {
 	sections := DefaultToolSections()
-	for _, name := range []string{"python", "yq", "terraform", "ffmpeg", "node24", "node22", "npm24", "npm22", "npx24", "npx22", "go", "gofmt"} {
+	for _, name := range []string{"python", "yq", "terraform", "ffmpeg", "node24", "node22", "npm24", "npm22", "npx24", "npx22", "go", "gofmt", "rustc", "cargo"} {
 		if !strings.Contains(sections[name], "[tools."+name+"]") {
 			t.Fatalf("bad section for %s: %q", name, sections[name])
 		}
@@ -495,6 +495,62 @@ func TestGoProfilesDeclareNoForcedPathSemantics(t *testing.T) {
 	}
 	if len(gofmtTool.PathNext) != 0 || len(gofmtTool.PathEquals) != 0 {
 		t.Fatalf("gofmt must not declare forced path semantics: %+v", gofmtTool)
+	}
+}
+
+func TestRustCargoProfiles(t *testing.T) {
+	reg, err := ParseTOML(DefaultTOML)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const image = "rust:1.98.1-slim-bookworm"
+	rustc := reg.Tools["rustc"]
+	if rustc.Image != image || rustc.Provider != "stateless" || !reflect.DeepEqual(rustc.Command, []string{"rustc"}) {
+		t.Fatalf("bad rustc profile: %+v", rustc)
+	}
+
+	cargo := reg.Tools["cargo"]
+	if cargo.Image != image || cargo.Provider != "stateful" || cargo.StateGroup != "rust198" || !reflect.DeepEqual(cargo.Command, []string{"cargo"}) {
+		t.Fatalf("bad cargo profile: %+v", cargo)
+	}
+	wantVolumes := []string{
+		"registry:/usr/local/cargo/registry",
+		"git:/usr/local/cargo/git",
+		"global:/cb/cargo-global",
+	}
+	if !reflect.DeepEqual(cargo.SharedVolumes, wantVolumes) {
+		t.Fatalf("cargo shared_volumes = %#v, want %#v", cargo.SharedVolumes, wantVolumes)
+	}
+	if len(cargo.ProjectVolumes) != 0 {
+		t.Fatalf("cargo has unexpected project_volumes: %#v", cargo.ProjectVolumes)
+	}
+
+	wantMarkers := []string{"Cargo.toml", "rust-toolchain.toml", "rust-toolchain", ".git"}
+	for _, tool := range []Tool{rustc, cargo} {
+		if !reflect.DeepEqual(tool.ProjectMarkers, wantMarkers) {
+			t.Fatalf("%s project_markers = %#v, want %#v", tool.Name, tool.ProjectMarkers, wantMarkers)
+		}
+	}
+	wantPathOptions := []string{"--target-dir"}
+	if !reflect.DeepEqual(cargo.PathNext, wantPathOptions) || !reflect.DeepEqual(cargo.PathEquals, wantPathOptions) {
+		t.Fatalf("bad cargo path semantics: next=%#v equals=%#v", cargo.PathNext, cargo.PathEquals)
+	}
+	for _, entry := range []string{
+		"CARGO_INSTALL_ROOT=/cb/cargo-global",
+		"PATH=/cb/cargo-global/bin:/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+	} {
+		if !containsString(cargo.EnvSet, entry) {
+			t.Fatalf("cargo env_set missing %q: %#v", entry, cargo.EnvSet)
+		}
+	}
+	if !containsString(cargo.EnvPrefixes, "CARGO_REGISTRIES_") {
+		t.Fatalf("cargo env_prefixes missing CARGO_REGISTRIES_: %#v", cargo.EnvPrefixes)
+	}
+	for _, pathVariable := range []string{"CARGO_HOME", "CARGO_TARGET_DIR", "RUSTUP_HOME", "RUSTC_WRAPPER"} {
+		if containsString(cargo.EnvNames, pathVariable) {
+			t.Fatalf("cargo env allowlist must not include path-valued %q", pathVariable)
+		}
 	}
 }
 
@@ -877,7 +933,7 @@ func TestHostMountDefaultTOMLComment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(reg.Tools) != 16 {
-		t.Fatalf("expected 16 tools, got %d", len(reg.Tools))
+	if len(reg.Tools) != 18 {
+		t.Fatalf("expected 18 tools, got %d", len(reg.Tools))
 	}
 }

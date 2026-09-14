@@ -154,7 +154,7 @@ provider = "stateless"
 	if _, ok := reg.Tools["jq2"]; !ok {
 		t.Fatal("custom jq2 was lost")
 	}
-	for _, name := range []string{"python3", "pip", "pip3", "jq", "yq", "terraform", "ffmpeg", "node24", "npm24", "npx24", "go", "gofmt"} {
+	for _, name := range []string{"python3", "pip", "pip3", "jq", "yq", "terraform", "ffmpeg", "node24", "npm24", "npx24", "go", "gofmt", "rustc", "cargo"} {
 		if _, ok := reg.Tools[name]; !ok {
 			t.Fatalf("missing migrated tool %q", name)
 		}
@@ -209,9 +209,8 @@ provider = "stateless"
 	}
 }
 
-// A pre-RM-11 registry (all built-in tools except the node22 trio) should be
-// upgraded to include node22/npm22/npx22, while existing sections are left
-// untouched.
+// A pre-RM-11 registry should be upgraded with every later default profile,
+// while existing sections are left untouched.
 func TestAppendMissingDefaultToolsUpgradesPreRM11(t *testing.T) {
 	sections := DefaultToolSections()
 	preRM11 := []string{"python", "python3", "pip", "pip3", "jq", "yq", "terraform", "ffmpeg", "go", "gofmt"}
@@ -251,7 +250,7 @@ func TestAppendMissingDefaultToolsUpgradesPreRM11(t *testing.T) {
 	if _, ok := reg.Tools["jq2"]; !ok {
 		t.Fatal("custom jq2 was lost")
 	}
-	for _, name := range []string{"node22", "npm22", "npx22"} {
+	for _, name := range []string{"node22", "npm22", "npx22", "rustc", "cargo"} {
 		if _, ok := reg.Tools[name]; !ok {
 			t.Fatalf("missing upgraded tool %q", name)
 		}
