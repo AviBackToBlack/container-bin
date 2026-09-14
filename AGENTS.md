@@ -13,6 +13,14 @@ ContainerBin provides Windows shims that execute development tools inside Docker
 - Preserve backwards compatibility for existing shim names and command-line behavior unless a change is explicitly intentional and documented.
 - Keep the core binary dependency surface minimal. New runtime dependencies require a strong justification.
 
+## ContainerBin-backed tool invocation on Windows
+
+- Treat an inherited shell working directory as untrusted. Set the intended project directory and invoke the shim in the same shell execution, or configure the launcher process's working directory explicitly.
+- Use absolute Windows paths for file arguments when project-relative state is not required. An absolute argument does not select the project root; tools that use project-scoped state still require the intended project working directory.
+- Never rely on `Set-Location` or `cd` from an earlier, separate shell/tool call.
+- On a file-not-found or unexpected-mount result, capture `Get-Location` and run `cb trace TOOL ARGS...` from the same directory before changing `PATH` or installing a native runtime.
+- Do not search for or guess the intended file. Fail closed and report the CWD, requested path, and trace result.
+
 ## Safety and supply chain
 
 - Do not commit credentials, local secrets, tokens, or machine-specific private configuration.
