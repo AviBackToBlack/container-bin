@@ -48,7 +48,8 @@ readable, and dangerous to let others edit.
   as are versioned management-binary names beginning with `cb-v` plus a digit.
   Names such as `cb-vault` that lack that version digit remain available to
   registered tools. The same validation applies to binaries discovered from
-  the npm global prefix (which are untrusted input).
+  npm or Go global stores (which are untrusted input). Case-colliding names
+  fail closed because Windows shims cannot represent both safely.
 - **Conservative deletion.** `cb gc` is dry-run by default, deletes only
   explicitly selected current-project state with `--apply`, and only considers
   a volume an orphan when *its own labels* record a project path that no
