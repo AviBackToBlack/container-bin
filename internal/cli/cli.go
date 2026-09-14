@@ -598,7 +598,11 @@ func Restore(cfgPath string, args []string) error {
 
 func Lock(reg registry.Registry, cfgPath string, args []string) error {
 	path := lockfile.PathFor(cfgPath)
-	if len(args) == 1 && args[0] == "--check" {
+	check, localTools, err := parseLockArgs(args)
+	if err != nil {
+		return err
+	}
+	if check {
 		lf, err := lockfile.Load(path)
 		if err != nil {
 			return err
@@ -628,13 +632,23 @@ func Lock(reg registry.Registry, cfgPath string, args []string) error {
 		fmt.Printf("lock OK: %s\n", path)
 		return nil
 	}
-	if len(args) != 0 {
-		return errors.New("usage: cb lock [--check]")
+	localImages := map[string]bool{}
+	for name := range localTools {
+		t, ok := reg.Tools[name]
+		if !ok {
+			return fmt.Errorf("tool %q not found", name)
+		}
+		localImages[t.Image] = true
 	}
 	lf := &lockfile.LockFile{Version: 1, Images: map[string]lockfile.LockEntry{}}
 	for _, image := range lockfile.ConfiguredImages(reg) {
 		fmt.Printf("locking  %s\n", image)
-		e, err := lockfile.ResolveImage(image, true)
+		var e lockfile.LockEntry
+		if localImages[image] {
+			e, err = lockfile.ResolveLocalImage(image)
+		} else {
+			e, err = lockfile.ResolveRepositoryImage(image)
+		}
 		if err != nil {
 			return err
 		}
@@ -648,9 +662,30 @@ func Lock(reg registry.Registry, cfgPath string, args []string) error {
 	return nil
 }
 
+func parseLockArgs(args []string) (bool, map[string]bool, error) {
+	localTools := map[string]bool{}
+	if len(args) == 0 {
+		return false, localTools, nil
+	}
+	if len(args) == 1 && args[0] == "--check" {
+		return true, localTools, nil
+	}
+	if len(args)%2 != 0 {
+		return false, nil, errors.New("usage: cb lock [--check] | cb lock [--local TOOL ...]")
+	}
+	for i := 0; i < len(args); i += 2 {
+		if args[i] != "--local" || args[i+1] == "" || strings.HasPrefix(args[i+1], "-") {
+			return false, nil, errors.New("usage: cb lock [--check] | cb lock [--local TOOL ...]")
+		}
+		localTools[strings.ToLower(args[i+1])] = true
+	}
+	return false, localTools, nil
+}
+
 func Update(reg registry.Registry, cfgPath string, args []string) error {
-	if len(args) != 1 {
-		return errors.New("usage: cb update TOOL | cb update --all")
+	target, mode, err := parseUpdateArgs(args)
+	if err != nil {
+		return err
 	}
 	path := lockfile.PathFor(cfgPath)
 	lf, err := lockfile.Load(path)
@@ -661,10 +696,10 @@ func Update(reg registry.Registry, cfgPath string, args []string) error {
 		lf = &lockfile.LockFile{Version: 1, Images: map[string]lockfile.LockEntry{}}
 	}
 	var images []string
-	if args[0] == "--all" {
+	if target == "--all" {
 		images = lockfile.ConfiguredImages(reg)
 	} else {
-		name := strings.ToLower(args[0])
+		name := strings.ToLower(target)
 		t, ok := reg.Tools[name]
 		if !ok {
 			return fmt.Errorf("tool %q not found", name)
@@ -679,7 +714,12 @@ func Update(reg registry.Registry, cfgPath string, args []string) error {
 		seen[image] = true
 		old := lf.Images[image]
 		fmt.Printf("updating %s\n", image)
-		e, err := lockfile.ResolveImage(image, true)
+		var e lockfile.LockEntry
+		if mode == "local" || (mode == "" && lockfile.IsLocalResolved(old.Resolved)) {
+			e, err = lockfile.ResolveLocalImage(image)
+		} else {
+			e, err = lockfile.ResolveRepositoryImage(image)
+		}
 		if err != nil {
 			return err
 		}
@@ -697,6 +737,16 @@ func Update(reg registry.Registry, cfgPath string, args []string) error {
 	}
 	fmt.Printf("lockfile: %s\n", path)
 	return nil
+}
+
+func parseUpdateArgs(args []string) (target, mode string, err error) {
+	if len(args) == 1 && args[0] != "--local" && args[0] != "--registry" {
+		return args[0], "", nil
+	}
+	if len(args) == 2 && (args[0] == "--local" || args[0] == "--registry") && args[1] != "" && args[1] != "--all" && !strings.HasPrefix(args[1], "-") {
+		return args[1], strings.TrimPrefix(args[0], "--"), nil
+	}
+	return "", "", errors.New("usage: cb update TOOL | cb update --all | cb update --local TOOL | cb update --registry TOOL")
 }
 
 // Install creates or upgrades the registry file and reconciles the shim set

@@ -17,6 +17,62 @@ import (
 // untested here because it requires a real Docker daemon and a populated
 // npm-global volume.
 
+func TestParseLockArgs(t *testing.T) {
+	check, local, err := parseLockArgs([]string{"--local", "LOCAL-TOOL", "--local", "other"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if check || !reflect.DeepEqual(local, map[string]bool{"local-tool": true, "other": true}) {
+		t.Fatalf("parseLockArgs = check=%v local=%v", check, local)
+	}
+
+	check, local, err = parseLockArgs([]string{"--check"})
+	if err != nil || !check || len(local) != 0 {
+		t.Fatalf("parseLockArgs(--check) = check=%v local=%v err=%v", check, local, err)
+	}
+
+	for _, args := range [][]string{
+		{"--local"},
+		{"--check", "--local", "tool"},
+		{"--local", "--all"},
+		{"--unknown", "tool"},
+	} {
+		if _, _, err := parseLockArgs(args); err == nil {
+			t.Errorf("parseLockArgs(%v) expected error", args)
+		}
+	}
+}
+
+func TestParseUpdateArgs(t *testing.T) {
+	for _, tt := range []struct {
+		args       []string
+		wantTarget string
+		wantMode   string
+	}{
+		{args: []string{"tool"}, wantTarget: "tool"},
+		{args: []string{"--all"}, wantTarget: "--all"},
+		{args: []string{"--local", "tool"}, wantTarget: "tool", wantMode: "local"},
+		{args: []string{"--registry", "tool"}, wantTarget: "tool", wantMode: "registry"},
+	} {
+		target, mode, err := parseUpdateArgs(tt.args)
+		if err != nil || target != tt.wantTarget || mode != tt.wantMode {
+			t.Errorf("parseUpdateArgs(%v) = target=%q mode=%q err=%v, want target=%q mode=%q", tt.args, target, mode, err, tt.wantTarget, tt.wantMode)
+		}
+	}
+
+	for _, args := range [][]string{
+		{},
+		{"--local"},
+		{"--local", "--all"},
+		{"--registry", "--all"},
+		{"tool", "extra"},
+	} {
+		if _, _, err := parseUpdateArgs(args); err == nil {
+			t.Errorf("parseUpdateArgs(%v) expected error", args)
+		}
+	}
+}
+
 func TestExposeRequiresSourceTool(t *testing.T) {
 	reg := registry.Default()
 	if err := Expose(reg, filepath.Join(t.TempDir(), "container-bin.toml"), nil); err == nil {
