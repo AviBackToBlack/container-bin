@@ -4,10 +4,11 @@
 installing the runtimes on the host.**
 
 ContainerBin makes commands such as `python`, `pip`, `node`, `npm`, `npx`,
-`jq`, `yq`, `terraform` and `ffmpeg` look like ordinary Windows executables
-while their real implementations run inside disposable Linux containers on
-Docker Desktop. Your Windows installation stays clean: no Python, no Node, no
-Terraform on the host — just one small Go binary, `cb.exe`.
+`ruby`, `gem`, `bundle`, `jq`, `yq`, `terraform` and `ffmpeg` look like ordinary
+Windows executables while their real implementations run inside disposable
+Linux containers on Docker Desktop. Your Windows installation stays clean: no
+Python, Node, Ruby or Terraform on the host — just one small Go binary,
+`cb.exe`.
 
 ```powershell
 PS D:\Work\demo> pip install requests
@@ -119,6 +120,7 @@ cb lock
 | `node`, `npm`, `npx` | `node:24-slim` | stateful (`node24` state group) |
 | `node22`, `npm22`, `npx22` | `node:22-slim` | stateful (`node22` state group) |
 | `go`, `gofmt` | `golang:1.24` | stateful (`go124` state group) |
+| `ruby`, `gem`, `bundle` | `ruby:4.0-trixie` | stateful (`ruby40` state group) |
 | `jq` | `ghcr.io/jqlang/jq:latest` | stateless |
 | `yq` | `mikefarah/yq:latest` | stateless |
 | `terraform` | `hashicorp/terraform:latest` | stateless (`-chdir` path semantics) |
@@ -265,6 +267,31 @@ not a guarantee that every npm package is ABI-compatible with it. For packages
 whose native addons need a different Node ABI, `node22`/`npm22`/`npx22` are a
 second, independent Node-major runtime with their own `node22` state group,
 fully isolating project `node_modules`, the npm cache and the npm global prefix; upgrading an existing installation adds these profiles automatically, but they are not yet locked, so run `cb lock` or `cb update --all` before using them.
+
+## Ruby and gem state
+
+`ruby`, `gem` and `bundle` use the full official Ruby 4.0 image rather than the
+slim variant, because development workflows frequently need its compiler and
+system headers for native extensions. They share a Ruby-ABI-specific `ruby40`
+state group and one image-lock entry.
+
+`gem install rake` writes to a persistent shared gem home that is on the
+container `PATH`, so later Ruby invocations can load the gem or find its
+executables (for example, `ruby -S rake`). Bundler dependencies live in a
+per-project `/cb/bundle` volume, while its download cache is shared. `Gemfile`
+and `Gemfile.lock` remain in the host project; installed Linux gems and native
+extensions remain in Docker volumes rather than leaking onto Windows.
+
+Only selected non-path Ruby/Bundler settings, repository credentials and proxy
+variables cross into the container. Host values such as `GEM_HOME`, `GEM_PATH`,
+`BUNDLE_PATH` and `BUNDLE_GEMFILE` are deliberately ignored because Windows
+paths are meaningless in the Linux image. Gem executables are usable inside
+the Ruby containers; standalone Windows shims for them require the future
+generic exposure support tracked by RM-26.
+
+Existing installations gain all three profiles on `cb install`. An older
+lockfile does not include their image, so run `cb update ruby` (or regenerate
+the lock with `cb lock`) before first use in locked mode.
 
 ## Dynamic npm CLI exposure
 
