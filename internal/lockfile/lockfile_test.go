@@ -22,6 +22,11 @@ func TestLockFileRoundTrip(t *testing.T) {
 			Resolved:   "ghcr.io/jqlang/jq@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 			Digest:     "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		},
+		"local/tool:dev": {
+			Configured: "local/tool:dev",
+			Resolved:   "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+			Digest:     "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+		},
 	}}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "container-bin.lock")
@@ -32,11 +37,28 @@ func TestLockFileRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Version != 1 || len(got.Images) != 2 {
+	if got.Version != 1 || len(got.Images) != 3 {
 		t.Fatalf("unexpected lock: %#v", got)
 	}
 	if got.Images["node:24-slim"].Resolved != lf.Images["node:24-slim"].Resolved {
 		t.Fatalf("node resolved mismatch: %#v", got.Images["node:24-slim"])
+	}
+	if got.Images["local/tool:dev"].Resolved != lf.Images["local/tool:dev"].Resolved {
+		t.Fatalf("local resolved mismatch: %#v", got.Images["local/tool:dev"])
+	}
+}
+
+func TestWriteRejectsMalformedLocalImageID(t *testing.T) {
+	lf := &LockFile{Version: 1, Images: map[string]LockEntry{
+		"local/tool:dev": {
+			Configured: "local/tool:dev",
+			Resolved:   "sha256:not-an-image-id",
+			Digest:     "sha256:not-an-image-id",
+		},
+	}}
+	err := Write(filepath.Join(t.TempDir(), "container-bin.lock"), lf)
+	if err == nil || !strings.Contains(err.Error(), "invalid local image ID") {
+		t.Fatalf("Write error = %v, want invalid local image ID", err)
 	}
 }
 
@@ -163,6 +185,45 @@ func TestMatchRepoDigestFailsClosedOnForeignRepo(t *testing.T) {
 	}
 	if _, ok := matchRepoDigest("python:3.13-slim", []string{"python@md5:oops", "garbage"}); ok {
 		t.Fatal("expected malformed digests to be ignored")
+	}
+}
+
+func TestLocalLockEntryUsesExactImageID(t *testing.T) {
+	id := "sha256:" + strings.Repeat("c", 64)
+	e, err := localLockEntry("local/tool:dev", imageInspection{
+		id:          id,
+		repoDigests: []string{"local/tool@" + id},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.Configured != "local/tool:dev" || e.Resolved != id || e.Digest != id {
+		t.Fatalf("unexpected local lock entry: %#v", e)
+	}
+	if !IsLocalResolved(e.Resolved) {
+		t.Fatalf("IsLocalResolved(%q) = false", e.Resolved)
+	}
+}
+
+func TestLocalLockEntryRejectsMalformedImageID(t *testing.T) {
+	for _, id := range []string{"", "sha256:short", "sha256:" + strings.Repeat("z", 64), strings.Repeat("a", 64)} {
+		if _, err := localLockEntry("local/tool:dev", imageInspection{id: id}); err == nil {
+			t.Errorf("localLockEntry accepted malformed ID %q", id)
+		}
+		if IsLocalResolved(id) {
+			t.Errorf("IsLocalResolved accepted malformed ID %q", id)
+		}
+	}
+}
+
+func TestRepositoryLockEntryDoesNotTreatForeignDigestAsLocal(t *testing.T) {
+	id := "sha256:" + strings.Repeat("d", 64)
+	_, err := repositoryLockEntry("local/tool:dev", imageInspection{
+		id:          id,
+		repoDigests: []string{"someone/else@sha256:" + strings.Repeat("e", 64)},
+	})
+	if err == nil || !strings.Contains(err.Error(), "no RepoDigest for repository") {
+		t.Fatalf("repositoryLockEntry error = %v, want repository mismatch", err)
 	}
 }
 
