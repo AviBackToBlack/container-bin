@@ -81,7 +81,9 @@ func main() {
 			fatalf("bugreport: %v", err)
 		}
 	case "backup":
-		if err := cli.Backup(cfgPath, os.Args[2:], version); err != nil {
+		if err := withMutationLock(cfgPath, func() error {
+			return cli.Backup(cfgPath, os.Args[2:], version)
+		}); err != nil {
 			fatalf("backup: %v", err)
 		}
 	case "restore":
@@ -227,8 +229,8 @@ Commands:
   cb add       add a minimal stateless tool profile and install its shim
   cb doctor    validate Docker, PATH, shims, registry, lock and managed volumes
   cb bugreport assemble a paste-ready diagnostic report with best-effort redaction
-  cb backup    back up registry + lock to a zip
-  cb restore   validate/restore a backup (dry-run unless --apply)
+  cb backup    back up registry + lock; --state adds explicitly named volumes
+  cb restore   validate/restore a backup (dry-run unless --apply; state is opt-in)
   cb self-test [--json] [--release] run offline end-to-end compatibility checks
   cb list      list configured tool profiles
   cb trace     show raw/normalized/mapped argv for a tool without running it

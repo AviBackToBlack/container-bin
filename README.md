@@ -385,16 +385,41 @@ auto-deleted.
 cb backup                       # zip of registry + lock into backups\
 cb restore BACKUP.zip           # dry-run: validates and reports
 cb restore BACKUP.zip --apply   # atomic replacement after validation
+
+# Explicit, checksummed named-volume backup (names come from `cb state`)
+cb backup BACKUP.zip --state cb-node24-npm-global cb-go124-gobin
+cb restore BACKUP.zip --state           # validate/check destinations only
+cb restore BACKUP.zip --state --apply   # restore state, then registry/lock
 ```
 
-Named volumes and Docker images are not included. See
-[proxies, private registries, and air-gapped operation](docs/proxy-airgap.md)
-for mirror identity rules, disconnected image preparation, and the current
+State backup never sweeps Docker volumes. Every selected name must carry
+consistent `cb.managed`, kind, owner, and project-identity labels, and no running
+container may mount it. The versioned manifest records those labels plus each
+tar stream's size and SHA-256. Restore revalidates every archive before changing
+Docker, never remaps a project path, and refuses label-mismatched or non-empty
+destinations. Tar extraction happens only inside a network-disabled helper
+container with a read-only root; no archive path is extracted onto Windows.
+
+The immutable helper image must already be local; ContainerBin never pulls it
+as a backup side effect:
+
+```powershell
+docker pull docker.io/library/alpine:3.23@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40
+```
+
+Backups do not include Docker images, registry credentials, Docker Desktop
+configuration, or host project files. Output archives are created exclusively:
+choose a new filename instead of overwriting an existing backup. Volume data can
+itself contain package credentials or other secrets, so store and transfer the
+archive as sensitive data even though ContainerBin requests owner-only file mode.
+
+See [proxies, private registries, and air-gapped operation](docs/proxy-airgap.md)
+for mirror identity rules, disconnected image preparation, and the complete
 state-backup boundary.
 
 ## Concurrency and the mutation lock
 
-`cb install`, `cb add`, `cb setup`, `cb restore`, `cb expose`, `cb unexpose`,
+`cb install`, `cb add`, `cb setup`, `cb backup`, `cb restore`, `cb expose`, `cb unexpose`,
 `cb uninstall`, `cb lock` and `cb update` serialize through
 `container-bin.mutation.lock` next to `cb.exe`. A second concurrent
 mutation waits up to 5 seconds for the lock, then fails with a clear
