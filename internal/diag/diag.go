@@ -245,7 +245,8 @@ func Doctor(reg registry.Registry, cfgPath string) error {
 	}
 
 	shimProblems := 0
-	for name := range reg.Tools {
+	shimNames := reg.ToolNames()
+	for _, name := range shimNames {
 		shim := filepath.Join(dir, name+".exe")
 		a, e1 := os.Stat(exe)
 		b, e2 := os.Stat(shim)
@@ -258,7 +259,7 @@ func Doctor(reg registry.Registry, cfgPath string) error {
 		}
 	}
 	if shimProblems == 0 {
-		ok("all %d registry shims exist", len(reg.Tools))
+		ok("all %d registry shims exist", len(shimNames))
 	} else {
 		fail("%d registry shim(s) missing; run `cb install`", shimProblems)
 	}
@@ -942,7 +943,14 @@ func runSelfTestChecksAndCleanup(reg registry.Registry, project, external string
 
 	root, _ := pathmap.CanonicalPath(project)
 	defer dockervol.RemoveQuiet(pathmap.PythonEnvID(root, true))
-	defer dockervol.RemoveQuiet(pathmap.StatefulProjectVolumeID("node24", "node-modules", root, true))
+	if nodeTool, _, ok := reg.Resolve("node"); ok && nodeTool.Provider == "stateful" {
+		for _, spec := range nodeTool.ProjectVolumes {
+			logical, _, err := registry.ParseVolumeBinding(spec)
+			if err == nil {
+				defer dockervol.RemoveQuiet(pathmap.StatefulProjectVolumeID(nodeTool.StateGroup, logical, root, true))
+			}
+		}
+	}
 
 	return runSelfTestChecks(reg, project, external, release, cwd, version)
 }
@@ -963,7 +971,7 @@ func runSelfTestChecks(reg registry.Registry, project, external string, release 
 	toolOutcomes := map[string]toolSelfTestOutcome{}
 	if dockerAvailable {
 		for _, name := range []string{"python", "node", "jq", "terraform"} {
-			if t, ok := reg.Tools[name]; ok {
+			if t, _, ok := reg.Resolve(name); ok {
 				toolOutcomes[name] = runSelfTestTool(t, name, project, external)
 			}
 		}

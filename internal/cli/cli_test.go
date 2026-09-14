@@ -12,6 +12,26 @@ import (
 	"github.com/AviBackToBlack/container-bin/internal/registry"
 )
 
+func TestDefaultAliasesAreVisibleInManagementCommands(t *testing.T) {
+	reg := registry.Default()
+	out, err := captureStdout(func() error { return Trace(reg, []string{"node", "--version"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"tool:       node", "resolved:   node24", "state_group: node24"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("trace output missing %q:\n%s", want, out)
+		}
+	}
+	out, err = captureStdout(func() error { return Default(reg, "unused", nil) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "node       24  aliases=node,npm,npx  versions=22,24") {
+		t.Fatalf("default output did not describe the complete family:\n%s", out)
+	}
+}
+
 // These tests cover Expose guard paths that need no Docker daemon.
 // The Docker-dependent discovery path (discoverNPMGlobalBins onward) remains
 // untested here because it requires a real Docker daemon and a populated

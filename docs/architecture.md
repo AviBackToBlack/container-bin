@@ -30,11 +30,14 @@ when hardlinking fails).
 
 ## Registry and providers
 
-The registry is a deliberately tiny TOML subset: `[tools.NAME]` sections,
-quoted strings, arrays of quoted strings, `schema_version`. The custom parser
-rejects everything else — unknown keys, duplicate sections, malformed syntax,
-newer schema versions. Misreading configuration silently would be worse than
-refusing to run; this is a recurring design choice.
+The registry is a deliberately tiny TOML subset: `[tools.NAME]` and
+`[defaults.FAMILY]` sections, quoted strings, arrays of quoted strings, and
+`schema_version`. Concrete profiles opt into a default family with an explicit
+family, version and alias triple. The selected version resolves every alias in
+that family together; incomplete or ambiguous families are rejected. The
+custom parser rejects everything else — unknown keys, duplicate sections,
+malformed syntax, newer schema versions. Misreading configuration silently
+would be worse than refusing to run; this is a recurring design choice.
 
 Three providers own lifecycle semantics:
 
