@@ -89,6 +89,20 @@ func TestConfiguredImagesIncludesNode22(t *testing.T) {
 	}
 }
 
+func TestConfiguredImagesDeduplicatesRustToolchain(t *testing.T) {
+	got := ConfiguredImages(registry.Default())
+	const rustImage = "rust:1.98.1-slim-bookworm"
+	count := 0
+	for _, image := range got {
+		if image == rustImage {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("ConfiguredImages contains %d copies of %q; got %v", count, rustImage, got)
+	}
+}
+
 func containsString(xs []string, s string) bool {
 	for _, x := range xs {
 		if x == s {

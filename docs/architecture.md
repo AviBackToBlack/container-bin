@@ -39,14 +39,14 @@ refusing to run; this is a recurring design choice.
 Three providers own lifecycle semantics:
 
 - **stateless** — disposable container, no tool state. jq, yq, terraform,
-  ffmpeg.
+  ffmpeg, rustc.
 - **python** — legacy provider predating the generic one, kept for
   compatibility: per-project persistent `/venv` volume + shared pip cache +
   a bootstrap that creates the venv on first use. `pip` runs as
   `python -m pip` inside the same environment.
 - **stateful** — generic declarative provider: `state_group` namespacing,
   `project_volumes` (scoped per project root), `shared_volumes`. Node/npm/npx,
-  go/gofmt and everything `cb expose` creates use this.
+  go/gofmt, cargo and everything `cb expose` creates use this.
 
 ## Project roots and volume naming
 
