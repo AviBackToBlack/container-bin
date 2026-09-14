@@ -358,8 +358,8 @@ cb self-test [--json] [--release]  # offline end-to-end test using already-local
                        # reports every check instead of stopping at the first failure;
                        # --json emits a machine-readable report for CI;
                        # --release adds host/environment facts to the report
-                       # python /venv persistence, external path mapping, node project
-                       # state, jq relative paths, terraform -chdir normalization
+                       # python /venv persistence, external path mapping, Node 24/22
+                       # project state, jq relative paths, terraform -chdir normalization
 cb trace ...  # dry-run argv/mount mapping for one command
 cb inspect TOOL
 cb env
@@ -378,7 +378,9 @@ publicly — redaction is best-effort, not a general secret scanner.
 `cb self-test` intentionally pulls nothing; it proves your existing locked
 setup works end to end, then cleans up its temporary project volumes. It now
 runs every check and reports all of them, instead of stopping at the first
-failure.
+failure. The Node 22 checks run when the `node22` profile is registered. An
+older registry without that newer default gets an actionable skip rather than
+a false failure; run `cb setup` to append the current default profiles.
 
 ### `cb self-test --json` report format
 
@@ -396,7 +398,7 @@ change the meaning of an existing field, not for new additive fields.
     { "id": "docker", "status": "pass", "message": "docker 27.0.0" },
     { "id": "python-image-local", "status": "pass", "message": "image present" }
   ],
-  "passed": 12,
+  "passed": 15,
   "failed": 0,
   "skipped": 0,
   "ok": true

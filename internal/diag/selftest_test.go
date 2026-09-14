@@ -16,6 +16,7 @@ func TestBuildSelfTestReport(t *testing.T) {
 	allPass := map[string]toolSelfTestOutcome{
 		"python":    {},
 		"node":      {},
+		"node22":    {},
 		"jq":        {},
 		"terraform": {},
 	}
@@ -28,6 +29,9 @@ func TestBuildSelfTestReport(t *testing.T) {
 		"node-image-local",
 		"node-modules-write",
 		"node-modules-read",
+		"node22-image-local",
+		"node22-modules-write",
+		"node22-modules-read",
 		"jq-image-local",
 		"jq-relative-path",
 		"terraform-image-local",
@@ -51,7 +55,7 @@ func TestBuildSelfTestReport(t *testing.T) {
 			docker:      passDocker,
 			outcomes:    allPass,
 			wantOK:      true,
-			wantPassed:  12,
+			wantPassed:  15,
 			wantFailed:  0,
 			wantSkipped: 0,
 			wantStatus: map[string]string{
@@ -76,7 +80,7 @@ func TestBuildSelfTestReport(t *testing.T) {
 			wantOK:      false,
 			wantPassed:  0,
 			wantFailed:  1,
-			wantSkipped: 11,
+			wantSkipped: 14,
 			wantContains: map[string]string{
 				"python-image-local": "docker",
 				"jq-relative-path":   "docker",
@@ -88,13 +92,14 @@ func TestBuildSelfTestReport(t *testing.T) {
 			outcomes: map[string]toolSelfTestOutcome{
 				"python":    {ImageLocalErr: ptr("required image is not local: python:3.13 (run `cb lock`/`cb update` first)")},
 				"node":      {},
+				"node22":    {},
 				"jq":        {},
 				"terraform": {},
 			},
 			wantOK:      false,
-			wantPassed:  8, // docker + node(3) + jq(2) + terraform(2)
-			wantFailed:  1, // python-image-local
-			wantSkipped: 3, // python persist-write/read/external-path
+			wantPassed:  11, // docker + node(3) + node22(3) + jq(2) + terraform(2)
+			wantFailed:  1,  // python-image-local
+			wantSkipped: 3,  // python persist-write/read/external-path
 			wantStatus: map[string]string{
 				"python-image-local":   "fail",
 				"python-persist-write": "skip",
@@ -113,11 +118,12 @@ func TestBuildSelfTestReport(t *testing.T) {
 			outcomes: map[string]toolSelfTestOutcome{
 				"python":    {PersistWriteErr: ptr("python exited 1")},
 				"node":      {},
+				"node22":    {},
 				"jq":        {},
 				"terraform": {},
 			},
 			wantOK:      false,
-			wantPassed:  10, // docker + python image-local + external-path + node(3) + jq(2) + terraform(2)
+			wantPassed:  13, // docker + python image-local + external-path + node(3) + node22(3) + jq(2) + terraform(2)
 			wantFailed:  1,
 			wantSkipped: 1, // python-persist-read
 			wantStatus: map[string]string{
@@ -142,13 +148,14 @@ func TestBuildSelfTestReport(t *testing.T) {
 			docker: passDocker,
 			outcomes: map[string]toolSelfTestOutcome{
 				"python":    {},
+				"node22":    {},
 				"jq":        {},
 				"terraform": {},
 			},
 			wantOK:      false,
-			wantPassed:  9, // docker + python(4) + jq(2) + terraform(2)
-			wantFailed:  1, // node-image-local
-			wantSkipped: 2, // node-modules-write, node-modules-read
+			wantPassed:  12, // docker + python(4) + node22(3) + jq(2) + terraform(2)
+			wantFailed:  1,  // node-image-local
+			wantSkipped: 2,  // node-modules-write, node-modules-read
 			wantStatus: map[string]string{
 				"node-image-local":   "fail",
 				"node-modules-write": "skip",
@@ -161,11 +168,38 @@ func TestBuildSelfTestReport(t *testing.T) {
 			},
 		},
 		{
+			// node22 was added to the default registry after self-test shipped.
+			// Older valid registries should get an actionable skip until the
+			// user runs setup, without weakening failures for established tools.
+			name:   "node22_not_registered_in_older_registry",
+			docker: passDocker,
+			outcomes: map[string]toolSelfTestOutcome{
+				"python":    {},
+				"node":      {},
+				"jq":        {},
+				"terraform": {},
+			},
+			wantOK:      true,
+			wantPassed:  12,
+			wantFailed:  0,
+			wantSkipped: 3,
+			wantStatus: map[string]string{
+				"node22-image-local":   "skip",
+				"node22-modules-write": "skip",
+				"node22-modules-read":  "skip",
+			},
+			wantContains: map[string]string{
+				"node22-image-local":   "cb setup",
+				"node22-modules-write": "cb setup",
+				"node22-modules-read":  "cb setup",
+			},
+		},
+		{
 			name:        "metadata_from_params",
 			docker:      passDocker,
 			outcomes:    allPass,
 			wantOK:      true,
-			wantPassed:  12,
+			wantPassed:  15,
 			wantFailed:  0,
 			wantSkipped: 0,
 		},
@@ -175,11 +209,12 @@ func TestBuildSelfTestReport(t *testing.T) {
 			outcomes: map[string]toolSelfTestOutcome{
 				"python": {ImageLocalErr: ptr("image missing")},
 				// node absent => node-image-local fails, its 2 dependents skip
+				"node22":    {},
 				"jq":        {},
 				"terraform": {ChdirErr: ptr("terraform exited 1")},
 			},
 			wantOK:      false,
-			wantPassed:  4, // docker + jq(2) + terraform-image-local
+			wantPassed:  7, // docker + node22(3) + jq(2) + terraform-image-local
 			wantFailed:  3, // python-image-local, node-image-local, terraform-chdir
 			wantSkipped: 5, // python persist(3) + node-modules(2)
 			wantStatus: map[string]string{
@@ -200,7 +235,7 @@ func TestBuildSelfTestReport(t *testing.T) {
 				{ID: "cwd-network-storage", Status: "pass", Message: "current directory is on a Fixed drive (C:\\Work)"},
 			},
 			wantOK:      true,
-			wantPassed:  12,
+			wantPassed:  15,
 			wantFailed:  0,
 			wantSkipped: 0,
 		},
@@ -298,6 +333,7 @@ func TestBuildSelfTestReportJSONRoundTrip(t *testing.T) {
 	outcomes := map[string]toolSelfTestOutcome{
 		"python":    {ImageLocalErr: ptr("missing")},
 		"node":      {},
+		"node22":    {},
 		"jq":        {},
 		"terraform": {},
 	}

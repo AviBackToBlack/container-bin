@@ -562,10 +562,11 @@ type toolSelfTestOutcome struct {
 }
 
 type selfTestStep struct {
-	id      string
-	tool    string
-	depID   string
-	errFunc func(toolSelfTestOutcome) *string
+	id                string
+	tool              string
+	depID             string
+	allowUnregistered bool
+	errFunc           func(toolSelfTestOutcome) *string
 }
 
 // selfTestSteps must list every step's dependency (depID) before the step
@@ -573,7 +574,6 @@ type selfTestStep struct {
 // populated in this slice's order, so a step whose depID has not been
 // inserted yet would see a zero-value selfTestCheck instead of the real
 // dependency's status. TestSelfTestStepsDependencyOrder pins this invariant.
-// Node 22 self-test steps are deliberately deferred to a separate scoping pass.
 var selfTestSteps = []selfTestStep{
 	{id: "python-image-local", tool: "python", depID: "docker", errFunc: func(o toolSelfTestOutcome) *string { return o.ImageLocalErr }},
 	{id: "python-persist-write", tool: "python", depID: "python-image-local", errFunc: func(o toolSelfTestOutcome) *string { return o.PersistWriteErr }},
@@ -582,6 +582,9 @@ var selfTestSteps = []selfTestStep{
 	{id: "node-image-local", tool: "node", depID: "docker", errFunc: func(o toolSelfTestOutcome) *string { return o.ImageLocalErr }},
 	{id: "node-modules-write", tool: "node", depID: "node-image-local", errFunc: func(o toolSelfTestOutcome) *string { return o.ModulesWriteErr }},
 	{id: "node-modules-read", tool: "node", depID: "node-modules-write", errFunc: func(o toolSelfTestOutcome) *string { return o.ModulesReadErr }},
+	{id: "node22-image-local", tool: "node22", depID: "docker", allowUnregistered: true, errFunc: func(o toolSelfTestOutcome) *string { return o.ImageLocalErr }},
+	{id: "node22-modules-write", tool: "node22", depID: "node22-image-local", allowUnregistered: true, errFunc: func(o toolSelfTestOutcome) *string { return o.ModulesWriteErr }},
+	{id: "node22-modules-read", tool: "node22", depID: "node22-modules-write", allowUnregistered: true, errFunc: func(o toolSelfTestOutcome) *string { return o.ModulesReadErr }},
 	{id: "jq-image-local", tool: "jq", depID: "docker", errFunc: func(o toolSelfTestOutcome) *string { return o.ImageLocalErr }},
 	{id: "jq-relative-path", tool: "jq", depID: "jq-image-local", errFunc: func(o toolSelfTestOutcome) *string { return o.RelativePathErr }},
 	{id: "terraform-image-local", tool: "terraform", depID: "docker", errFunc: func(o toolSelfTestOutcome) *string { return o.ImageLocalErr }},
@@ -609,15 +612,18 @@ func buildSelfTestReport(cbVersion string, now time.Time, dockerCheck selfTestCh
 		default:
 			outcome, ok := toolOutcomes[step.tool]
 			if !ok {
-				// A tool absent from the registry is a configuration gap, not
-				// a benign skip: the previous (pre-JSON-report) self-test
-				// failed outright the moment it reached a missing tool's
-				// first check ("tool %s missing"). Reporting this as "fail"
-				// instead of "skip" preserves that fail-closed guarantee —
-				// self-test's own OK/exit-code cannot go green while one of
-				// the tools it claims to verify was never actually tested.
-				check.Status = "fail"
-				check.Message = fmt.Sprintf("%s not registered in container-bin.toml", step.tool)
+				if step.allowUnregistered {
+					check.Status = "skip"
+					check.Message = fmt.Sprintf("skipped: %s not registered (run `cb setup` to add current defaults)", step.tool)
+				} else {
+					// A required tool absent from the registry is a configuration
+					// gap, not a benign skip: the previous (pre-JSON-report)
+					// self-test failed outright the moment it reached a missing
+					// tool's first check ("tool %s missing"). Reporting this as
+					// "fail" instead of "skip" preserves that guarantee.
+					check.Status = "fail"
+					check.Message = fmt.Sprintf("%s not registered in container-bin.toml", step.tool)
+				}
 			} else if errPtr := step.errFunc(outcome); errPtr != nil {
 				check.Status = "fail"
 				check.Message = *errPtr
@@ -943,6 +949,7 @@ func runSelfTestChecksAndCleanup(reg registry.Registry, project, external string
 	root, _ := pathmap.CanonicalPath(project)
 	defer dockervol.RemoveQuiet(pathmap.PythonEnvID(root, true))
 	defer dockervol.RemoveQuiet(pathmap.StatefulProjectVolumeID("node24", "node-modules", root, true))
+	defer dockervol.RemoveQuiet(pathmap.StatefulProjectVolumeID("node22", "node-modules", root, true))
 
 	return runSelfTestChecks(reg, project, external, release, cwd, version)
 }
@@ -962,7 +969,7 @@ func runSelfTestChecks(reg registry.Registry, project, external string, release 
 
 	toolOutcomes := map[string]toolSelfTestOutcome{}
 	if dockerAvailable {
-		for _, name := range []string{"python", "node", "jq", "terraform"} {
+		for _, name := range []string{"python", "node", "node22", "jq", "terraform"} {
 			if t, ok := reg.Tools[name]; ok {
 				toolOutcomes[name] = runSelfTestTool(t, name, project, external)
 			}
@@ -1002,7 +1009,7 @@ func runSelfTestTool(t registry.Tool, name, project, external string) toolSelfTe
 			s := selfTestRunError(name, err, code)
 			o.ExternalPathErr = &s
 		}
-	case "node":
+	case "node", "node22":
 		code, err := dockerrun.RunTool(t, []string{"-e", "require('fs').mkdirSync('node_modules',{recursive:true}); require('fs').writeFileSync('node_modules/.cb-selftest','ok')"})
 		if err != nil || code != 0 {
 			s := selfTestRunError(name, err, code)
