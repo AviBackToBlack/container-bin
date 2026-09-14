@@ -26,11 +26,11 @@ func TestParseDefaultRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(reg.Tools) != 18 {
-		t.Fatalf("expected 18 tools, got %d", len(reg.Tools))
+	if len(reg.Tools) != 20 {
+		t.Fatalf("expected 20 tools, got %d", len(reg.Tools))
 	}
-	if len(reg.ToolNames()) != 21 {
-		t.Fatalf("expected 21 invokable shim names, got %d", len(reg.ToolNames()))
+	if len(reg.ToolNames()) != 23 {
+		t.Fatalf("expected 23 invokable shim names, got %d", len(reg.ToolNames()))
 	}
 	jq := reg.Tools["jq"]
 	if jq.Provider != "stateless" || jq.Image != "ghcr.io/jqlang/jq:latest" {
@@ -156,7 +156,7 @@ func TestDefaultRegistryHasV06Tools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"python", "pip", "jq", "yq", "terraform", "ffmpeg", "node24", "npm24", "npx24", "go", "gofmt", "rustc", "cargo"} {
+	for _, name := range []string{"python", "pip", "jq", "yq", "terraform", "ffmpeg", "node24", "npm24", "npx24", "go", "gofmt", "rustc", "cargo", "uv", "uvx"} {
 		if _, ok := reg.Tools[name]; !ok {
 			t.Fatalf("missing default tool %q", name)
 		}
@@ -173,7 +173,7 @@ func TestDefaultRegistryHasV06Tools(t *testing.T) {
 
 func TestDefaultToolSections(t *testing.T) {
 	sections := DefaultToolSections()
-	for _, name := range []string{"python", "yq", "terraform", "ffmpeg", "node24", "node22", "npm24", "npm22", "npx24", "npx22", "go", "gofmt", "rustc", "cargo"} {
+	for _, name := range []string{"python", "yq", "terraform", "ffmpeg", "node24", "node22", "npm24", "npm22", "npx24", "npx22", "go", "gofmt", "rustc", "cargo", "uv", "uvx"} {
 		if !strings.Contains(sections[name], "[tools."+name+"]") {
 			t.Fatalf("bad section for %s: %q", name, sections[name])
 		}
@@ -557,6 +557,72 @@ func TestRustCargoProfiles(t *testing.T) {
 	}
 }
 
+func TestUVProfiles(t *testing.T) {
+	reg, err := ParseTOML(DefaultTOML)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const image = "ghcr.io/astral-sh/uv:0.12-python3.13-trixie-slim"
+	uv := reg.Tools["uv"]
+	uvx := reg.Tools["uvx"]
+	for name, tool := range map[string]Tool{"uv": uv, "uvx": uvx} {
+		if tool.Image != image || tool.Provider != "stateful" || tool.StateGroup != "uv012-py313" || !reflect.DeepEqual(tool.Command, []string{name}) {
+			t.Fatalf("bad %s profile: %+v", name, tool)
+		}
+		wantShared := []string{"cache:/root/.cache/uv", "tools:/cb/uv-tools", "tool-bin:/cb/uv-bin"}
+		if !reflect.DeepEqual(tool.SharedVolumes, wantShared) {
+			t.Fatalf("%s shared_volumes = %#v, want %#v", name, tool.SharedVolumes, wantShared)
+		}
+		for _, entry := range []string{
+			"UV_CACHE_DIR=/root/.cache/uv",
+			"UV_TOOL_DIR=/cb/uv-tools",
+			"UV_TOOL_BIN_DIR=/cb/uv-bin",
+			"UV_LINK_MODE=copy",
+			"UV_PYTHON_DOWNLOADS=never",
+		} {
+			if !containsString(tool.EnvSet, entry) {
+				t.Fatalf("%s env_set missing %q: %#v", name, entry, tool.EnvSet)
+			}
+		}
+		if !containsString(tool.EnvPrefixes, "UV_INDEX_") {
+			t.Fatalf("%s env_prefixes missing UV_INDEX_: %#v", name, tool.EnvPrefixes)
+		}
+		for _, envName := range []string{"UV_INDEX", "UV_DEFAULT_INDEX", "UV_NO_CACHE", "UV_OFFLINE", "HTTP_PROXY"} {
+			if !containsString(tool.EnvNames, envName) {
+				t.Fatalf("%s env_names missing %q: %#v", name, envName, tool.EnvNames)
+			}
+		}
+		if !containsString(tool.ProjectMarkers, "pyproject.toml") || !containsString(tool.ProjectMarkers, "uv.lock") {
+			t.Fatalf("%s project markers do not cover uv projects: %#v", name, tool.ProjectMarkers)
+		}
+		if len(tool.PathNext) != 0 || len(tool.PathEquals) != 0 || tool.PathLast {
+			t.Fatalf("%s must not force path semantics: %+v", name, tool)
+		}
+		for _, pathVariable := range []string{"UV_PROJECT", "UV_WORKING_DIR", "UV_CONFIG_FILE", "UV_CACHE_DIR", "UV_TOOL_DIR", "UV_TOOL_BIN_DIR", "UV_PROJECT_ENVIRONMENT", "VIRTUAL_ENV", "PATH"} {
+			if containsString(tool.EnvNames, pathVariable) {
+				t.Fatalf("%s env allowlist must not include path-valued %q", name, pathVariable)
+			}
+		}
+	}
+
+	if !reflect.DeepEqual(uv.ProjectVolumes, []string{"project-env:/cb/uv-project-env"}) {
+		t.Fatalf("uv project_volumes = %#v", uv.ProjectVolumes)
+	}
+	if len(uvx.ProjectVolumes) != 0 {
+		t.Fatalf("uvx must not allocate an unused project environment: %#v", uvx.ProjectVolumes)
+	}
+	for _, entry := range []string{
+		"UV_PROJECT_ENVIRONMENT=/cb/uv-project-env",
+		"VIRTUAL_ENV=/cb/uv-project-env",
+		"PATH=/cb/uv-project-env/bin:/cb/uv-bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin",
+	} {
+		if !containsString(uv.EnvSet, entry) {
+			t.Fatalf("uv env_set missing %q: %#v", entry, uv.EnvSet)
+		}
+	}
+}
+
 // Node 24 is the default runtime, but it is not a guarantee that every npm
 // package is ABI-compatible with it. Node 22 is the supported LTS alternative,
 // with fully isolated state even though the logical volume names are identical.
@@ -936,7 +1002,7 @@ func TestHostMountDefaultTOMLComment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(reg.Tools) != 18 {
-		t.Fatalf("expected 18 tools, got %d", len(reg.Tools))
+	if len(reg.Tools) != 20 {
+		t.Fatalf("expected 20 tools, got %d", len(reg.Tools))
 	}
 }
