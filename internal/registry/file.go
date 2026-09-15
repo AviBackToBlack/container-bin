@@ -149,18 +149,50 @@ func InstallShims(reg Registry) error {
 	sort.Strings(names)
 	for _, name := range names {
 		dst := filepath.Join(dir, name+".exe")
-		_ = os.Remove(dst)
-		if err := os.Link(exe, dst); err != nil {
-			if err := copyFile(exe, dst); err != nil {
-				return fmt.Errorf("create %s: hardlink failed and copy fallback failed: %w", dst, err)
-			}
-			fmt.Printf("installed %-10s (copy fallback) -> %s\n", name, dst)
-		} else {
+		mode, err := installShim(exe, dst, os.Link, copyFile, os.Rename)
+		if err != nil {
+			return err
+		}
+		if mode == "hardlink" {
 			fmt.Printf("installed %-10s (hardlink)      -> %s\n", name, dst)
+		} else {
+			fmt.Printf("installed %-10s (copy fallback) -> %s\n", name, dst)
 		}
 	}
 	fmt.Printf("\nRegistry:\n  %s\n\nAdd this directory near the front of PATH:\n  %s\n", filepath.Join(dir, "container-bin.toml"), dir)
 	return nil
+}
+
+type fileOperation func(string, string) error
+
+func installShim(exe, dst string, linkFile, copyFallback, replaceFile fileOperation) (string, error) {
+	tmp, err := os.CreateTemp(filepath.Dir(dst), "."+filepath.Base(dst)+"-*.tmp")
+	if err != nil {
+		return "", fmt.Errorf("create temporary shim for %s: %w", dst, err)
+	}
+	tmpPath := tmp.Name()
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return "", fmt.Errorf("close temporary shim for %s: %w", dst, err)
+	}
+	if err := os.Remove(tmpPath); err != nil {
+		return "", fmt.Errorf("prepare temporary shim for %s: %w", dst, err)
+	}
+	defer os.Remove(tmpPath)
+
+	mode := "hardlink"
+	linkErr := linkFile(exe, tmpPath)
+	if linkErr != nil {
+		mode = "copy"
+		_ = os.Remove(tmpPath)
+		if err := copyFallback(exe, tmpPath); err != nil {
+			return "", fmt.Errorf("create %s: hardlink failed (%v) and copy fallback failed: %w", dst, linkErr, err)
+		}
+	}
+	if err := replaceFile(tmpPath, dst); err != nil {
+		return "", fmt.Errorf("replace %s: %w", dst, err)
+	}
+	return mode, nil
 }
 
 func copyFile(src, dst string) error {

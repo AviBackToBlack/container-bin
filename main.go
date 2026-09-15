@@ -52,6 +52,16 @@ func main() {
 		}); err != nil {
 			fatalf("install: %v", err)
 		}
+	case "add":
+		if err := withMutationLock(cfgPath, func() error {
+			reg, _, err := registry.Load()
+			if err != nil {
+				return err
+			}
+			return cli.Add(reg, cfgPath, os.Args[2:])
+		}); err != nil {
+			fatalf("add: %v", err)
+		}
 	case "setup":
 		if err := withMutationLock(cfgPath, func() error {
 			return cli.Setup(cfgPath, version)
@@ -180,6 +190,7 @@ func usage(cfg string) {
 Commands:
   cb setup     initialize/upgrade registry, install shims, then run doctor
   cb install   create/update shims from the tool registry
+  cb add       add a minimal stateless tool profile and install its shim
   cb doctor    validate Docker, PATH, shims, registry, lock and managed volumes
   cb bugreport assemble a paste-ready diagnostic report with best-effort redaction
   cb backup    back up registry + lock to a zip

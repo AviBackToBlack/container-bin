@@ -144,6 +144,19 @@ Semantics include `command`, `args_prefix`, `path_next`, `path_equals`,
 ignored, and a `schema_version` newer than the binary supports fails closed.
 Edit the file, then run `cb install` to reconcile shims.
 
+For an image whose entrypoint is already the desired command, `cb add` appends
+a minimal stateless profile and reconciles the shim without pulling or running
+the image:
+
+```powershell
+cb add jq-corp --image registry.corp.example/devtools/jq:1.8.1
+```
+
+If a lockfile exists, it becomes intentionally incomplete until you run
+`cb update jq-corp` or `cb lock`; execution fails closed in the meantime.
+State, environment allowlists, path rules, command overrides, and mounts still
+require an explicit reviewed registry edit followed by `cb install`.
+
 ### Explicit host bind mounts (`host_mounts`)
 
 `host_mounts` lets a trusted profile declare fixed host paths that are always
@@ -333,7 +346,7 @@ cb restore BACKUP.zip --apply   # atomic replacement after validation
 
 ## Concurrency and the mutation lock
 
-`cb install`, `cb setup`, `cb restore`, `cb expose`, `cb unexpose`,
+`cb install`, `cb add`, `cb setup`, `cb restore`, `cb expose`, `cb unexpose`,
 `cb uninstall`, `cb lock` and `cb update` serialize through
 `container-bin.mutation.lock` next to `cb.exe`. A second concurrent
 mutation waits up to 5 seconds for the lock, then fails with a clear

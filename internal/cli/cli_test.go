@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,6 +12,142 @@ import (
 	"github.com/AviBackToBlack/container-bin/internal/pathmap"
 	"github.com/AviBackToBlack/container-bin/internal/registry"
 )
+
+func TestAddRequiresExactShape(t *testing.T) {
+	for _, args := range [][]string{
+		nil,
+		{"demo"},
+		{"demo", "example/demo:1"},
+		{"demo", "--image"},
+		{"--image", "example/demo:1", "demo"},
+		{"demo", "--provider", "stateless"},
+		{"demo", "--image", "example/demo:1", "extra"},
+	} {
+		err := add(registry.Default(), filepath.Join(t.TempDir(), "container-bin.toml"), args, func(registry.Registry) error {
+			t.Fatal("installer called for invalid arguments")
+			return nil
+		})
+		if err == nil || !strings.Contains(err.Error(), "usage: cb add TOOL --image IMAGE") {
+			t.Fatalf("Add(%v) error = %v, want usage error", args, err)
+		}
+	}
+}
+
+func TestAddRejectsUnsafeOrExistingNames(t *testing.T) {
+	tests := []struct {
+		args []string
+		want string
+	}{
+		{args: []string{"bad.name", "--image", "example/demo:1"}, want: "invalid tool name"},
+		{args: []string{"cb", "--image", "example/demo:1"}, want: "reserved"},
+		{args: []string{"jq", "--image", "example/demo:1"}, want: "already exists"},
+		{args: []string{"demo", "--image", "example/demo bad:1"}, want: "must not contain whitespace"},
+		{args: []string{"demo", "--image", "--privileged"}, want: "must not start with"},
+	}
+	for _, tt := range tests {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "container-bin.toml")
+		err := add(registry.Default(), path, tt.args, func(registry.Registry) error {
+			t.Fatal("installer called for rejected profile")
+			return nil
+		})
+		if err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Fatalf("Add(%v) error = %v, want substring %q", tt.args, err, tt.want)
+		}
+		if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("invalid add mutated registry: %v", statErr)
+		}
+	}
+}
+
+func TestAddCreatesMinimalProfileAndInstalls(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "container-bin.toml")
+	var installed registry.Registry
+	out, captureErr := captureStdout(func() error {
+		return add(registry.Default(), path, []string{"Demo_Tool", "--image", "registry.example/dev/demo:1.2.3"}, func(got registry.Registry) error {
+			installed = got
+			return nil
+		})
+	})
+	if captureErr != nil {
+		t.Fatal(captureErr)
+	}
+	if installed.Tools == nil {
+		t.Fatal("installer was not called")
+	}
+	tool, ok := installed.Tools["demo_tool"]
+	if !ok {
+		t.Fatal("installed registry does not contain normalized tool name")
+	}
+	if tool.Image != "registry.example/dev/demo:1.2.3" || tool.Provider != "stateless" {
+		t.Fatalf("added tool = %#v", tool)
+	}
+	if len(tool.Command) != 0 || len(tool.EnvNames) != 0 || len(tool.ProjectVolumes) != 0 {
+		t.Fatalf("add inferred behavior beyond a minimal profile: %#v", tool)
+	}
+	written, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := registry.ParseTOML(string(written))
+	if err != nil {
+		t.Fatalf("written registry is invalid: %v", err)
+	}
+	if _, ok := parsed.Tools["demo_tool"]; !ok {
+		t.Fatal("written registry missing added tool")
+	}
+	if !strings.Contains(string(written), "# Added by cb add\n[tools.demo_tool]") {
+		t.Fatalf("written registry missing auditable add marker:\n%s", written)
+	}
+	if !strings.Contains(out, "added demo_tool -> registry.example/dev/demo:1.2.3 (stateless)") {
+		t.Fatalf("unexpected output:\n%s", out)
+	}
+	if !strings.Contains(out, "run `cb lock`") {
+		t.Fatalf("unlocked add did not recommend pinning:\n%s", out)
+	}
+}
+
+func TestAddReportsIncompleteExistingLock(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "container-bin.toml")
+	if err := registry.EnsureFile(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "container-bin.lock"), []byte("present"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	out, captureErr := captureStdout(func() error {
+		return add(registry.Default(), path, []string{"demo", "--image", "example/demo:1"}, func(registry.Registry) error { return nil })
+	})
+	if captureErr != nil {
+		t.Fatal(captureErr)
+	}
+	if !strings.Contains(out, "lockfile is now incomplete; run `cb update demo` or `cb lock`") {
+		t.Fatalf("existing lockfile warning missing:\n%s", out)
+	}
+}
+
+func TestAddInstallerFailureLeavesValidRegistry(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "container-bin.toml")
+	wantErr := errors.New("shim directory denied")
+	err := add(registry.Default(), path, []string{"demo", "--image", "example/demo:1"}, func(registry.Registry) error { return wantErr })
+	if !errors.Is(err, wantErr) || !strings.Contains(err.Error(), "profile \"demo\" was added") || !strings.Contains(err.Error(), "cb install") {
+		t.Fatalf("installer error = %v", err)
+	}
+	written, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	parsed, parseErr := registry.ParseTOML(string(written))
+	if parseErr != nil {
+		t.Fatalf("registry left invalid after installer failure: %v", parseErr)
+	}
+	if _, ok := parsed.Tools["demo"]; !ok {
+		t.Fatal("profile was not preserved for cb install retry")
+	}
+}
 
 // These tests cover Expose guard paths that need no Docker daemon.
 // The Docker-dependent discovery path (discoverNPMGlobalBins onward) remains

@@ -156,7 +156,7 @@ would create unrepresentable states. The Node 22 family (`node22`, `npm22`,
 
 ## Atomic writes
 
-Registry and lock mutations (expose, unexpose, uninstall, lock, update,
+Registry and lock mutations (add, expose, unexpose, uninstall, lock, update,
 restore) validate the complete resulting document *before* replacement, then
 write via temp file + rename with a short-lived `.bak` window (Windows cannot
 reliably rename over an open file). A crash mid-operation leaves either the
@@ -170,7 +170,7 @@ unlocked state.
 Atomic replacement protects file integrity, but it does not protect against
 lost updates when two `cb` processes read, modify and write the same file.
 Those mutations are therefore serialized through `container-bin.mutation.lock`
-next to the registry: `install`, `setup`, `restore`, `expose`, `unexpose`,
+next to the registry: `install`, `add`, `setup`, `restore`, `expose`, `unexpose`,
 `uninstall`, `lock` and `update` hold the lock across their whole
 read-modify-write sequence, while the shim-dispatch path and all read-only
 commands remain lock-free. `cb` loads the registry once before dispatch, outside the lock, only for
@@ -201,8 +201,8 @@ the tier below it; see the exact edges further down for that):
 main            argv[0] dispatch, subcommand switch, version, usage,
                 exit codes + fatalf/osExit, withMutationLock's signal wrapper
   ↓
-internal/cli    setup, install, expose, unexpose, uninstall, inspect, trace,
-                env, backup, restore, lock, update
+internal/cli    setup, install, add, expose, unexpose, uninstall, inspect,
+                trace, env, backup, restore, lock, update
   ↓
 internal/diag   doctor, self-test, bugreport, verdict functions, redaction
   ↓
