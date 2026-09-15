@@ -163,12 +163,26 @@ func TestParseVolumeBinding(t *testing.T) {
 		"data:/venv",
 		"data:/venv/bin",
 		"data:/venv/./bin",
-		"data:/safe/../venv",
 		"cache:/root/.cache/pip",
 		"cache:/root/.cache/pip/http",
 	} {
 		if _, _, err := ParseVolumeBinding(spec); err == nil || !strings.Contains(err.Error(), "reserved for python provider state") {
 			t.Errorf("ParseVolumeBinding(%q) error = %v, want reserved-path error", spec, err)
+		}
+	}
+	for _, spec := range []string{
+		"data:/venv/..",
+		"cache:/root/.cache/pip/..",
+		"data:/safe/../venv",
+		"data:/safe/../x",
+	} {
+		if _, _, err := ParseVolumeBinding(spec); err == nil || !strings.Contains(err.Error(), "must not contain \"..\"") {
+			t.Errorf("ParseVolumeBinding(%q) error = %v, want traversal error", spec, err)
+		}
+	}
+	for _, spec := range []string{"data:/", "data:/./"} {
+		if _, _, err := ParseVolumeBinding(spec); err == nil || !strings.Contains(err.Error(), "must not be the filesystem root") {
+			t.Errorf("ParseVolumeBinding(%q) error = %v, want filesystem-root error", spec, err)
 		}
 	}
 	for _, spec := range []string{"data:/venv-data", "cache:/root/.cache/pipeline"} {
