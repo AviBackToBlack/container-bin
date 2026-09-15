@@ -161,6 +161,13 @@ func windowsDriveType(driveLetter string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+func registrySchemaVerdict(version int) (status, message string) {
+	if version < 1 || version > registry.MaxSchemaVersion {
+		return "fail", fmt.Sprintf("registry schema=%d (supported=1..%d)", version, registry.MaxSchemaVersion)
+	}
+	return "ok", fmt.Sprintf("registry schema %d", version)
+}
+
 func Doctor(reg registry.Registry, cfgPath string) error {
 	failures := 0
 	warnings := 0
@@ -197,10 +204,10 @@ func Doctor(reg registry.Registry, cfgPath string) error {
 		}
 	}
 
-	if reg.SchemaVersion != 1 {
-		fail("registry schema=%d (supported=1)", reg.SchemaVersion)
+	if status, msg := registrySchemaVerdict(reg.SchemaVersion); status == "ok" {
+		ok("%s: %s", msg, cfgPath)
 	} else {
-		ok("registry schema 1: %s", cfgPath)
+		fail("%s", msg)
 	}
 
 	lf, lockPath, err := lockfile.LoadForRegistry()

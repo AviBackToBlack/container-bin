@@ -148,7 +148,7 @@ func upgradeV1Registry(path string, data []byte, reg Registry, cbVersion string)
 		trim := strings.TrimSpace(line)
 		if strings.HasPrefix(trim, "schema_version") {
 			foundSchema = true
-			out.WriteString("schema_version = 2" + newline)
+			out.WriteString(fmt.Sprintf("schema_version = %d%s", MaxSchemaVersion, newline))
 			continue
 		}
 		if strings.HasPrefix(trim, "[tools.") && strings.HasSuffix(trim, "]") {
@@ -166,7 +166,7 @@ func upgradeV1Registry(path string, data []byte, reg Registry, cbVersion string)
 	if !foundSchema {
 		body := out.String()
 		out.Reset()
-		out.WriteString("schema_version = 2" + newline)
+		out.WriteString(fmt.Sprintf("schema_version = %d%s", MaxSchemaVersion, newline))
 		out.WriteString(body)
 		if len(body) > 0 && !strings.HasSuffix(body, "\n") {
 			out.WriteString(newline)

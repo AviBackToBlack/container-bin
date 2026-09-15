@@ -144,6 +144,7 @@ func GC(reg registry.Registry, args []string) error {
 			filter = strings.ToLower(a)
 		}
 	}
+	resolvedFilter, stateGroupFilter := resolveGCFilter(reg, filter)
 	if orphans {
 		vols, err := dockervol.LabeledManaged()
 		if err != nil {
@@ -158,7 +159,7 @@ func GC(reg registry.Registry, args []string) error {
 			if path == "" {
 				continue
 			}
-			if filter != "" && filter != strings.ToLower(v.Labels["cb.owner"]) && !strings.HasPrefix(strings.ToLower(v.Labels["cb.owner"]), filter+"/") {
+			if !orphanOwnerMatchesFilter(v.Labels["cb.owner"], filter, stateGroupFilter) {
 				continue
 			}
 			if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -195,12 +196,6 @@ func GC(reg registry.Registry, args []string) error {
 		return err
 	}
 	candidates := map[string]string{}
-	resolvedFilter := ""
-	if filter != "" {
-		if _, resolved, ok := reg.Resolve(filter); ok {
-			resolvedFilter = resolved
-		}
-	}
 	for _, t := range reg.Tools {
 		if filter != "" && filter != t.Name && resolvedFilter != t.Name && filter != t.StateGroup && !(filter == "python" && t.Provider == "python") {
 			continue
@@ -257,4 +252,32 @@ func GC(reg registry.Registry, args []string) error {
 		}
 	}
 	return nil
+}
+
+func resolveGCFilter(reg registry.Registry, filter string) (resolved, stateGroup string) {
+	if filter == "" {
+		return "", ""
+	}
+	t, resolved, ok := reg.Resolve(filter)
+	if !ok {
+		return "", ""
+	}
+	if t.Provider == "python" {
+		return resolved, "python313"
+	}
+	return resolved, t.StateGroup
+}
+
+func orphanOwnerMatchesFilter(owner, filter, stateGroup string) bool {
+	if filter == "" {
+		return true
+	}
+	owner = strings.ToLower(owner)
+	for _, candidate := range []string{filter, stateGroup} {
+		candidate = strings.ToLower(candidate)
+		if candidate != "" && (owner == candidate || strings.HasPrefix(owner, candidate+"/")) {
+			return true
+		}
+	}
+	return false
 }
