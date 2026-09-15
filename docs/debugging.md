@@ -27,10 +27,11 @@ Remove-Item Env:CB_DEBUG, Env:CB_DEBUG_LOG
 ```
 
 The parent directory must already exist. ContainerBin appends one complete
-line per invocation and fails closed before running Docker if it cannot open,
-write or close the configured log. `CB_DEBUG_LOG` alone does nothing; logging
-requires `CB_DEBUG=1` so a stale environment variable cannot silently collect
-future commands.
+line per invocation, using an OS file lock to serialize concurrent ContainerBin
+processes, and fails closed before running Docker if it cannot open, lock,
+seek, write, unlock or close the configured log. `CB_DEBUG_LOG` alone does
+nothing; logging requires `CB_DEBUG=1` so a stale environment variable cannot
+silently collect future commands.
 
 ## Sensitive data warning
 

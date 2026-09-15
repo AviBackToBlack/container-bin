@@ -3,11 +3,16 @@ package dockerrun
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -102,6 +107,71 @@ func TestWriteDockerRunTraceAppendsLog(t *testing.T) {
 		wantLast := []string{"first", "second"}[i]
 		if got.Argv[len(got.Argv)-1] != wantLast {
 			t.Fatalf("log line %d last argv = %q, want %q", i, got.Argv[len(got.Argv)-1], wantLast)
+		}
+	}
+}
+
+func TestWriteDockerRunTraceConcurrentProcesses(t *testing.T) {
+	if worker := os.Getenv("CB_TRACE_TEST_WORKER"); worker != "" {
+		payload := worker + ":" + strings.Repeat("x", 32*1024)
+		for i := 0; i < 4; i++ {
+			args := []string{"run", "demo:1", payload, strconv.Itoa(i)}
+			if err := writeDockerRunTrace(io.Discard, registry.Tool{Name: worker}, runContext{}, args); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return
+	}
+
+	const workers = 8
+	logPath := filepath.Join(t.TempDir(), "concurrent-trace.jsonl")
+	var wg sync.WaitGroup
+	errs := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		worker := fmt.Sprintf("worker-%d", i)
+		cmd := exec.Command(os.Args[0], "-test.run=^TestWriteDockerRunTraceConcurrentProcesses$")
+		cmd.Env = append(os.Environ(),
+			"CB_DEBUG=1",
+			"CB_DEBUG_LOG="+logPath,
+			"CB_TRACE_TEST_WORKER="+worker,
+		)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if output, err := cmd.CombinedOutput(); err != nil {
+				errs <- fmt.Errorf("%s: %w\n%s", worker, err, output)
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+	if t.Failed() {
+		return
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := bytes.Split(bytes.TrimSpace(data), []byte("\n"))
+	if len(lines) != workers*4 {
+		t.Fatalf("log contains %d lines, want %d", len(lines), workers*4)
+	}
+	counts := map[string]int{}
+	for i, line := range lines {
+		var got dockerRunTrace
+		if err := json.Unmarshal(line, &got); err != nil {
+			t.Fatalf("log line %d is corrupt JSON: %v", i, err)
+		}
+		counts[got.Tool]++
+	}
+	for i := 0; i < workers; i++ {
+		worker := fmt.Sprintf("worker-%d", i)
+		if counts[worker] != 4 {
+			t.Errorf("%s wrote %d complete records, want 4", worker, counts[worker])
 		}
 	}
 }

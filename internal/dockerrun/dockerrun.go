@@ -136,11 +136,11 @@ func writeDockerRunTrace(stderr io.Writer, t registry.Tool, ctx runContext, args
 		if !filepath.IsAbs(logPath) {
 			return fmt.Errorf("CB_DEBUG_LOG must be an absolute path: %s", logPath)
 		}
-		logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+		logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY, 0600)
 		if err != nil {
 			return fmt.Errorf("open CB_DEBUG_LOG %s: %w", logPath, err)
 		}
-		if _, err := logFile.Write(line); err != nil {
+		if err := appendLockedTrace(logFile, line); err != nil {
 			_ = logFile.Close()
 			return fmt.Errorf("write CB_DEBUG_LOG %s: %w", logPath, err)
 		}
@@ -153,6 +153,22 @@ func writeDockerRunTrace(stderr io.Writer, t registry.Tool, ctx runContext, args
 		return fmt.Errorf("write CB_DEBUG trace to stderr: %w", err)
 	}
 	return nil
+}
+
+func appendLockedTrace(logFile *os.File, line []byte) (err error) {
+	if err := lockTraceFile(logFile); err != nil {
+		return fmt.Errorf("lock trace log: %w", err)
+	}
+	defer func() {
+		if unlockErr := unlockTraceFile(logFile); err == nil && unlockErr != nil {
+			err = fmt.Errorf("unlock trace log: %w", unlockErr)
+		}
+	}()
+	if _, err := logFile.Seek(0, io.SeekEnd); err != nil {
+		return fmt.Errorf("seek trace log: %w", err)
+	}
+	_, err = logFile.Write(line)
+	return err
 }
 
 func resolveRunContext(t registry.Tool, cwd string) (runContext, error) {
