@@ -22,6 +22,7 @@ import (
 	"github.com/AviBackToBlack/container-bin/internal/lockfile"
 	"github.com/AviBackToBlack/container-bin/internal/pathmap"
 	"github.com/AviBackToBlack/container-bin/internal/registry"
+	"github.com/AviBackToBlack/container-bin/internal/statearchive"
 	"github.com/AviBackToBlack/container-bin/internal/toml"
 )
 
@@ -463,24 +464,35 @@ func Uninstall(reg registry.Registry, cfgPath string, args []string) error {
 // --- v0.9 image locking ----------------------------------------------------
 
 func Backup(cfgPath string, args []string, version string) error {
-	if len(args) > 1 {
-		return errors.New("usage: cb backup [BACKUP.zip]")
+	pathArg, stateNames, err := parseBackupArgs(args)
+	if err != nil {
+		return err
 	}
 	dir := filepath.Dir(cfgPath)
+	created := time.Now()
 	path := ""
-	if len(args) == 1 {
-		path = args[0]
+	if pathArg != "" {
+		path = pathArg
 	} else {
 		backupDir := filepath.Join(dir, "backups")
 		if err := os.MkdirAll(backupDir, 0755); err != nil {
 			return err
 		}
-		path = filepath.Join(backupDir, "container-bin-backup-"+time.Now().Format("20060102-150405")+".zip")
+		path = filepath.Join(backupDir, "container-bin-backup-"+created.Format("20060102-150405")+".zip")
 	}
-	f, err := os.Create(path)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("backup %q already exists; choose a different filename", path)
+		}
 		return err
 	}
+	complete := false
+	defer func() {
+		if !complete {
+			_ = os.Remove(path)
+		}
+	}()
 	zw := zip.NewWriter(f)
 	add := func(src, name string, required bool) error {
 		b, err := os.ReadFile(src)
@@ -507,8 +519,27 @@ func Backup(cfgPath string, args []string, version string) error {
 		f.Close()
 		return err
 	}
-	meta, _ := zw.Create("backup-info.txt")
-	fmt.Fprintf(meta, "container-bin %s\ncreated=%s\nsource=%s\n", version, time.Now().Format(time.RFC3339), dir)
+	stateCount := 0
+	if len(stateNames) > 0 {
+		manifest, err := statearchive.Backup(zw, stateNames, version, created)
+		if err != nil {
+			zw.Close()
+			f.Close()
+			return err
+		}
+		stateCount = len(manifest.Volumes)
+	}
+	meta, err := zw.Create("backup-info.txt")
+	if err != nil {
+		zw.Close()
+		f.Close()
+		return err
+	}
+	if _, err := fmt.Fprintf(meta, "container-bin %s\ncreated=%s\nsource=%s\nstate_volumes=%d\n", version, created.Format(time.RFC3339), dir, stateCount); err != nil {
+		zw.Close()
+		f.Close()
+		return err
+	}
 	if err := zw.Close(); err != nil {
 		f.Close()
 		return err
@@ -516,17 +547,58 @@ func Backup(cfgPath string, args []string, version string) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
+	complete = true
 	abs, _ := filepath.Abs(path)
 	fmt.Printf("backup: %s\n", abs)
+	if stateCount > 0 {
+		fmt.Printf("state:  %d explicitly selected managed volume(s)\n", stateCount)
+	}
 	return nil
 }
 
-func Restore(cfgPath string, args []string) error {
-	if len(args) < 1 || len(args) > 2 || (len(args) == 2 && args[1] != "--apply") {
-		return errors.New("usage: cb restore BACKUP.zip [--apply]")
+func parseBackupArgs(args []string) (path string, state []string, err error) {
+	stateIndex := -1
+	for i, arg := range args {
+		if arg == "--state" {
+			if stateIndex != -1 {
+				return "", nil, errors.New("--state may be specified only once")
+			}
+			stateIndex = i
+		}
 	}
-	apply := len(args) == 2
-	zr, err := zip.OpenReader(args[0])
+	if stateIndex == -1 {
+		if len(args) > 1 || (len(args) == 1 && strings.HasPrefix(args[0], "-")) {
+			return "", nil, errors.New("usage: cb backup [BACKUP.zip] [--state VOLUME ...]")
+		}
+		if len(args) == 1 {
+			path = args[0]
+		}
+		return path, nil, nil
+	}
+	if stateIndex > 1 || stateIndex == len(args)-1 {
+		return "", nil, errors.New("usage: cb backup [BACKUP.zip] --state VOLUME [VOLUME ...]")
+	}
+	if stateIndex == 1 {
+		if strings.HasPrefix(args[0], "-") {
+			return "", nil, errors.New("backup path must precede --state")
+		}
+		path = args[0]
+	}
+	for _, name := range args[stateIndex+1:] {
+		if strings.HasPrefix(name, "-") {
+			return "", nil, fmt.Errorf("invalid state volume name %q", name)
+		}
+		state = append(state, name)
+	}
+	return path, state, nil
+}
+
+func Restore(cfgPath string, args []string) error {
+	backupPath, apply, restoreState, err := parseRestoreArgs(args)
+	if err != nil {
+		return err
+	}
+	zr, err := zip.OpenReader(backupPath)
 	if err != nil {
 		return err
 	}
@@ -535,6 +607,9 @@ func Restore(cfgPath string, args []string) error {
 	for _, f := range zr.File {
 		if f.Name != "container-bin.toml" && f.Name != "container-bin.lock" {
 			continue
+		}
+		if _, duplicate := files[f.Name]; duplicate {
+			return fmt.Errorf("backup contains duplicate entry %q", f.Name)
 		}
 		r, err := f.Open()
 		if err != nil {
@@ -569,16 +644,46 @@ func Restore(cfgPath string, args []string) error {
 			return fmt.Errorf("backup lock invalid: %w", err)
 		}
 	}
-	fmt.Printf("restore source: %s\n", args[0])
+	var stateBackup *statearchive.Archive
+	var statePlan []statearchive.Plan
+	if restoreState {
+		stateBackup, err = statearchive.Open(zr.File)
+		if err != nil {
+			return err
+		}
+		statePlan, err = stateBackup.Plan()
+		if err != nil {
+			return err
+		}
+	}
+	fmt.Printf("restore source: %s\n", backupPath)
 	fmt.Printf("  container-bin.toml: %d bytes\n", len(cfg))
 	if b, ok := files["container-bin.lock"]; ok {
 		fmt.Printf("  container-bin.lock: %d bytes\n", len(b))
 	} else {
 		fmt.Println("  container-bin.lock: absent")
 	}
+	if restoreState {
+		fmt.Printf("  state manifest: %d volume(s), checksums valid\n", len(statePlan))
+		for _, plan := range statePlan {
+			fmt.Printf("    %-13s %s\n", plan.Status, plan.Name)
+		}
+	} else {
+		for _, f := range zr.File {
+			if f.Name == statearchive.ManifestName {
+				fmt.Println("  state manifest: present but not selected (add --state)")
+				break
+			}
+		}
+	}
 	if !apply {
-		fmt.Println("\nDry run only. Re-run with --apply to restore registry/lock.")
+		fmt.Println("\nDry run only. Re-run with --apply to perform the reported restore.")
 		return nil
+	}
+	if restoreState {
+		if err := stateBackup.Restore(); err != nil {
+			return err
+		}
 	}
 	if err := atomicio.WriteFile(cfgPath, cfg, 0644); err != nil {
 		return err
@@ -592,8 +697,36 @@ func Restore(cfgPath string, args []string) error {
 		_ = os.Remove(lockPath)
 		_ = os.Remove(lockPath + ".bak")
 	}
-	fmt.Println("restored registry/lock atomically; run `cb install` to reconcile shims")
+	if restoreState {
+		fmt.Printf("restored %d state volume(s); registry/lock restored atomically; run `cb install` to reconcile shims\n", len(statePlan))
+	} else {
+		fmt.Println("restored registry/lock atomically; run `cb install` to reconcile shims")
+	}
 	return nil
+}
+
+func parseRestoreArgs(args []string) (path string, apply, state bool, err error) {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return "", false, false, errors.New("usage: cb restore BACKUP.zip [--state] [--apply]")
+	}
+	path = args[0]
+	for _, arg := range args[1:] {
+		switch arg {
+		case "--apply":
+			if apply {
+				return "", false, false, errors.New("--apply may be specified only once")
+			}
+			apply = true
+		case "--state":
+			if state {
+				return "", false, false, errors.New("--state may be specified only once")
+			}
+			state = true
+		default:
+			return "", false, false, fmt.Errorf("unknown restore option %q", arg)
+		}
+	}
+	return path, apply, state, nil
 }
 
 func Lock(reg registry.Registry, cfgPath string, args []string) error {
