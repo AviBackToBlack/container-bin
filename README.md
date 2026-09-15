@@ -144,6 +144,13 @@ Semantics include `command`, `args_prefix`, `path_next`, `path_equals`,
 ignored, and a `schema_version` newer than the binary supports fails closed.
 Edit the file, then run `cb install` to reconcile shims.
 
+Tool names use lowercase letters, digits, `-`, and `_`. Names that collide
+with ContainerBin or Windows devices are reserved. Release binaries named
+`cb-v` followed immediately by a digit (for example, `cb-v1.2.3.exe`) also
+remain reserved for the management CLI; ordinary names that merely start with
+`cb-v` but have no digit there, such as `cb-vault`, are valid tool shims and
+dispatch to their registered profile.
+
 ### Explicit host bind mounts (`host_mounts`)
 
 `host_mounts` lets a trusted profile declare fixed host paths that are always
