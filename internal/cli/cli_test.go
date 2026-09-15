@@ -170,6 +170,55 @@ func TestDefaultAliasesAreVisibleInManagementCommands(t *testing.T) {
 	}
 }
 
+func TestRemovalCommandsRefuseAliasesWithoutMutation(t *testing.T) {
+	const config = `schema_version = 2
+
+[defaults.acme]
+version = "1"
+
+[tools.acme1]
+default_family = "acme"
+default_version = "1"
+default_alias = "acme"
+image = "example/acme:1"
+provider = "stateful"
+command = ["/cb/npm-global/bin/acme"]
+state_group = "acme1"
+shared_volumes = ["global:/cb/npm-global"]
+`
+	reg, err := registry.ParseTOML(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name string
+		run  func(string) error
+		want string
+	}{
+		{name: "uninstall", run: func(path string) error { return Uninstall(reg, path, []string{"acme"}) }, want: "uninstall requires a concrete tool name"},
+		{name: "unexpose", run: func(path string) error { return Unexpose(reg, path, []string{"acme"}) }, want: "unexpose requires a concrete tool name"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "container-bin.toml")
+			if err := os.WriteFile(path, []byte(config), 0644); err != nil {
+				t.Fatal(err)
+			}
+			err := tt.run(path)
+			if err == nil || !strings.Contains(err.Error(), `"acme" is an alias for "acme1"`) || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v", err)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(data) != config {
+				t.Fatalf("%s mutated the registry before refusing the alias", tt.name)
+			}
+		})
+	}
+}
+
 // These tests cover Expose guard paths that need no Docker daemon.
 // The Docker-dependent discovery path (discoverNPMGlobalBins onward) remains
 // untested here because it requires a real Docker daemon and a populated

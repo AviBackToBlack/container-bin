@@ -516,9 +516,12 @@ func Unexpose(reg registry.Registry, cfgPath string, args []string) error {
 	remove := map[string]bool{}
 	for _, a := range args {
 		name := strings.ToLower(a)
-		t, _, ok := reg.Resolve(name)
+		t, resolved, ok := reg.Resolve(name)
 		if !ok {
 			return fmt.Errorf("tool %q not found", name)
+		}
+		if resolved != name {
+			return fmt.Errorf("tool %q is an alias for %q; unexpose requires a concrete tool name", name, resolved)
 		}
 		if len(t.Command) != 1 || !strings.HasPrefix(t.Command[0], "/cb/npm-global/bin/") {
 			return fmt.Errorf("%s is not an npm-exposed tool", name)
@@ -550,6 +553,9 @@ func Uninstall(reg registry.Registry, cfgPath string, args []string) error {
 		_, resolved, ok := reg.Resolve(name)
 		if !ok {
 			return fmt.Errorf("tool %q not found", name)
+		}
+		if resolved != name {
+			return fmt.Errorf("tool %q is an alias for %q; uninstall requires a concrete tool name", name, resolved)
 		}
 		if _, ok := builtins[resolved]; ok {
 			return fmt.Errorf("%s is a built-in profile managed by cb install; edit the registry manually if you intentionally want to disable it", name)

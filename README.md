@@ -303,7 +303,10 @@ cb default set node 24
 
 `cb inspect node` and `cb trace node ...` show the concrete profile currently
 selected. Alias resolution reuses that profile's image, state group and volumes;
-it does not copy tool configuration. `cb install` and `cb setup` migrate stock
+it does not copy tool configuration. Destructive profile commands fail closed
+on aliases: `cb uninstall` and `cb unexpose` require the concrete profile name
+instead of deleting an alias shim while leaving its family metadata intact.
+`cb install` and `cb setup` migrate stock
 schema-v1 Node profiles automatically. A customized legacy `node`/`npm`/`npx`
 profile is not assigned a version by guesswork: the upgrade stops and asks you
 to give it an explicit versioned name and alias metadata. Project
