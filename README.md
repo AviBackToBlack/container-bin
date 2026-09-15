@@ -116,7 +116,8 @@ cb lock
 |---|---|---|
 | `python`, `python3` | `python:3.13-slim` | python (project `/venv` in a named volume) |
 | `pip`, `pip3` | `python:3.13-slim` | python |
-| `node`, `npm`, `npx` | `node:24-slim` | stateful (`node24` state group) |
+| `node`, `npm`, `npx` (default aliases) | selected Node family | stateful |
+| `node24`, `npm24`, `npx24` | `node:24-slim` | stateful (`node24` state group) |
 | `node22`, `npm22`, `npx22` | `node:22-slim` | stateful (`node22` state group) |
 | `go`, `gofmt` | `golang:1.24` | stateful (`go124` state group) |
 | `jq` | `ghcr.io/jqlang/jq:latest` | stateless |
@@ -140,7 +141,8 @@ env_prefixes = ["TF_", "AWS_", "ARM_"]  # only these host vars enter the contain
 Semantics include `command`, `args_prefix`, `path_next`, `path_equals`,
 `path_last`, `path_last_if_any`, `env_names`, `env_prefixes`, `env_set`,
 `project_markers`, `state_group`, `project_volumes`, `shared_volumes`,
-`host_mounts` and `cwd_mode`. Unknown keys **fail validation** instead of being silently
+`host_mounts`, `cwd_mode`, and the explicit `default_family` / `default_version`
+/ `default_alias` relationship. Unknown keys **fail validation** instead of being silently
 ignored, and a `schema_version` newer than the binary supports fails closed.
 Edit the file, then run `cb install` to reconcile shims.
 
@@ -254,13 +256,32 @@ persistent per-project `/venv` named volume, plus a shared pip cache volume.
 Outside any project, a compatibility "global" environment serves programs that
 just invoke `python`/`pip` from anywhere.
 
-**Node:** `node`/`npm`/`npx` share the `node24` state group. Project
+**Node:** `node24`/`npm24`/`npx24` share the `node24` state group. The
+unversioned `node`/`npm`/`npx` shims are aliases to one complete versioned
+family; Node 24 is selected initially. Switch all three together without
+changing the stable versioned shims:
+
+```powershell
+cb default
+cb default set node 22
+cb default set node 24
+```
+
+`cb inspect node` and `cb trace node ...` show the concrete profile currently
+selected. Alias resolution reuses that profile's image, state group and volumes;
+it does not copy tool configuration. Destructive profile commands fail closed
+on aliases: `cb uninstall` and `cb unexpose` require the concrete profile name
+instead of deleting an alias shim while leaving its family metadata intact.
+`cb install` and `cb setup` migrate stock
+schema-v1 Node profiles automatically. A customized legacy `node`/`npm`/`npx`
+profile is not assigned a version by guesswork: the upgrade stops and asks you
+to give it an explicit versioned name and alias metadata. Project
 dependencies live in a project-scoped named volume mounted at the project's
 `node_modules` (the host may show an empty `node_modules` mountpoint directory
 — contents live in the volume). There's a shared npm cache and a persistent
 npm global prefix. Projects are mounted with their **real basename**
 (`D:\TEMP\node-demo-3` → `/workspace/node-demo-3`) because tools like
-`npm init` derive metadata from it. Node 24 is the default runtime, but it is
+`npm init` derive metadata from it. Node 24 is the initial default runtime, but it is
 not a guarantee that every npm package is ABI-compatible with it. For packages
 whose native addons need a different Node ABI, `node22`/`npm22`/`npx22` are a
 second, independent Node-major runtime with their own `node22` state group,
@@ -303,10 +324,11 @@ Runtime behavior is fail-closed:
 - an image configured in the registry but missing from the lock → execution
   **fails** and asks for `cb update TOOL` or `cb lock`.
 
-Tools sharing an image share one lock entry (`node`, `npm`, `npx` and all
-npm-exposed tools ride the single `node:24-slim` entry). The Node 22 runtime
-family (`node22`, `npm22`, `npx22` and anything exposed from `npm22`) ride a
-separate `node:22-slim` lock entry.
+Tools sharing an image share one lock entry. The Node 24 family
+(`node24`, `npm24`, `npx24`, its aliases when selected, and anything exposed
+from `npm24`) rides the single `node:24-slim` entry. The Node 22 family
+(`node22`, `npm22`, `npx22`, its aliases when selected, and anything exposed
+from `npm22`) rides a separate `node:22-slim` lock entry.
 
 ## State inspection and garbage collection
 
@@ -364,6 +386,8 @@ cb trace ...  # dry-run argv/mount mapping for one command
 cb inspect TOOL
 cb env
 cb list
+cb default
+cb default set node 22
 ```
 
 `cb bugreport` assembles `cb version`, the Windows and PowerShell versions

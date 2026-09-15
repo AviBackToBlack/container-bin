@@ -29,6 +29,9 @@ func TestParseDefaultRegistry(t *testing.T) {
 	if len(reg.Tools) != 16 {
 		t.Fatalf("expected 16 tools, got %d", len(reg.Tools))
 	}
+	if len(reg.ToolNames()) != 19 {
+		t.Fatalf("expected 19 invokable shim names, got %d", len(reg.ToolNames()))
+	}
 	jq := reg.Tools["jq"]
 	if jq.Provider != "stateless" || jq.Image != "ghcr.io/jqlang/jq:latest" {
 		t.Fatalf("bad jq profile: %+v", jq)
@@ -36,6 +39,49 @@ func TestParseDefaultRegistry(t *testing.T) {
 	pip := reg.Tools["pip"]
 	if pip.Provider != "python" || pip.Role != "pip" {
 		t.Fatalf("bad pip profile: %+v", pip)
+	}
+}
+
+func TestDefaultAliasesSwitchAsOneFamily(t *testing.T) {
+	reg, err := ParseTOML(DefaultTOML)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg.Defaults["node"] = "22"
+	for _, alias := range []string{"node", "npm", "npx"} {
+		tool, resolved, ok := reg.Resolve(alias)
+		if !ok || resolved != alias+"22" {
+			t.Fatalf("%s resolved to %q, ok=%v", alias, resolved, ok)
+		}
+		if tool.StateGroup != "node22" || tool.Image != "node:22-slim" {
+			t.Fatalf("%s resolved with wrong state/image: %+v", alias, tool)
+		}
+	}
+	if _, resolved, ok := reg.Resolve("node24"); !ok || resolved != "node24" {
+		t.Fatalf("stable node24 profile changed: resolved=%q ok=%v", resolved, ok)
+	}
+}
+
+func TestDefaultAliasValidationFailsClosed(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{"schema_v1", strings.Replace(DefaultTOML, "schema_version = 2", "schema_version = 1", 1), "requires schema_version = 2"},
+		{"unavailable_version", strings.Replace(DefaultTOML, "version = \"24\"", "version = \"26\"", 1), "selects unavailable version"},
+		{"partial_metadata", strings.Replace(DefaultTOML, "default_alias = \"node\"\n", "", 1), "must be declared together"},
+		{"incomplete_family", strings.Replace(DefaultTOML, DefaultToolSections()["npx22"], "", 1), "does not supply the same aliases"},
+		{"concrete_collision", DefaultTOML + "\n[tools.node]\nimage = \"node:99\"\nprovider = \"stateless\"\n", "collides with a concrete tool profile"},
+		{"cross_family_collision", DefaultTOML + "\n[defaults.alt]\nversion = \"1\"\n[tools.alt1]\ndefault_family = \"alt\"\ndefault_version = \"1\"\ndefault_alias = \"node\"\nimage = \"alt:1\"\n", "declared by both"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseTOML(tc.src)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want substring %q", err, tc.want)
+			}
+		})
 	}
 }
 
@@ -110,9 +156,14 @@ func TestDefaultRegistryHasV06Tools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"python", "pip", "jq", "yq", "terraform", "ffmpeg", "node", "npm", "npx", "go", "gofmt"} {
+	for _, name := range []string{"python", "pip", "jq", "yq", "terraform", "ffmpeg", "node24", "npm24", "npx24", "go", "gofmt"} {
 		if _, ok := reg.Tools[name]; !ok {
 			t.Fatalf("missing default tool %q", name)
+		}
+	}
+	for _, alias := range []string{"node", "npm", "npx"} {
+		if _, resolved, ok := reg.Resolve(alias); !ok || resolved != alias+"24" {
+			t.Fatalf("alias %q resolved to %q, ok=%v", alias, resolved, ok)
 		}
 	}
 	if strings.Join(reg.Tools["terraform"].PathEquals, "|") != "-chdir" {
@@ -122,10 +173,13 @@ func TestDefaultRegistryHasV06Tools(t *testing.T) {
 
 func TestDefaultToolSections(t *testing.T) {
 	sections := DefaultToolSections()
-	for _, name := range []string{"python", "yq", "terraform", "ffmpeg", "node", "node22", "npm", "npm22", "npx", "npx22", "go", "gofmt"} {
+	for _, name := range []string{"python", "yq", "terraform", "ffmpeg", "node24", "node22", "npm24", "npm22", "npx24", "npx22", "go", "gofmt"} {
 		if !strings.Contains(sections[name], "[tools."+name+"]") {
 			t.Fatalf("bad section for %s: %q", name, sections[name])
 		}
+	}
+	if section := DefaultFamilySections()["node"]; !strings.Contains(section, "[defaults.node]") {
+		t.Fatalf("bad default family section: %q", section)
 	}
 }
 
@@ -134,7 +188,7 @@ func TestNodeProfilesShareStateGroupAndVolumes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"node", "npm", "npx"} {
+	for _, name := range []string{"node24", "npm24", "npx24"} {
 		tool := reg.Tools[name]
 		if tool.Provider != "stateful" || tool.StateGroup != "node24" {
 			t.Fatalf("bad %s state profile: %+v", name, tool)
@@ -211,7 +265,7 @@ func TestRegistrySchemaVersion(t *testing.T) {
 	if reg.SchemaVersion != 1 {
 		t.Fatalf("schema=%d", reg.SchemaVersion)
 	}
-	if _, err := ParseTOML("schema_version = 2\n\n[tools.x]\nimage = \"x:1\"\nprovider = \"stateless\"\n"); err == nil {
+	if _, err := ParseTOML("schema_version = 3\n\n[tools.x]\nimage = \"x:1\"\nprovider = \"stateless\"\n"); err == nil {
 		t.Fatal("expected newer schema rejection")
 	}
 }
@@ -406,9 +460,9 @@ func TestNode22ProfilesParseAndVolumes(t *testing.T) {
 		}
 	}
 	pairs := []struct{ old, new string }{
-		{"node", "node22"},
-		{"npm", "npm22"},
-		{"npx", "npx22"},
+		{"node24", "node22"},
+		{"npm24", "npm22"},
+		{"npx24", "npx22"},
 	}
 	for _, p := range pairs {
 		oldTool, newTool := reg.Tools[p.old], reg.Tools[p.new]
