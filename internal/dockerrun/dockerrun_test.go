@@ -488,6 +488,75 @@ func TestBuildDockerArgsIsolatedNoCwdMount(t *testing.T) {
 	}
 }
 
+func TestCargoDockerArgsCoverWorkspacePathsPayloadAndVolumes(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows path mapping is required")
+	}
+	workspaceDir := t.TempDir()
+	memberDir := filepath.Join(workspaceDir, "crates", "app")
+	cwdDir := filepath.Join(memberDir, "src")
+	if err := os.MkdirAll(cwdDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, manifest := range []string{filepath.Join(workspaceDir, "Cargo.toml"), filepath.Join(memberDir, "Cargo.toml")} {
+		if err := os.WriteFile(manifest, []byte("[workspace]\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	workspace, err := pathmap.CanonicalPath(workspaceDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cwd, err := pathmap.CanonicalPath(cwdDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	externalDir := t.TempDir()
+	externalManifest := filepath.Join(externalDir, "Cargo.toml")
+	if err := os.WriteFile(externalManifest, []byte("[package]\nname='outside'\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	externalManifest, err = pathmap.CanonicalPath(externalManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tool := registry.Default().Tools["cargo"]
+	ctx, err := resolveRunContext(tool, cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ctx.root != workspace {
+		t.Fatalf("run root = %q, want workspace %q", ctx.root, workspace)
+	}
+	userArgs := []string{"run", "--manifest-path=", externalManifest, "--target-dir", "target", "--", "--target-dir", "payload", "--manifest-path=" + externalManifest}
+	args, err := buildDockerArgs(tool, userArgs, ctx, tool.Image, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(args, "\n")
+	for _, want := range []string{
+		"type=bind,src=" + workspace + ",dst=" + ctx.workspaceRoot,
+		"type=bind,src=" + filepath.Dir(externalManifest) + ",dst=/cb/mounts/0",
+		"type=volume,src=cb-rust198-registry,dst=/usr/local/cargo/registry",
+		"type=volume,src=cb-rust198-git,dst=/usr/local/cargo/git",
+		"type=volume,src=cb-rust198-global,dst=/cb/cargo-global",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("docker args missing %q: %#v", want, args)
+		}
+	}
+	wantTail := []string{
+		"cargo", "run",
+		"--manifest-path=/cb/mounts/0/" + filepath.ToSlash(filepath.Base(externalManifest)),
+		"--target-dir", ctx.workspaceRoot + "/crates/app/src/target",
+		"--", "--target-dir", "payload", "--manifest-path=" + externalManifest,
+	}
+	if len(args) < len(wantTail) || !reflect.DeepEqual(args[len(args)-len(wantTail):], wantTail) {
+		t.Fatalf("docker argv tail = %#v, want %#v", args[len(args)-len(wantTail):], wantTail)
+	}
+}
+
 func TestBuildDockerArgsIsolatedExternalPath(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows path mapping is required for external-path assertions")

@@ -38,7 +38,7 @@ func currentProjectState(reg registry.Registry) (map[string]Volume, map[string]V
 	for _, t := range reg.Tools {
 		switch t.Provider {
 		case "stateful":
-			root, found := pathmap.FindProjectRoot(cwd, pathmap.ProjectMarkersFor(t))
+			root, found := pathmap.FindProjectRootForTool(cwd, t)
 			if !found {
 				root = cwd
 			}
@@ -59,7 +59,7 @@ func currentProjectState(reg registry.Registry) (map[string]Volume, map[string]V
 				shared[name] = Volume{Name: name, Kind: "shared", Owner: t.StateGroup + "/" + logical}
 			}
 		case "python":
-			root, found := pathmap.FindProjectRoot(cwd, pathmap.ProjectMarkersFor(t))
+			root, found := pathmap.FindProjectRootForTool(cwd, t)
 			if found {
 				name := pathmap.PythonEnvID(root, true)
 				project[name] = Volume{Name: name, Kind: "project", Owner: "python313/venv", Root: root, Current: true}
@@ -202,7 +202,7 @@ func GC(reg registry.Registry, args []string) error {
 		}
 		switch t.Provider {
 		case "stateful":
-			root, found := pathmap.FindProjectRoot(cwd, pathmap.ProjectMarkersFor(t))
+			root, found := pathmap.FindProjectRootForTool(cwd, t)
 			if !found {
 				root = cwd
 			}
@@ -214,7 +214,7 @@ func GC(reg registry.Registry, args []string) error {
 				candidates[pathmap.StatefulProjectVolumeID(t.StateGroup, logical, root, found)] = t.StateGroup + "/" + logical
 			}
 		case "python":
-			root, found := pathmap.FindProjectRoot(cwd, pathmap.ProjectMarkersFor(t))
+			root, found := pathmap.FindProjectRootForTool(cwd, t)
 			if found {
 				candidates[pathmap.PythonEnvID(root, true)] = "python313/venv"
 			}

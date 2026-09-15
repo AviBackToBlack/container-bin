@@ -150,9 +150,10 @@ env_prefixes = ["TF_", "AWS_", "ARM_"]  # only these host vars enter the contain
 Semantics include `command`, `args_prefix`, `path_next`, `path_equals`,
 `path_last`, `path_last_if_any`, `env_names`, `env_prefixes`, `env_set`,
 `project_markers`, `state_group`, `project_volumes`, `shared_volumes`,
-`host_mounts`, `cwd_mode`, and the explicit `default_family` / `default_version`
-/ `default_alias` relationship. Unknown keys **fail validation** instead of being silently
-ignored, and a `schema_version` newer than the binary supports fails closed.
+`project_root_mode`, `host_mounts`, `cwd_mode`, and the explicit
+`default_family` / `default_version` / `default_alias` relationship. Unknown
+keys **fail validation** instead of being silently ignored, and a
+`schema_version` newer than the binary supports fails closed.
 Edit the file, then run `cb install` to reconcile shims.
 
 Tool names use lowercase letters, digits, `-`, and `_`. Names that collide
@@ -344,10 +345,11 @@ installing a binary named `cargo` or `rustc` shadows the image's toolchain
 command inside this profile, so audit what you install into the shared store.
 
 Cargo build output deliberately stays in the host project tree rather than a
-Docker volume. ContainerBin finds a Cargo project from its `Cargo.toml`; run
-Cargo from that project (or a subdirectory), as usual. Paths supplied to
-`--target-dir` and `--manifest-path` are mapped into the container, including
-their `--option=PATH` forms. Path-valued host
+Docker volume. Cargo uses `project_root_mode = "outermost"`, so a member
+`Cargo.toml` or nested `rust-toolchain` does not hide a parent workspace from
+the container mount. Run Cargo from that project (or a subdirectory), as usual.
+Paths supplied to `--target-dir` and `--manifest-path` are mapped into the
+container, including their `--option=PATH` forms. Path-valued host
 variables such as `CARGO_HOME`, `CARGO_TARGET_DIR` and `RUSTUP_HOME` are not
 forwarded because their Windows values are not meaningful inside Linux;
 registry-specific Cargo variables and selected non-path settings are forwarded

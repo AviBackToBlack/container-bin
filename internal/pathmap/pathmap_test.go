@@ -49,6 +49,16 @@ func TestNormalizeToolArgsTrailingBarePrefix(t *testing.T) {
 	}
 }
 
+func TestNormalizeToolArgsStopsAtDoubleDash(t *testing.T) {
+	tool := registry.Tool{Name: "demo", PathEquals: []string{"--file"}}
+	in := []string{"run", "--file=", "before", "--", "--file=", "payload"}
+	want := []string{"run", "--file=before", "--", "--file=", "payload"}
+	got := NormalizeToolArgs(tool, in)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+}
+
 func TestNormalizeToolArgsEmptyPathEquals(t *testing.T) {
 	tool := registry.Tool{Name: "demo"}
 	in := []string{"--file=", "value", "x"}
@@ -367,6 +377,70 @@ func TestMapToolArgsPathEquals(t *testing.T) {
 	}
 	if len(mounts) != 0 {
 		t.Fatalf("B10: expected no mounts, got %#v", mounts)
+	}
+}
+
+func TestMapToolArgsForcedOptionsStopAtDoubleDash(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows path mapping is required")
+	}
+	root, ext := windowsFixtures(t)
+	tool := registry.Tool{Name: "cargo", PathNext: []string{"--target-dir"}, PathEquals: []string{"--manifest-path"}}
+	externalManifest := filepath.Join(ext, "Cargo.toml")
+	if err := os.WriteFile(externalManifest, []byte("[package]\nname='external'\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	externalManifest = mustCanonical(t, externalManifest)
+	in := []string{
+		"run",
+		"--manifest-path=" + externalManifest,
+		"--target-dir", "target",
+		"--",
+		"--target-dir", "payload",
+		"--manifest-path=" + externalManifest,
+	}
+	mapped, mounts, err := MapToolArgs(tool, root, root, "/workspace", in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"run",
+		"--manifest-path=/cb/mounts/0/" + filepath.ToSlash(filepath.Base(externalManifest)),
+		"--target-dir", "/workspace/target",
+		"--",
+		"--target-dir", "payload",
+		"--manifest-path=" + externalManifest,
+	}
+	if !reflect.DeepEqual(mapped, want) {
+		t.Fatalf("mapped = %#v, want %#v", mapped, want)
+	}
+	if len(mounts) != 1 || mounts[0].Source != ext || mounts[0].Target != "/cb/mounts/0" {
+		t.Fatalf("mounts = %#v", mounts)
+	}
+}
+
+func TestFindProjectRootForToolOutermostWorkspace(t *testing.T) {
+	workspace := t.TempDir()
+	member := filepath.Join(workspace, "crates", "app")
+	nested := filepath.Join(member, "src", "nested")
+	if err := os.MkdirAll(nested, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, marker := range []string{filepath.Join(workspace, "Cargo.toml"), filepath.Join(member, "Cargo.toml"), filepath.Join(member, "src", "rust-toolchain")} {
+		if err := os.WriteFile(marker, []byte{}, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tool := registry.Tool{ProjectMarkers: []string{"Cargo.toml", "rust-toolchain", ".git"}, ProjectRootMode: "outermost"}
+	root, found := FindProjectRootForTool(nested, tool)
+	if !found || root != workspace {
+		t.Fatalf("outermost root = %q, %v; want %q, true", root, found, workspace)
+	}
+	tool.ProjectRootMode = "nearest"
+	root, found = FindProjectRootForTool(nested, tool)
+	wantNearest := filepath.Join(member, "src")
+	if !found || root != wantNearest {
+		t.Fatalf("nearest root = %q, %v; want %q, true", root, found, wantNearest)
 	}
 }
 
