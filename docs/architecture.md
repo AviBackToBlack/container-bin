@@ -46,7 +46,7 @@ Three providers own lifecycle semantics:
   `python -m pip` inside the same environment.
 - **stateful** — generic declarative provider: `state_group` namespacing,
   `project_volumes` (scoped per project root), `shared_volumes`. Node/npm/npx,
-  go/gofmt and everything `cb expose` creates use this.
+  go/gofmt, ruby/gem/bundle and everything `cb expose` creates use this.
 
 ## Project roots and volume naming
 
