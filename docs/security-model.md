@@ -45,12 +45,16 @@ readable, and dangerous to let others edit.
   registry-image-not-in-lock all refuse to run rather than guess.
 - **Reserved shim names.** Tool names that would collide with `cb` itself or
   Windows device names (`con`, `nul`, `com1`, …) are rejected at validation,
-  including for binaries discovered from the npm global prefix (which are
-  untrusted input).
+  including for binaries discovered from npm or Go global stores (which are
+  untrusted input). Case-colliding names fail closed because Windows shims
+  cannot represent both safely.
 - **Conservative deletion.** `cb gc` is dry-run by default, deletes only
   explicitly selected current-project state with `--apply`, and only considers
   a volume an orphan when *its own labels* record a project path that no
-  longer exists. Unlabeled volumes are never deleted.
+  longer exists. Unlabeled volumes are never deleted. `cb unexpose` likewise
+  requires the explicit `role = "exposed"` ownership marker plus a matching
+  command/name and supported global-store mount; a similar-looking custom
+  profile is not treated as generated state.
 - **Validated atomic writes.** Registry/lock mutations parse the complete
   resulting file before atomically replacing the original; backups are
   restored the same way and only with `--apply`.
