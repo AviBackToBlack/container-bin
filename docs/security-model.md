@@ -91,6 +91,10 @@ readable, and dangerous to let others edit.
 - Before pasting `cb inspect` / registry snippets into issues, strip
   credentials: env allowlists tell attackers what's worth stealing, and
   proxy/registry URLs may embed passwords.
+- Treat `CB_DEBUG=1` output and `CB_DEBUG_LOG` files as sensitive. They contain
+  exact tool/Docker arguments and host paths and are not included in
+  `cb bugreport`; review and redact them before sharing. See
+  [runtime debug tracing](debugging.md).
 - Back up (`cb backup`) before hand-editing the registry.
 
 ## Reporting

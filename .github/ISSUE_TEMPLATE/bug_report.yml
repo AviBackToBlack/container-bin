@@ -77,3 +77,13 @@ body:
         For a specific tool misbehaving, paste sanitized `cb inspect TOOL` and
         `cb trace TOOL ARGS...` output, plus the relevant registry section.
       render: text
+  - type: textarea
+    id: runtime_trace
+    attributes:
+      label: CB_DEBUG runtime trace (optional)
+      description: |
+        If `cb trace` is insufficient, reproduce once with `CB_DEBUG=1` and
+        paste the sanitized JSON line from stderr. Exact argv and paths may
+        contain secrets; review and redact before posting. For an append-only
+        JSONL file, see `docs/debugging.md`.
+      render: json

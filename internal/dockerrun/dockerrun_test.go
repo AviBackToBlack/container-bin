@@ -1,16 +1,194 @@
 package dockerrun
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/AviBackToBlack/container-bin/internal/pathmap"
 	"github.com/AviBackToBlack/container-bin/internal/registry"
 )
+
+func TestWriteDockerRunTraceDisabled(t *testing.T) {
+	t.Setenv("CB_DEBUG", "")
+	logPath := filepath.Join(t.TempDir(), "trace.jsonl")
+	t.Setenv("CB_DEBUG_LOG", logPath)
+	var stderr bytes.Buffer
+
+	err := writeDockerRunTrace(&stderr, registry.Tool{Name: "demo"}, runContext{}, []string{"run", "demo:1"})
+	if err != nil {
+		t.Fatalf("writeDockerRunTrace disabled: %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("disabled trace wrote stderr: %q", stderr.String())
+	}
+	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
+		t.Fatalf("disabled trace created log file: %v", err)
+	}
+}
+
+func TestWriteDockerRunTraceJSON(t *testing.T) {
+	t.Setenv("CB_DEBUG", "1")
+	t.Setenv("CB_DEBUG_LOG", "")
+	var stderr bytes.Buffer
+	ctx := runContext{
+		cwd:           `C:\work\project\subdir`,
+		root:          `C:\work\project`,
+		workspaceRoot: "/workspace/project",
+		found:         true,
+	}
+	args := []string{"run", "--rm", "-i", "--workdir", "/workspace/project/subdir", "demo@sha256:abc", "--version"}
+
+	if err := writeDockerRunTrace(&stderr, registry.Tool{Name: "demo"}, ctx, args); err != nil {
+		t.Fatalf("writeDockerRunTrace: %v", err)
+	}
+	var got dockerRunTrace
+	if err := json.Unmarshal(bytes.TrimSpace(stderr.Bytes()), &got); err != nil {
+		t.Fatalf("trace is not JSON: %v\n%s", err, stderr.String())
+	}
+	if got.SchemaVersion != 1 || got.Event != "docker_run" || got.Tool != "demo" {
+		t.Fatalf("unexpected trace identity: %+v", got)
+	}
+	if got.CWD != ctx.cwd || got.ProjectRoot != ctx.root || got.Workspace != ctx.workspaceRoot || !got.ProjectFound {
+		t.Fatalf("unexpected trace context: %+v", got)
+	}
+	wantArgv := append([]string{"docker"}, args...)
+	if !reflect.DeepEqual(got.Argv, wantArgv) {
+		t.Fatalf("argv = %#v, want %#v", got.Argv, wantArgv)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, got.Timestamp); err != nil {
+		t.Fatalf("timestamp %q is not RFC3339Nano: %v", got.Timestamp, err)
+	}
+	if !reflect.DeepEqual(args, []string{"run", "--rm", "-i", "--workdir", "/workspace/project/subdir", "demo@sha256:abc", "--version"}) {
+		t.Fatalf("input args were mutated: %#v", args)
+	}
+}
+
+func TestWriteDockerRunTraceAppendsLog(t *testing.T) {
+	t.Setenv("CB_DEBUG", "1")
+	logPath := filepath.Join(t.TempDir(), "trace.jsonl")
+	t.Setenv("CB_DEBUG_LOG", logPath)
+	ctx := runContext{cwd: `C:\work`, root: `C:\work`, workspaceRoot: "/workspace"}
+
+	for _, arg := range []string{"first", "second"} {
+		var stderr bytes.Buffer
+		if err := writeDockerRunTrace(&stderr, registry.Tool{Name: "demo"}, ctx, []string{"run", "demo:1", arg}); err != nil {
+			t.Fatalf("writeDockerRunTrace %s: %v", arg, err)
+		}
+		if !bytes.HasSuffix(stderr.Bytes(), []byte("\n")) {
+			t.Fatalf("stderr trace is not newline-delimited: %q", stderr.String())
+		}
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read trace log: %v", err)
+	}
+	lines := bytes.Split(bytes.TrimSpace(data), []byte("\n"))
+	if len(lines) != 2 {
+		t.Fatalf("log contains %d lines, want 2:\n%s", len(lines), data)
+	}
+	for i, line := range lines {
+		var got dockerRunTrace
+		if err := json.Unmarshal(line, &got); err != nil {
+			t.Fatalf("log line %d is not JSON: %v", i, err)
+		}
+		wantLast := []string{"first", "second"}[i]
+		if got.Argv[len(got.Argv)-1] != wantLast {
+			t.Fatalf("log line %d last argv = %q, want %q", i, got.Argv[len(got.Argv)-1], wantLast)
+		}
+	}
+}
+
+func TestWriteDockerRunTraceConcurrentProcesses(t *testing.T) {
+	if worker := os.Getenv("CB_TRACE_TEST_WORKER"); worker != "" {
+		payload := worker + ":" + strings.Repeat("x", 32*1024)
+		for i := 0; i < 4; i++ {
+			args := []string{"run", "demo:1", payload, strconv.Itoa(i)}
+			if err := writeDockerRunTrace(io.Discard, registry.Tool{Name: worker}, runContext{}, args); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return
+	}
+
+	const workers = 8
+	logPath := filepath.Join(t.TempDir(), "concurrent-trace.jsonl")
+	var wg sync.WaitGroup
+	errs := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		worker := fmt.Sprintf("worker-%d", i)
+		cmd := exec.Command(os.Args[0], "-test.run=^TestWriteDockerRunTraceConcurrentProcesses$")
+		cmd.Env = append(os.Environ(),
+			"CB_DEBUG=1",
+			"CB_DEBUG_LOG="+logPath,
+			"CB_TRACE_TEST_WORKER="+worker,
+		)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if output, err := cmd.CombinedOutput(); err != nil {
+				errs <- fmt.Errorf("%s: %w\n%s", worker, err, output)
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+	if t.Failed() {
+		return
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := bytes.Split(bytes.TrimSpace(data), []byte("\n"))
+	if len(lines) != workers*4 {
+		t.Fatalf("log contains %d lines, want %d", len(lines), workers*4)
+	}
+	counts := map[string]int{}
+	for i, line := range lines {
+		var got dockerRunTrace
+		if err := json.Unmarshal(line, &got); err != nil {
+			t.Fatalf("log line %d is corrupt JSON: %v", i, err)
+		}
+		counts[got.Tool]++
+	}
+	for i := 0; i < workers; i++ {
+		worker := fmt.Sprintf("worker-%d", i)
+		if counts[worker] != 4 {
+			t.Errorf("%s wrote %d complete records, want 4", worker, counts[worker])
+		}
+	}
+}
+
+func TestWriteDockerRunTraceRejectsRelativeLog(t *testing.T) {
+	t.Setenv("CB_DEBUG", "1")
+	t.Setenv("CB_DEBUG_LOG", "trace.jsonl")
+	var stderr bytes.Buffer
+
+	err := writeDockerRunTrace(&stderr, registry.Tool{Name: "demo"}, runContext{}, []string{"run", "demo:1"})
+	if err == nil || !strings.Contains(err.Error(), "must be an absolute path") {
+		t.Fatalf("relative CB_DEBUG_LOG error = %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("rejected trace wrote stderr: %q", stderr.String())
+	}
+}
 
 func setTestHome(t *testing.T, dir string) {
 	t.Helper()
