@@ -3,11 +3,11 @@
 **Run CLI tools on Windows through Docker-backed executable shims — without
 installing the runtimes on the host.**
 
-ContainerBin makes commands such as `python`, `pip`, `node`, `npm`, `npx`,
-`jq`, `yq`, `terraform` and `ffmpeg` look like ordinary Windows executables
-while their real implementations run inside disposable Linux containers on
-Docker Desktop. Your Windows installation stays clean: no Python, no Node, no
-Terraform on the host — just one small Go binary, `cb.exe`.
+ContainerBin makes commands such as `python`, `pip`, `uv`, `uvx`, `node`,
+`npm`, `npx`, `jq`, `yq`, `terraform` and `ffmpeg` look like ordinary Windows
+executables while their real implementations run inside disposable Linux
+containers on Docker Desktop. Your Windows installation stays clean: no
+Python, Node or Terraform on the host — just one small Go binary, `cb.exe`.
 
 ```powershell
 PS D:\Work\demo> pip install requests
@@ -119,6 +119,7 @@ cb lock
 | `node`, `npm`, `npx` | `node:24-slim` | stateful (`node24` state group) |
 | `node22`, `npm22`, `npx22` | `node:22-slim` | stateful (`node22` state group) |
 | `go`, `gofmt` | `golang:1.24` | stateful (`go124` state group) |
+| `uv`, `uvx` | `ghcr.io/astral-sh/uv:0.12-python3.13-trixie-slim` | stateful (`uv012-py313` state group) |
 | `jq` | `ghcr.io/jqlang/jq:latest` | stateless |
 | `yq` | `mikefarah/yq:latest` | stateless |
 | `terraform` | `hashicorp/terraform:latest` | stateless (`-chdir` path semantics) |
@@ -265,6 +266,37 @@ not a guarantee that every npm package is ABI-compatible with it. For packages
 whose native addons need a different Node ABI, `node22`/`npm22`/`npx22` are a
 second, independent Node-major runtime with their own `node22` state group,
 fully isolating project `node_modules`, the npm cache and the npm global prefix; upgrading an existing installation adds these profiles automatically, but they are not yet locked, so run `cb lock` or `cb update --all` before using them.
+
+## uv state model
+
+`uv` and `uvx` use Astral's `uv 0.12` image line with Python 3.13. Each
+project gets a persistent environment mounted at `/cb/uv-project-env`; the uv
+package cache, installed tool environments and tool executables are shared
+across projects in separate managed volumes. The cache and environments are on
+different filesystems, so the profile deliberately sets `UV_LINK_MODE=copy`
+instead of letting uv attempt hardlinks and warn on every sync.
+
+The project environment's `/cb/uv-project-env/bin` intentionally comes first
+on the `uv` profile's `PATH`, followed by the shared tool-bin directory. This
+lets project commands resolve normally, but it also means installing another
+`uv` executable into that environment shadows the image's pinned `uv`; avoid
+doing that unless the override is deliberate.
+
+Automatic Python downloads are disabled. A project that requires a different
+interpreter fails explicitly instead of silently downloading an untracked
+runtime; use a separately configured uv image/profile for that interpreter.
+Index, offline, TLS and proxy settings are forwarded from a narrow allowlist,
+while path-valued Windows settings such as `UV_PROJECT`, `UV_CACHE_DIR` and
+`VIRTUAL_ENV` are not.
+
+`uv tool install ruff` persists its environment and executable, and `uvx ruff`
+reuses the shared cache. The tool executable is available inside the uv
+containers; creating a standalone `ruff.exe` Windows shim requires the future
+generic exposure support tracked by RM-26.
+
+Existing installations gain `uv` and `uvx` on `cb install`. An older lockfile
+does not include their image, so run `cb update uv` (or regenerate the lock with
+`cb lock`) before first use in locked mode.
 
 ## Dynamic npm CLI exposure
 
