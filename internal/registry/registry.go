@@ -224,8 +224,8 @@ shared_volumes = ["registry:/usr/local/cargo/registry", "git:/usr/local/cargo/gi
 env_set = ["CARGO_INSTALL_ROOT=/cb/cargo-global", "PATH=/cb/cargo-global/bin:/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"]
 env_prefixes = ["CARGO_REGISTRIES_"]
 env_names = ["CARGO_NET_OFFLINE", "CARGO_TERM_COLOR", "CARGO_HTTP_TIMEOUT", "CARGO_HTTP_MULTIPLEXING", "CARGO_HTTP_LOW_SPEED_LIMIT", "RUST_BACKTRACE", "RUST_LOG", "RUSTFLAGS", "RUSTDOCFLAGS", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"]
-path_next = ["--target-dir"]
-path_equals = ["--target-dir"]
+path_next = ["--target-dir", "--manifest-path"]
+path_equals = ["--target-dir", "--manifest-path"]
 `
 
 func Default() Registry {

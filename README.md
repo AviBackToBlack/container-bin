@@ -277,12 +277,15 @@ named volumes. `cargo install` writes to a separate persistent
 `/cb/cargo-global` volume that is on the container `PATH`, so installed Cargo
 subcommands remain usable through `cargo`; creating generic Windows shims for
 those binaries is a separate exposure step that ContainerBin does not yet
-provide.
+provide. That directory intentionally precedes the Rust toolchain directories:
+installing a binary named `cargo` or `rustc` shadows the image's toolchain
+command inside this profile, so audit what you install into the shared store.
 
 Cargo build output deliberately stays in the host project tree rather than a
 Docker volume. ContainerBin finds a Cargo project from its `Cargo.toml`; run
-Cargo from that project (or a subdirectory), as usual. Absolute Windows paths
-supplied to `--target-dir` are mapped into the container. Path-valued host
+Cargo from that project (or a subdirectory), as usual. Paths supplied to
+`--target-dir` and `--manifest-path` are mapped into the container, including
+their `--option=PATH` forms. Path-valued host
 variables such as `CARGO_HOME`, `CARGO_TARGET_DIR` and `RUSTUP_HOME` are not
 forwarded because their Windows values are not meaningful inside Linux;
 registry-specific Cargo variables and selected non-path settings are forwarded
