@@ -408,6 +408,11 @@ credentials and selected runtime/network controls are forwarded explicitly,
 while path-valued Windows settings such as `DOTNET_ROOT`, `DOTNET_CLI_HOME` and
 `NUGET_PACKAGES` are not.
 
+For `dotnet watch` on a Docker Desktop bind mount, set
+`DOTNET_USE_POLLING_FILE_WATCHER=1` on the host if filesystem notifications do
+not cross the Windows/Linux boundary reliably; the profile forwards that
+non-path opt-in.
+
 Project `bin` and `obj` directories deliberately remain in the host project
 tree instead of Docker volumes, so build output is visible to editors and
 other Windows processes. The SDK runs on Linux: framework-dependent IL remains
@@ -417,7 +422,9 @@ you explicitly select a Windows runtime identifier such as `-r win-x64`.
 `dotnet tool install --global TOOL` persists under `/root/.dotnet`; inspect it
 later with `dotnet tool list --global`. The executable is available inside the
 dotnet container, while creating a standalone Windows shim for it requires the
-future generic exposure support tracked by RM-26.
+future generic exposure support tracked by RM-26. The global-tools directory
+intentionally comes first on the profile's `PATH`, so a global tool named
+`dotnet` would shadow the SDK command inside that profile.
 
 Existing installations gain `dotnet` on `cb install`. An older lockfile does
 not include the SDK image, so run `cb update dotnet` (or regenerate the lock

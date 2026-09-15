@@ -660,6 +660,9 @@ func TestDotnetProfile(t *testing.T) {
 	if !containsString(dotnet.EnvPrefixes, "NUGETPACKAGESOURCECREDENTIALS_") {
 		t.Fatalf("dotnet env_prefixes missing NuGet source credentials: %#v", dotnet.EnvPrefixes)
 	}
+	if !containsString(dotnet.EnvNames, "DOTNET_USE_POLLING_FILE_WATCHER") {
+		t.Fatalf("dotnet env_names missing polling watcher opt-in: %#v", dotnet.EnvNames)
+	}
 	for _, pathVariable := range []string{"DOTNET_ROOT", "DOTNET_CLI_HOME", "NUGET_PACKAGES", "NUGET_HTTP_CACHE_PATH", "NUGET_PLUGIN_PATHS", "NUGET_CREDENTIALPROVIDERS_PATH", "MSBuildSDKsPath"} {
 		if containsString(dotnet.EnvNames, pathVariable) {
 			t.Fatalf("dotnet env allowlist must not include path-valued %q", pathVariable)
