@@ -596,8 +596,9 @@ func TestUVProfiles(t *testing.T) {
 		if !containsString(tool.ProjectMarkers, "pyproject.toml") || !containsString(tool.ProjectMarkers, "uv.lock") {
 			t.Fatalf("%s project markers do not cover uv projects: %#v", name, tool.ProjectMarkers)
 		}
-		if len(tool.PathNext) != 0 || len(tool.PathEquals) != 0 || tool.PathLast {
-			t.Fatalf("%s must not force path semantics: %+v", name, tool)
+		wantPathEquals := []string{"--project", "--directory", "--config-file", "--cache-dir"}
+		if len(tool.PathNext) != 0 || !reflect.DeepEqual(tool.PathEquals, wantPathEquals) || tool.PathLast {
+			t.Fatalf("%s path semantics = %+v, want path_equals %#v only", name, tool, wantPathEquals)
 		}
 		for _, pathVariable := range []string{"UV_PROJECT", "UV_WORKING_DIR", "UV_CONFIG_FILE", "UV_CACHE_DIR", "UV_TOOL_DIR", "UV_TOOL_BIN_DIR", "UV_PROJECT_ENVIRONMENT", "VIRTUAL_ENV", "PATH"} {
 			if containsString(tool.EnvNames, pathVariable) {

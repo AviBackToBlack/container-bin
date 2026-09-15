@@ -387,6 +387,12 @@ reuses the shared cache. The tool executable is available inside the uv
 containers; creating a standalone `ruff.exe` Windows shim requires the future
 generic exposure support tracked by RM-26.
 
+Equals-form global path options (`--cache-dir=`, `--directory=`, `--project=`,
+and `--config-file=`) are translated to their container paths. The mapper stops
+forced option handling at `--`, so same-named options intended for a command
+launched by `uv run` or `uvx` are not mistaken for uv options; ordinary
+path-shaped arguments still receive the generic mapping.
+
 Existing installations gain `uv` and `uvx` on `cb install`. An older lockfile
 does not include their image, so run `cb update uv` (or regenerate the lock with
 `cb lock`) before first use in locked mode.

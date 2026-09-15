@@ -272,8 +272,9 @@ shared_volumes = ["cache:/root/.cache/uv", "tools:/cb/uv-tools", "tool-bin:/cb/u
 env_set = ["UV_PROJECT_ENVIRONMENT=/cb/uv-project-env", "VIRTUAL_ENV=/cb/uv-project-env", "UV_CACHE_DIR=/root/.cache/uv", "UV_TOOL_DIR=/cb/uv-tools", "UV_TOOL_BIN_DIR=/cb/uv-bin", "UV_LINK_MODE=copy", "UV_PYTHON_DOWNLOADS=never", "PATH=/cb/uv-project-env/bin:/cb/uv-bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"]
 env_prefixes = ["UV_INDEX_"]
 env_names = ["UV_INDEX", "UV_DEFAULT_INDEX", "UV_EXTRA_INDEX_URL", "UV_NO_INDEX", "UV_NATIVE_TLS", "UV_OFFLINE", "UV_NO_CACHE", "UV_FROZEN", "UV_LOCKED", "UV_NO_PROGRESS", "UV_COLOR", "UV_HTTP_TIMEOUT", "UV_HTTP_RETRIES", "UV_CONCURRENT_DOWNLOADS", "UV_CONCURRENT_BUILDS", "UV_CONCURRENT_INSTALLS", "UV_INSECURE_HOST", "UV_KEYRING_PROVIDER", "UV_PRERELEASE", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"]
-# No forced path rules: uv has many subcommands and several pass arguments to
-# child tools. Absolute and explicit relative paths still use the general mapper.
+# These global options are always paths. Forced option mapping stops at --, so
+# child-command payloads with the same spelling remain untouched.
+path_equals = ["--project", "--directory", "--config-file", "--cache-dir"]
 
 [tools.uvx]
 image = "ghcr.io/astral-sh/uv:0.12-python3.13-trixie-slim"
@@ -285,6 +286,7 @@ shared_volumes = ["cache:/root/.cache/uv", "tools:/cb/uv-tools", "tool-bin:/cb/u
 env_set = ["UV_CACHE_DIR=/root/.cache/uv", "UV_TOOL_DIR=/cb/uv-tools", "UV_TOOL_BIN_DIR=/cb/uv-bin", "UV_LINK_MODE=copy", "UV_PYTHON_DOWNLOADS=never", "PATH=/cb/uv-bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"]
 env_prefixes = ["UV_INDEX_"]
 env_names = ["UV_INDEX", "UV_DEFAULT_INDEX", "UV_EXTRA_INDEX_URL", "UV_NO_INDEX", "UV_NATIVE_TLS", "UV_OFFLINE", "UV_NO_CACHE", "UV_NO_PROGRESS", "UV_COLOR", "UV_HTTP_TIMEOUT", "UV_HTTP_RETRIES", "UV_CONCURRENT_DOWNLOADS", "UV_CONCURRENT_BUILDS", "UV_CONCURRENT_INSTALLS", "UV_INSECURE_HOST", "UV_KEYRING_PROVIDER", "UV_PRERELEASE", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"]
+path_equals = ["--project", "--directory", "--config-file", "--cache-dir"]
 `
 
 func Default() Registry {
