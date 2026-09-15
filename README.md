@@ -282,6 +282,11 @@ per-project `/cb/bundle` volume, while its download cache is shared. `Gemfile`
 and `Gemfile.lock` remain in the host project; installed Linux gems and native
 extensions remain in Docker volumes rather than leaking onto Windows.
 
+The managed gem bin directory intentionally precedes the image toolchain on
+`PATH`. A gem that installs an executable named `ruby`, `gem` or `bundle`
+therefore shadows that command inside these profiles, so audit executables
+added to the shared gem home.
+
 Only selected non-path Ruby/Bundler settings, repository credentials and proxy
 variables cross into the container. Host values such as `GEM_HOME`, `GEM_PATH`,
 `BUNDLE_PATH` and `BUNDLE_GEMFILE` are deliberately ignored because Windows
