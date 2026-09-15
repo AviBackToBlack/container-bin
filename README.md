@@ -245,6 +245,11 @@ validated against real Terraform.
 Use `cb trace TOOL ARGS...` to see raw → normalized → mapped argv and the
 mounts that would be created, without running anything.
 
+AI agents and automation launchers must not assume that a working-directory
+change survives into a later shell call. See
+[AI agent and automation invocation](docs/agent-invocation.md) for the
+canonical execution contract and supported instruction files.
+
 ## Python and Node state model
 
 **Python:** for a detected project (markers: `pyproject.toml`,
