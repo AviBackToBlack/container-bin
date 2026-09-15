@@ -6,7 +6,40 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/AviBackToBlack/container-bin/internal/pathmap"
+	"github.com/AviBackToBlack/container-bin/internal/registry"
 )
+
+func TestSelfTestProjectVolumeIDsFollowRegisteredProfiles(t *testing.T) {
+	root := `C:\work\demo`
+	reg := registry.Registry{Tools: map[string]registry.Tool{
+		"node": {
+			Provider:       "stateful",
+			StateGroup:     "compat24",
+			ProjectVolumes: []string{"deps:/workspace/node_modules", "cache:/workspace/.cache"},
+		},
+		"node22": {
+			Provider:       "stateful",
+			StateGroup:     "compat22",
+			ProjectVolumes: []string{"deps:/workspace/node_modules"},
+		},
+		"other": {
+			Provider:       "stateful",
+			StateGroup:     "unrelated",
+			ProjectVolumes: []string{"data:/workspace/data"},
+		},
+	}}
+
+	want := []string{
+		pathmap.StatefulProjectVolumeID("compat24", "deps", root, true),
+		pathmap.StatefulProjectVolumeID("compat24", "cache", root, true),
+		pathmap.StatefulProjectVolumeID("compat22", "deps", root, true),
+	}
+	if got := selfTestProjectVolumeIDs(reg, root); !reflect.DeepEqual(got, want) {
+		t.Fatalf("selfTestProjectVolumeIDs() = %#v, want %#v", got, want)
+	}
+}
 
 func TestBuildSelfTestReport(t *testing.T) {
 	fixedTime := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)

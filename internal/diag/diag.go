@@ -948,10 +948,34 @@ func runSelfTestChecksAndCleanup(reg registry.Registry, project, external string
 
 	root, _ := pathmap.CanonicalPath(project)
 	defer dockervol.RemoveQuiet(pathmap.PythonEnvID(root, true))
-	defer dockervol.RemoveQuiet(pathmap.StatefulProjectVolumeID("node24", "node-modules", root, true))
-	defer dockervol.RemoveQuiet(pathmap.StatefulProjectVolumeID("node22", "node-modules", root, true))
+	for _, volumeID := range selfTestProjectVolumeIDs(reg, root) {
+		defer dockervol.RemoveQuiet(volumeID)
+	}
 
 	return runSelfTestChecks(reg, project, external, release, cwd, version)
+}
+
+func selfTestProjectVolumeIDs(reg registry.Registry, root string) []string {
+	seen := map[string]bool{}
+	var ids []string
+	for _, toolName := range []string{"node", "node22"} {
+		tool, ok := reg.Tools[toolName]
+		if !ok || tool.Provider != "stateful" {
+			continue
+		}
+		for _, binding := range tool.ProjectVolumes {
+			name, _, err := registry.ParseVolumeBinding(binding)
+			if err != nil {
+				continue // loaded registries have already validated every binding
+			}
+			id := pathmap.StatefulProjectVolumeID(tool.StateGroup, name, root, true)
+			if !seen[id] {
+				seen[id] = true
+				ids = append(ids, id)
+			}
+		}
+	}
+	return ids
 }
 
 func runSelfTestChecks(reg registry.Registry, project, external string, release bool, cwd, version string) (selfTestReport, error) {

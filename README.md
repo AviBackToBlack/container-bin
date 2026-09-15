@@ -441,10 +441,11 @@ means a dependency of that check did not pass (e.g. `docker` itself failed,
 or the tool isn't registered) — `message` names the reason. A tool missing
 from `container-bin.toml` reports its own check as `fail`, not `skip`: an
 unconfigured tool was never actually verified, so `ok` cannot be `true` while
-one is missing. The `checks` array always contains exactly these 12 IDs, in
+one is missing. The `checks` array always contains exactly these 15 IDs, in
 this order: `docker`, `python-image-local`, `python-persist-write`,
 `python-persist-read`, `python-external-path`, `node-image-local`,
-`node-modules-write`, `node-modules-read`, `jq-image-local`,
+`node-modules-write`, `node-modules-read`, `node22-image-local`,
+`node22-modules-write`, `node22-modules-read`, `jq-image-local`,
 `jq-relative-path`, `terraform-image-local`, `terraform-chdir`.
 
 ## Exit codes
