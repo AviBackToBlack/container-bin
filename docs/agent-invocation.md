@@ -15,10 +15,13 @@ For every ContainerBin-backed command on Windows:
    intended project directory and invoke the shim in the **same process or
    shell execution**. Prefer a launch API's explicit working-directory field
    when it has one.
-3. For a file argument that does not need project-relative state, an absolute
-   Windows path is safe and explicit. It does **not** select the project root:
-   project detection and project-volume identity still start from the process
-   working directory.
+3. For a file argument that does not need project-relative state, use a fully
+   qualified, Docker-shareable drive-letter path such as `D:\Work\file.js`.
+   UNC and extended-length paths are not mapped; `subst` and mapped-network
+   drives cannot be shared by Docker Desktop. See the [Windows path
+   classification](windows-paths.md). An absolute argument does **not** select
+   the project root: project detection and project-volume identity still start
+   from the process working directory.
 4. Never rely on `cd` or `Set-Location` performed by a previous, separate tool
    call. Never search for a similarly named file or guess the intended root.
 5. If resolution fails, report the actual CWD and inspect the exact mapping
@@ -58,10 +61,14 @@ cb trace node '.\script.js'
 node '.\script.js'
 ```
 
-`cb trace` is deliberately dry-run only. It already prints the canonical host
-`cwd`, detected project `root`, container `workspace`, raw/normalized/mapped
-argv, and additional mounts. That is enough to distinguish a launcher-CWD bug
-from a path-classification or Docker-sharing problem, so RM-14 adds no second
+`cb trace` is deliberately dry-run only. When argument mapping succeeds, it
+prints the canonical host `cwd`, detected project `root`, container `workspace`,
+raw/normalized/mapped argv, and additional mounts. If argument mapping itself
+fails, trace returns that error before printing the mapped diagnostics; report
+the actual CWD and error, then use the [Windows path
+classification](windows-paths.md) to identify unsupported path forms. A
+successful trace is enough to distinguish a launcher-CWD bug from a
+path-classification or Docker-sharing problem, so RM-14 adds no second
 diagnostic mode. If the trace shows the wrong CWD, fix the launcher boundary;
 ContainerBin will not search for a more plausible project.
 
