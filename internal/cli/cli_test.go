@@ -443,26 +443,84 @@ func TestRenderGoExposedToolSection(t *testing.T) {
 	if !reflect.DeepEqual(got.SharedVolumes, source.SharedVolumes) || !reflect.DeepEqual(got.EnvNames, source.EnvNames) {
 		t.Error("exposed Go profile did not inherit source state/environment")
 	}
+	if !reflect.DeepEqual(got.ProjectMarkers, source.ProjectMarkers) {
+		t.Fatalf("project markers = %v, want %v", got.ProjectMarkers, source.ProjectMarkers)
+	}
+	if got.Role != "exposed" {
+		t.Fatalf("role = %q, want exposed", got.Role)
+	}
+
+	moduleRoot := t.TempDir()
+	nested := filepath.Join(moduleRoot, "cmd", "api")
+	if err := os.MkdirAll(nested, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(moduleRoot, "go.mod"), []byte("module example.test/demo\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	root, found := pathmap.FindProjectRoot(nested, pathmap.ProjectMarkersFor(got))
+	if !found || root != moduleRoot {
+		t.Fatalf("nested Go module root = %q, %v; want %q, true", root, found, moduleRoot)
+	}
 }
 
 func TestManagedExposedToolRecognition(t *testing.T) {
-	for _, tool := range []registry.Tool{
-		{Provider: "stateful", Command: []string{"/cb/npm-global/bin/cowsay"}},
-		{Provider: "stateful", Command: []string{"/go/bin/stringer"}},
+	for _, tt := range []struct {
+		name string
+		tool registry.Tool
+	}{
+		{name: "cowsay", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/cb/npm-global/bin/cowsay"}, SharedVolumes: []string{"npm-global:/cb/npm-global"}}},
+		{name: "stringer", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/go/bin/Stringer"}, SharedVolumes: []string{"gobin:/go/bin"}}},
 	} {
-		if !isManagedExposedTool(tool) {
-			t.Fatalf("expected exposed tool: %#v", tool)
+		if !isManagedExposedTool(tt.name, tt.tool) {
+			t.Fatalf("expected exposed tool: %#v", tt.tool)
 		}
 	}
-	for _, tool := range []registry.Tool{
-		{Provider: "stateless", Command: []string{"/go/bin/stringer"}},
-		{Provider: "stateful", Command: []string{"/go/bin/"}},
-		{Provider: "stateful", Command: []string{"/usr/local/bin/stringer"}},
-		{Provider: "stateful", Command: []string{"/go/bin/a", "extra"}},
+	for _, tt := range []struct {
+		name string
+		tool registry.Tool
+	}{
+		{name: "stringer", tool: registry.Tool{Provider: "stateful", Command: []string{"/go/bin/stringer"}, SharedVolumes: []string{"gobin:/go/bin"}}},
+		{name: "stringer", tool: registry.Tool{Provider: "stateless", Role: "exposed", Command: []string{"/go/bin/stringer"}, SharedVolumes: []string{"gobin:/go/bin"}}},
+		{name: "stringer", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/go/bin/"}, SharedVolumes: []string{"gobin:/go/bin"}}},
+		{name: "stringer", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/usr/local/bin/stringer"}, SharedVolumes: []string{"gobin:/go/bin"}}},
+		{name: "stringer", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/go/bin/other"}, SharedVolumes: []string{"gobin:/go/bin"}}},
+		{name: "stringer", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/go/bin/stringer"}, SharedVolumes: []string{"cache:/other"}}},
+		{name: "stringer", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/go/bin/a", "extra"}, SharedVolumes: []string{"gobin:/go/bin"}}},
 	} {
-		if isManagedExposedTool(tool) {
-			t.Fatalf("unexpected exposed tool: %#v", tool)
+		if isManagedExposedTool(tt.name, tt.tool) {
+			t.Fatalf("unexpected exposed tool: %#v", tt.tool)
 		}
+	}
+}
+
+func TestUnexposeRefusesUnmarkedCustomGoProfile(t *testing.T) {
+	const config = `schema_version = 1
+
+[tools.acme]
+image = "example/acme:1"
+provider = "stateful"
+command = ["/go/bin/acme"]
+state_group = "acme"
+shared_volumes = ["cache:/other"]
+`
+	reg, err := registry.ParseTOML(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "container-bin.toml")
+	if err := os.WriteFile(path, []byte(config), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Unexpose(reg, path, []string{"acme"}); err == nil || !strings.Contains(err.Error(), "not marked as a cb-exposed") {
+		t.Fatalf("unexpose error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != config {
+		t.Fatal("unexpose rewrote an unmarked custom profile")
 	}
 }
 

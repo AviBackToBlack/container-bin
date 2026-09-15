@@ -53,7 +53,10 @@ readable, and dangerous to let others edit.
 - **Conservative deletion.** `cb gc` is dry-run by default, deletes only
   explicitly selected current-project state with `--apply`, and only considers
   a volume an orphan when *its own labels* record a project path that no
-  longer exists. Unlabeled volumes are never deleted.
+  longer exists. Unlabeled volumes are never deleted. `cb unexpose` likewise
+  requires the explicit `role = "exposed"` ownership marker plus a matching
+  command/name and supported global-store mount; a similar-looking custom
+  profile is not treated as generated state.
 - **Validated atomic writes.** Registry/lock mutations parse the complete
   resulting file before atomically replacing the original; backups are
   restored the same way and only with `--apply`.
