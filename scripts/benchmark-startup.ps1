@@ -36,6 +36,28 @@ function Invoke-NativeQuiet {
     }
 }
 
+function Test-DockerContainerExists {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$DockerPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ContainerName
+    )
+
+    $inspectOutput = @(& $DockerPath container inspect --format '{{.Id}}' $ContainerName 2>&1)
+    $inspectExitCode = $LASTEXITCODE
+    if ($inspectExitCode -eq 0) {
+        return $true
+    }
+
+    $inspectMessage = ($inspectOutput -join [Environment]::NewLine).Trim()
+    if ($inspectMessage -match '(?i)no such (object|container)') {
+        return $false
+    }
+    throw "Could not verify benchmark container cleanup: $inspectMessage"
+}
+
 function Get-Percentile {
     param(
         [Parameter(Mandatory = $true)]
@@ -90,8 +112,10 @@ function Measure-NativeSeries {
     }
 }
 
-if (-not [IO.Path]::IsPathRooted($ShimPath)) {
-    throw 'ShimPath must be an absolute Windows path.'
+$isDriveAbsolute = $ShimPath -match '^[A-Za-z]:[\\/]'
+$isUNC = $ShimPath -match '^\\\\(?![?.]\\)[^\\]+\\[^\\]+'
+if (-not ($isDriveAbsolute -or $isUNC)) {
+    throw 'ShimPath must be a fully qualified Windows drive or UNC path.'
 }
 $resolvedShim = [IO.Path]::GetFullPath($ShimPath)
 if (-not (Test-Path -LiteralPath $resolvedShim -PathType Leaf)) {
@@ -106,21 +130,30 @@ if ($ContainerCommand.Count -eq 0) {
 
 $dockerCommand = Get-Command docker -CommandType Application -ErrorAction Stop | Select-Object -First 1
 $dockerPath = $dockerCommand.Source
-$dockerVersion = (& $dockerPath version --format '{{.Server.Version}}').Trim()
-if ($LASTEXITCODE -ne 0 -or $dockerVersion.Length -eq 0) {
+$dockerVersionOutput = @(& $dockerPath version --format '{{.Server.Version}}' 2>$null)
+$dockerVersionExitCode = $LASTEXITCODE
+$dockerVersion = ($dockerVersionOutput -join [Environment]::NewLine).Trim()
+if ($dockerVersionExitCode -ne 0 -or $dockerVersion.Length -eq 0) {
     throw 'Docker Engine is unavailable.'
 }
-$dockerOSType = (& $dockerPath info --format '{{.OSType}}').Trim()
-if ($LASTEXITCODE -ne 0 -or $dockerOSType -ne 'linux') {
+$dockerOSTypeOutput = @(& $dockerPath info --format '{{.OSType}}' 2>$null)
+$dockerOSTypeExitCode = $LASTEXITCODE
+$dockerOSType = ($dockerOSTypeOutput -join [Environment]::NewLine).Trim()
+if ($dockerOSTypeExitCode -ne 0 -or $dockerOSType -ne 'linux') {
     throw "Docker must be available in Linux-container mode; detected OSType: $dockerOSType"
 }
-$imageID = (& $dockerPath image inspect $Image --format '{{.Id}}' 2>$null).Trim()
-if ($LASTEXITCODE -ne 0 -or $imageID -notmatch '^sha256:[0-9a-f]{64}$') {
+$imageIDOutput = @(& $dockerPath image inspect $Image --format '{{.Id}}' 2>$null)
+$imageIDExitCode = $LASTEXITCODE
+$imageID = ($imageIDOutput -join [Environment]::NewLine).Trim()
+if ($imageIDExitCode -ne 0 -or $imageID -notmatch '^sha256:[0-9a-f]{64}$') {
     throw "Image must already exist locally; refusing to pull: $Image"
 }
 
 $containerName = 'cb-rm28-benchmark-' + [Guid]::NewGuid().ToString('N')
-$containerStarted = $false
+$containerStartAttempted = $false
+$primaryError = $null
+$cleanupError = $null
+$resultJson = $null
 try {
     $startArgs = @(
         'run', '--detach', '--rm',
@@ -129,8 +162,8 @@ try {
         $imageID,
         'sh', '-c', 'while :; do sleep 3600; done'
     )
+    $containerStartAttempted = $true
     Invoke-NativeQuiet -FilePath $dockerPath -Arguments $startArgs
-    $containerStarted = $true
 
     $measurements = @(
         Measure-NativeSeries -Name 'container-bin-shim' -FilePath $resolvedShim -Arguments $ShimArguments
@@ -140,7 +173,7 @@ try {
         Measure-NativeSeries -Name 'docker-exec-control' -FilePath $dockerPath -Arguments (@('exec', $containerName) + $ContainerCommand)
     )
 
-    [pscustomobject][ordered]@{
+    $resultJson = [pscustomobject][ordered]@{
         schema_version     = 1
         generated_at       = [DateTime]::UtcNow.ToString('o')
         windows_version    = [Environment]::OSVersion.VersionString
@@ -158,11 +191,38 @@ try {
         measurements       = $measurements
     } | ConvertTo-Json -Depth 6
 }
+catch {
+    $primaryError = $_
+}
 finally {
-    if ($containerStarted) {
-        & $dockerPath rm --force $containerName *> $null
-        if ($LASTEXITCODE -ne 0) {
-            throw "Could not remove benchmark container $containerName"
+    if ($containerStartAttempted) {
+        try {
+            $removeOutput = @(& $dockerPath rm --force $containerName 2>&1)
+            $removeExitCode = $LASTEXITCODE
+            $removeMessage = ($removeOutput -join [Environment]::NewLine).Trim()
+            $notFound = $removeMessage -match '(?i)no such (object|container)'
+
+            if (Test-DockerContainerExists -DockerPath $dockerPath -ContainerName $containerName) {
+                throw "Benchmark container still exists after cleanup: $containerName"
+            }
+            if ($removeExitCode -ne 0 -and -not $notFound) {
+                throw "Could not remove benchmark container ${containerName}: $removeMessage"
+            }
+        }
+        catch {
+            $cleanupError = $_
         }
     }
 }
+
+if ($null -ne $primaryError) {
+    if ($null -ne $cleanupError) {
+        throw "$($primaryError.Exception.Message) Cleanup also failed: $($cleanupError.Exception.Message)"
+    }
+    throw $primaryError
+}
+if ($null -ne $cleanupError) {
+    throw $cleanupError
+}
+$global:LASTEXITCODE = 0
+$resultJson

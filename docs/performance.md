@@ -17,13 +17,15 @@ five warm-cache paths:
 4. the same run with `--network none`;
 5. `docker exec` in one temporary long-lived control container.
 
-The script requires an absolute shim path, non-interactive commands, and a
-Linux image that is already local and provides `sh` plus `sleep` for the
-control container. It never pulls. Its one temporary container has a
-GUID-scoped name and the label `cb.benchmark=rm28`; a `finally` block removes
-that exact container and fails the run if cleanup fails. It emits one
-versioned JSON document so results can be compared without scraping a display
-table.
+The script requires a fully qualified drive-absolute or UNC shim path,
+non-interactive commands, and a Linux image that is already local and provides
+`sh` plus `sleep` for the control container. It never pulls. Its one temporary
+container has a GUID-scoped name and the label `cb.benchmark=rm28`; a `finally`
+block removes that exact container after every attempted start and verifies it
+is absent. If measurement and cleanup both fail, the original measurement
+error is reported first with the cleanup error appended. The script emits one
+versioned JSON document only after successful cleanup so results can be
+compared without scraping a display table.
 
 ```powershell
 Set-Location -LiteralPath 'D:\Work\GIT\container-bin'
