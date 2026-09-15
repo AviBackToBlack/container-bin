@@ -29,7 +29,7 @@ func main() {
 	}
 
 	invoked := invokedName(os.Args[0])
-	if invoked != "cb" && invoked != "container-bin" && !strings.HasPrefix(invoked, "cb-v") {
+	if invoked != "cb" && invoked != "container-bin" && !registry.IsVersionedBinaryName(invoked) {
 		tool, ok := reg.Tools[invoked]
 		if !ok {
 			fatalf("no tool profile for %q (registry: %s)", invoked, cfgPath)
