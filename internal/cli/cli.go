@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -222,7 +223,7 @@ func discoverGlobalBins(t registry.Tool, store exposeStore) ([]exposedBin, error
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.Command("docker", "run", "--rm", "--mount", mount, image, "sh", "-lc", script, "cb-expose", store.binDirectory)
+	cmd := exec.Command("docker", "run", "--rm", "--mount", mount, image, "sh", "-c", script, "cb-expose", store.binDirectory)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("inspect %s global bin: %w", store.kind, err)
@@ -255,10 +256,11 @@ func parseExposedBins(out []byte, store exposeStore) ([]exposedBin, error) {
 }
 
 func renderExposedToolSection(sourceName string, source registry.Tool, name, command string) string {
-	return fmt.Sprintf("\n# Exposed from %s global store by cb expose %s\n[tools.%s]\nimage = %s\nprovider = \"stateful\"\ncommand = [%s]\nstate_group = %s\nshared_volumes = %s\nenv_set = %s\nenv_prefixes = %s\nenv_names = %s\n",
+	return fmt.Sprintf("\n# Exposed from %s global store by cb expose %s\n[tools.%s]\nimage = %s\nprovider = \"stateful\"\nrole = \"exposed\"\ncommand = [%s]\nproject_markers = %s\nstate_group = %s\nshared_volumes = %s\nenv_set = %s\nenv_prefixes = %s\nenv_names = %s\n",
 		sourceName, sourceName, name,
 		toml.Quote(source.Image),
 		toml.Quote(command),
+		toml.Array(source.ProjectMarkers),
 		toml.Quote(source.StateGroup),
 		toml.Array(source.SharedVolumes),
 		toml.Array(source.EnvSet),
@@ -343,12 +345,24 @@ func Expose(reg registry.Registry, cfgPath string, args []string) error {
 	return registry.InstallShims(newReg)
 }
 
-func isManagedExposedTool(t registry.Tool) bool {
-	if t.Provider != "stateful" || len(t.Command) != 1 {
+func isManagedExposedTool(name string, t registry.Tool) bool {
+	if t.Provider != "stateful" || t.Role != "exposed" || len(t.Command) != 1 {
 		return false
 	}
-	for _, prefix := range []string{"/cb/npm-global/bin/", "/go/bin/"} {
-		if strings.HasPrefix(t.Command[0], prefix) && len(t.Command[0]) > len(prefix) {
+	commandDir := path.Dir(t.Command[0])
+	if commandDir != "/cb/npm-global/bin" && commandDir != "/go/bin" {
+		return false
+	}
+	if !strings.EqualFold(path.Base(t.Command[0]), name) {
+		return false
+	}
+	wantedMount := "/go/bin"
+	if commandDir == "/cb/npm-global/bin" {
+		wantedMount = "/cb/npm-global"
+	}
+	for _, spec := range t.SharedVolumes {
+		_, dst, err := registry.ParseVolumeBinding(spec)
+		if err == nil && dst == wantedMount {
 			return true
 		}
 	}
@@ -468,8 +482,8 @@ func Unexpose(reg registry.Registry, cfgPath string, args []string) error {
 		if !ok {
 			return fmt.Errorf("tool %q not found", name)
 		}
-		if !isManagedExposedTool(t) {
-			return fmt.Errorf("%s is not an npm- or Go-exposed tool", name)
+		if !isManagedExposedTool(name, t) {
+			return fmt.Errorf("%s is not marked as a cb-exposed npm or Go tool; older generated profiles must be recreated with cb uninstall followed by cb expose", name)
 		}
 		remove[name] = true
 	}
