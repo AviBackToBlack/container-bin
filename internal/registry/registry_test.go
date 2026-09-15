@@ -532,7 +532,7 @@ func TestRustCargoProfiles(t *testing.T) {
 			t.Fatalf("%s project_markers = %#v, want %#v", tool.Name, tool.ProjectMarkers, wantMarkers)
 		}
 	}
-	wantPathOptions := []string{"--target-dir"}
+	wantPathOptions := []string{"--target-dir", "--manifest-path"}
 	if !reflect.DeepEqual(cargo.PathNext, wantPathOptions) || !reflect.DeepEqual(cargo.PathEquals, wantPathOptions) {
 		t.Fatalf("bad cargo path semantics: next=%#v equals=%#v", cargo.PathNext, cargo.PathEquals)
 	}
