@@ -53,6 +53,16 @@ func TestOpenRejectsTamperingAndUnsafeTarEntries(t *testing.T) {
 			want:    "unsupported type",
 		},
 		{
+			name:    "hardlink_traversal",
+			tarData: testTar(t, &tar.Header{Name: "./hardlink", Mode: 0600, Typeflag: tar.TypeLink, Linkname: "../outside"}, nil),
+			want:    "target \"../outside\" escapes the volume root",
+		},
+		{
+			name:    "symlink_absolute",
+			tarData: testTar(t, &tar.Header{Name: "./symlink", Mode: 0777, Typeflag: tar.TypeSymlink, Linkname: "/etc/passwd"}, nil),
+			want:    "target \"/etc/passwd\" escapes the volume root",
+		},
+		{
 			name:    "unreferenced_archive",
 			tarData: validTar,
 			extra:   map[string][]byte{"state/volumes/cb-other.tar": validTar},
@@ -73,6 +83,29 @@ func TestOpenRejectsTamperingAndUnsafeTarEntries(t *testing.T) {
 			_, err := Open(archive.File)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("error = %v, want substring %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestValidateTarHeaderLinkTargets(t *testing.T) {
+	tests := []struct {
+		name    string
+		header  tar.Header
+		wantErr bool
+	}{
+		{name: "hardlink_inside_root", header: tar.Header{Name: "./dir/hard", Typeflag: tar.TypeLink, Linkname: "./dir/target"}},
+		{name: "symlink_parent_inside_root", header: tar.Header{Name: "./dir/link", Typeflag: tar.TypeSymlink, Linkname: "../target"}},
+		{name: "symlink_parent_escape", header: tar.Header{Name: "./dir/link", Typeflag: tar.TypeSymlink, Linkname: "../../outside"}, wantErr: true},
+		{name: "hardlink_absolute", header: tar.Header{Name: "./hard", Typeflag: tar.TypeLink, Linkname: "/volume/target"}, wantErr: true},
+		{name: "empty_target", header: tar.Header{Name: "./link", Typeflag: tar.TypeSymlink}, wantErr: true},
+		{name: "nul_target", header: tar.Header{Name: "./link", Typeflag: tar.TypeSymlink, Linkname: "target\x00suffix"}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateTarHeader(&tt.header)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("error = %v, wantErr=%v", err, tt.wantErr)
 			}
 		})
 	}

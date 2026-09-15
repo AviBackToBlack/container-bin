@@ -515,8 +515,8 @@ func TestPlainBackupIsValidAndNeverOverwrites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := Backup(cfg, []string{out}, "test"); err == nil {
-		t.Fatal("expected existing backup path to be refused")
+	if err := Backup(cfg, []string{out}, "test"); err == nil || !strings.Contains(err.Error(), "choose a different filename") {
+		t.Fatalf("existing-backup error = %v", err)
 	}
 	after, err := os.ReadFile(out)
 	if err != nil {

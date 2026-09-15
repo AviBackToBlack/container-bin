@@ -57,9 +57,9 @@ readable, and dangerous to let others edit.
 - **Restore extracts nothing onto the host.** Without `--state`, `cb restore`
   reads exactly `container-bin.toml` and `container-bin.lock` by name and ignores
   state payloads. With explicit `--state`, it validates the versioned manifest,
-  archive names, sizes, SHA-256 hashes, tar paths/types, volume labels, project
-  identity, quiescence, and destination emptiness before apply. Tar extraction
-  occurs only inside the named Docker volume through an immutable,
+  archive names, sizes, SHA-256 hashes, tar paths/types/link targets, volume
+  labels, project identity, quiescence, and destination emptiness before apply.
+  Tar extraction occurs only inside the named Docker volume through an immutable,
   network-disabled helper with a read-only container root; no archive member is
   turned into a Windows host path.
 
