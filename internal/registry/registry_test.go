@@ -26,8 +26,8 @@ func TestParseDefaultRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(reg.Tools) != 16 {
-		t.Fatalf("expected 16 tools, got %d", len(reg.Tools))
+	if len(reg.Tools) != 17 {
+		t.Fatalf("expected 17 tools, got %d", len(reg.Tools))
 	}
 	jq := reg.Tools["jq"]
 	if jq.Provider != "stateless" || jq.Image != "ghcr.io/jqlang/jq:latest" {
@@ -110,7 +110,7 @@ func TestDefaultRegistryHasV06Tools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"python", "pip", "jq", "yq", "terraform", "ffmpeg", "node", "npm", "npx", "go", "gofmt"} {
+	for _, name := range []string{"python", "pip", "jq", "yq", "terraform", "ffmpeg", "node", "npm", "npx", "go", "gofmt", "dotnet"} {
 		if _, ok := reg.Tools[name]; !ok {
 			t.Fatalf("missing default tool %q", name)
 		}
@@ -122,7 +122,7 @@ func TestDefaultRegistryHasV06Tools(t *testing.T) {
 
 func TestDefaultToolSections(t *testing.T) {
 	sections := DefaultToolSections()
-	for _, name := range []string{"python", "yq", "terraform", "ffmpeg", "node", "node22", "npm", "npm22", "npx", "npx22", "go", "gofmt"} {
+	for _, name := range []string{"python", "yq", "terraform", "ffmpeg", "node", "node22", "npm", "npm22", "npx", "npx22", "go", "gofmt", "dotnet"} {
 		if !strings.Contains(sections[name], "[tools."+name+"]") {
 			t.Fatalf("bad section for %s: %q", name, sections[name])
 		}
@@ -382,6 +382,55 @@ func TestGoProfilesDeclareNoForcedPathSemantics(t *testing.T) {
 	}
 	if len(gofmtTool.PathNext) != 0 || len(gofmtTool.PathEquals) != 0 {
 		t.Fatalf("gofmt must not declare forced path semantics: %+v", gofmtTool)
+	}
+}
+
+func TestDotnetProfile(t *testing.T) {
+	reg, err := ParseTOML(DefaultTOML)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dotnet := reg.Tools["dotnet"]
+	if dotnet.Image != "mcr.microsoft.com/dotnet/sdk:10.0" || dotnet.Provider != "stateful" || dotnet.StateGroup != "dotnet10" || !reflect.DeepEqual(dotnet.Command, []string{"dotnet"}) {
+		t.Fatalf("bad dotnet profile: %+v", dotnet)
+	}
+	wantVolumes := []string{
+		"nuget-packages:/root/.nuget/packages",
+		"nuget-config:/root/.nuget/NuGet",
+		"dotnet-home:/root/.dotnet",
+	}
+	if !reflect.DeepEqual(dotnet.SharedVolumes, wantVolumes) {
+		t.Fatalf("dotnet shared_volumes = %#v, want %#v", dotnet.SharedVolumes, wantVolumes)
+	}
+	if len(dotnet.ProjectVolumes) != 0 {
+		t.Fatalf("dotnet build output must stay host-visible, got project_volumes %#v", dotnet.ProjectVolumes)
+	}
+	for _, entry := range []string{
+		"DOTNET_CLI_HOME=/root",
+		"NUGET_PACKAGES=/root/.nuget/packages",
+		"DOTNET_CLI_TELEMETRY_OPTOUT=1",
+		"DOTNET_NOLOGO=1",
+		"DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1",
+		"PATH=/root/.dotnet/tools:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+	} {
+		if !containsString(dotnet.EnvSet, entry) {
+			t.Fatalf("dotnet env_set missing %q: %#v", entry, dotnet.EnvSet)
+		}
+	}
+	if !containsString(dotnet.EnvPrefixes, "NUGETPACKAGESOURCECREDENTIALS_") {
+		t.Fatalf("dotnet env_prefixes missing NuGet source credentials: %#v", dotnet.EnvPrefixes)
+	}
+	if !containsString(dotnet.EnvNames, "DOTNET_USE_POLLING_FILE_WATCHER") {
+		t.Fatalf("dotnet env_names missing polling watcher opt-in: %#v", dotnet.EnvNames)
+	}
+	for _, pathVariable := range []string{"DOTNET_ROOT", "DOTNET_CLI_HOME", "NUGET_PACKAGES", "NUGET_HTTP_CACHE_PATH", "NUGET_PLUGIN_PATHS", "NUGET_CREDENTIALPROVIDERS_PATH", "MSBuildSDKsPath"} {
+		if containsString(dotnet.EnvNames, pathVariable) {
+			t.Fatalf("dotnet env allowlist must not include path-valued %q", pathVariable)
+		}
+	}
+	if len(dotnet.PathNext) != 0 || len(dotnet.PathEquals) != 0 || dotnet.PathLast {
+		t.Fatalf("dotnet must not force path semantics: %+v", dotnet)
 	}
 }
 
@@ -764,7 +813,7 @@ func TestHostMountDefaultTOMLComment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(reg.Tools) != 16 {
-		t.Fatalf("expected 16 tools, got %d", len(reg.Tools))
+	if len(reg.Tools) != 17 {
+		t.Fatalf("expected 17 tools, got %d", len(reg.Tools))
 	}
 }
