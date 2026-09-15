@@ -71,7 +71,7 @@ func Trace(reg registry.Registry, args []string) error {
 		workspaceRoot = "/root"
 		found = false
 	} else {
-		root, found = pathmap.FindProjectRoot(cwd, pathmap.ProjectMarkersFor(t))
+		root, found = pathmap.FindProjectRootForTool(cwd, t)
 		if !found {
 			root = cwd
 		}
@@ -157,7 +157,7 @@ func Env(reg registry.Registry) error {
 	if !ok {
 		return errors.New("python tool not configured")
 	}
-	root, found := pathmap.FindProjectRoot(cwd, pathmap.ProjectMarkersFor(pt))
+	root, found := pathmap.FindProjectRootForTool(cwd, pt)
 	if !found {
 		root = cwd
 	}
@@ -326,7 +326,7 @@ func Inspect(reg registry.Registry, args []string) error {
 		found = false
 		workspaceRoot = "/root"
 	} else {
-		root, found = pathmap.FindProjectRoot(cwd, pathmap.ProjectMarkersFor(t))
+		root, found = pathmap.FindProjectRootForTool(cwd, t)
 		if !found {
 			root = cwd
 		}

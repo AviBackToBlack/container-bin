@@ -19,25 +19,26 @@ import (
 // Command is prepended inside the container. An empty Command means: use the
 // image ENTRYPOINT as-is (handy for images such as ghcr.io/jqlang/jq).
 type Tool struct {
-	Name           string
-	Image          string
-	Provider       string // stateless, python
-	Role           string // provider-specific: python, pip
-	Command        []string
-	ArgsPrefix     []string
-	PathNext       []string // options whose following argv is a path
-	PathEquals     []string // options of the form --opt=PATH
-	PathLast       bool     // final non-option argv is a path
-	PathLastIfAny  []string // apply PathLast only when any listed argv is present
-	EnvPrefixes    []string // host env var prefixes passed into the container
-	EnvNames       []string // exact host env var names passed into the container
-	EnvSet         []string // literal NAME=VALUE entries injected into the container
-	ProjectMarkers []string // tool/provider-specific project root markers
-	StateGroup     string   // stable namespace shared by related stateful tools
-	ProjectVolumes []string // NAME:CONTAINER_PATH, project-scoped named volumes
-	SharedVolumes  []string // NAME:CONTAINER_PATH, shared named volumes
-	HostMounts     []string // SOURCE:/CONTAINER_PATH:ro|rw, explicit host bind mounts
-	CwdMode        string   // "project" or "isolated"; empty means "project"
+	Name            string
+	Image           string
+	Provider        string // stateless, python
+	Role            string // provider-specific: python, pip
+	Command         []string
+	ArgsPrefix      []string
+	PathNext        []string // options whose following argv is a path
+	PathEquals      []string // options of the form --opt=PATH
+	PathLast        bool     // final non-option argv is a path
+	PathLastIfAny   []string // apply PathLast only when any listed argv is present
+	EnvPrefixes     []string // host env var prefixes passed into the container
+	EnvNames        []string // exact host env var names passed into the container
+	EnvSet          []string // literal NAME=VALUE entries injected into the container
+	ProjectMarkers  []string // tool/provider-specific project root markers
+	ProjectRootMode string   // "nearest" (default) or "outermost" matching marker
+	StateGroup      string   // stable namespace shared by related stateful tools
+	ProjectVolumes  []string // NAME:CONTAINER_PATH, project-scoped named volumes
+	SharedVolumes   []string // NAME:CONTAINER_PATH, shared named volumes
+	HostMounts      []string // SOURCE:/CONTAINER_PATH:ro|rw, explicit host bind mounts
+	CwdMode         string   // "project" or "isolated"; empty means "project"
 }
 
 type Registry struct {
@@ -61,6 +62,7 @@ schema_version = 1
 # env_prefixes / env_names   => explicitly pass selected host environment variables
 # env_set                    => literal NAME=VALUE entries injected into the container
 # project_markers            => files/dirs used to find this tool's project root
+# project_root_mode          => "nearest" (default) or "outermost" matching marker
 # state_group                => namespace shared by related stateful shims
 # project_volumes            => ["name:/container/path"] scoped by project root
 # shared_volumes             => ["name:/container/path"] shared across projects
@@ -220,6 +222,7 @@ provider = "stateful"
 command = ["cargo"]
 state_group = "rust198"
 project_markers = ["Cargo.toml", "rust-toolchain.toml", "rust-toolchain", ".git"]
+project_root_mode = "outermost"
 shared_volumes = ["registry:/usr/local/cargo/registry", "git:/usr/local/cargo/git", "global:/cb/cargo-global"]
 env_set = ["CARGO_INSTALL_ROOT=/cb/cargo-global", "PATH=/cb/cargo-global/bin:/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"]
 env_prefixes = ["CARGO_REGISTRIES_"]
@@ -406,6 +409,12 @@ func ParseTOML(s string) (Registry, error) {
 				return reg, fmt.Errorf("line %d project_markers: %w", lineNo, err)
 			}
 			t.ProjectMarkers = v
+		case "project_root_mode":
+			v, err := toml.ParseQuoted(value)
+			if err != nil {
+				return reg, fmt.Errorf("line %d project_root_mode: %w", lineNo, err)
+			}
+			t.ProjectRootMode = strings.ToLower(v)
 		case "state_group":
 			v, err := toml.ParseQuoted(value)
 			if err != nil {
@@ -477,6 +486,11 @@ func ParseTOML(s string) (Registry, error) {
 		default:
 			return reg, fmt.Errorf("tool %q: cwd_mode must be \"project\" or \"isolated\"", name)
 		}
+		switch t.ProjectRootMode {
+		case "", "nearest", "outermost":
+		default:
+			return reg, fmt.Errorf("tool %q: project_root_mode must be \"nearest\" or \"outermost\"", name)
+		}
 		if t.CwdMode == "isolated" && len(t.ProjectVolumes) > 0 {
 			return reg, fmt.Errorf("tool %q: cwd_mode = \"isolated\" cannot declare project_volumes", name)
 		}
@@ -485,6 +499,9 @@ func ParseTOML(s string) (Registry, error) {
 		}
 		if t.CwdMode == "isolated" && len(t.ProjectMarkers) > 0 {
 			return reg, fmt.Errorf("tool %q: cwd_mode = \"isolated\" cannot declare project_markers", name)
+		}
+		if t.CwdMode == "isolated" && t.ProjectRootMode != "" {
+			return reg, fmt.Errorf("tool %q: cwd_mode = \"isolated\" cannot declare project_root_mode", name)
 		}
 		if err := validateHostMounts(t); err != nil {
 			return reg, fmt.Errorf("tool %q: %w", name, err)

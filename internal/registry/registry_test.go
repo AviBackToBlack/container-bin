@@ -419,6 +419,9 @@ func TestRustCargoProfiles(t *testing.T) {
 			t.Fatalf("%s project_markers = %#v, want %#v", tool.Name, tool.ProjectMarkers, wantMarkers)
 		}
 	}
+	if cargo.ProjectRootMode != "outermost" {
+		t.Fatalf("cargo project_root_mode = %q, want outermost", cargo.ProjectRootMode)
+	}
 	wantPathOptions := []string{"--target-dir", "--manifest-path"}
 	if !reflect.DeepEqual(cargo.PathNext, wantPathOptions) || !reflect.DeepEqual(cargo.PathEquals, wantPathOptions) {
 		t.Fatalf("bad cargo path semantics: next=%#v equals=%#v", cargo.PathNext, cargo.PathEquals)

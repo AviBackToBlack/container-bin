@@ -34,6 +34,10 @@ func NormalizeToolArgs(t registry.Tool, args []string) []string {
 	out := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
+		if arg == "--" {
+			out = append(out, args[i:]...)
+			break
+		}
 		joined := false
 		for _, opt := range t.PathEquals {
 			prefix := opt + "="
@@ -59,6 +63,7 @@ func MapToolArgs(t registry.Tool, root, cwd, workspaceRoot string, userArgs []st
 	pm := &pathMapper{root: root, cwd: cwd, workspaceRoot: workspaceRoot, mountBySource: map[string]string{}}
 	mapped := append([]string(nil), normalized...)
 	forceNext := false
+	forcedOptions := true
 	for i, arg := range normalized {
 		if forceNext {
 			v, err := pm.mapArg(arg, true)
@@ -69,8 +74,12 @@ func MapToolArgs(t registry.Tool, root, cwd, workspaceRoot string, userArgs []st
 			forceNext = false
 			continue
 		}
+		if arg == "--" {
+			forcedOptions = false
+			continue
+		}
 
-		if containsString(t.PathNext, arg) {
+		if forcedOptions && containsString(t.PathNext, arg) {
 			mapped[i] = arg
 			forceNext = true
 			continue
@@ -79,7 +88,7 @@ func MapToolArgs(t registry.Tool, root, cwd, workspaceRoot string, userArgs []st
 		eqMapped := false
 		for _, opt := range t.PathEquals {
 			prefix := opt + "="
-			if strings.HasPrefix(arg, prefix) {
+			if forcedOptions && strings.HasPrefix(arg, prefix) {
 				v, err := pm.mapArg(strings.TrimPrefix(arg, prefix), true)
 				if err != nil {
 					return nil, nil, err
@@ -94,7 +103,7 @@ func MapToolArgs(t registry.Tool, root, cwd, workspaceRoot string, userArgs []st
 		}
 
 		lastEnabled := t.PathLast && (len(t.PathLastIfAny) == 0 || anyArgPresent(normalized, t.PathLastIfAny))
-		forceLast := lastEnabled && i == len(normalized)-1 && arg != "-" && !strings.HasPrefix(arg, "-")
+		forceLast := forcedOptions && lastEnabled && i == len(normalized)-1 && arg != "-" && !strings.HasPrefix(arg, "-")
 		v, err := pm.mapArg(arg, forceLast)
 		if err != nil {
 			return nil, nil, err
@@ -319,6 +328,32 @@ func FindProjectRoot(start string, markers []string) (string, bool) {
 		}
 		dir = parent
 	}
+}
+
+// FindProjectRootForTool applies the profile's marker selection policy.
+// Outermost mode is useful for workspace-oriented tools whose member directory
+// has its own marker but still depends on a parent workspace manifest.
+func FindProjectRootForTool(start string, t registry.Tool) (string, bool) {
+	markers := ProjectMarkersFor(t)
+	if t.ProjectRootMode != "outermost" {
+		return FindProjectRoot(start, markers)
+	}
+	var outermost string
+	dir := start
+	for {
+		for _, marker := range markers {
+			if _, err := os.Stat(filepath.Join(dir, marker)); err == nil {
+				outermost = dir
+				break
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return outermost, outermost != ""
 }
 
 func VolumeHash(root string) string {
