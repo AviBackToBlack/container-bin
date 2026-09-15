@@ -4,10 +4,11 @@
 installing the runtimes on the host.**
 
 ContainerBin makes commands such as `python`, `pip`, `node`, `npm`, `npx`,
-`jq`, `yq`, `terraform` and `ffmpeg` look like ordinary Windows executables
-while their real implementations run inside disposable Linux containers on
-Docker Desktop. Your Windows installation stays clean: no Python, no Node, no
-Terraform on the host — just one small Go binary, `cb.exe`.
+`go`, `cargo`, `rustc`, `jq`, `yq`, `terraform` and `ffmpeg` look like ordinary
+Windows executables while their real implementations run inside disposable
+Linux containers on Docker Desktop. Your Windows installation stays clean: no
+Python, Node, Go or Rust toolchain on the host — just one small Go binary,
+`cb.exe`.
 
 ```powershell
 PS D:\Work\demo> pip install requests
@@ -119,6 +120,8 @@ cb lock
 | `node`, `npm`, `npx` | `node:24-slim` | stateful (`node24` state group) |
 | `node22`, `npm22`, `npx22` | `node:22-slim` | stateful (`node22` state group) |
 | `go`, `gofmt` | `golang:1.24` | stateful (`go124` state group) |
+| `rustc` | `rust:1.98.1-slim-bookworm` | stateless |
+| `cargo` | `rust:1.98.1-slim-bookworm` | stateful (`rust198` state group) |
 | `jq` | `ghcr.io/jqlang/jq:latest` | stateless |
 | `yq` | `mikefarah/yq:latest` | stateless |
 | `terraform` | `hashicorp/terraform:latest` | stateless (`-chdir` path semantics) |
@@ -139,9 +142,10 @@ env_prefixes = ["TF_", "AWS_", "ARM_"]  # only these host vars enter the contain
 
 Semantics include `command`, `args_prefix`, `path_next`, `path_equals`,
 `path_last`, `path_last_if_any`, `env_names`, `env_prefixes`, `env_set`,
-`project_markers`, `state_group`, `project_volumes`, `shared_volumes`,
-`host_mounts` and `cwd_mode`. Unknown keys **fail validation** instead of being silently
-ignored, and a `schema_version` newer than the binary supports fails closed.
+`project_markers`, `project_root_mode`, `state_group`, `project_volumes`,
+`shared_volumes`, `host_mounts` and `cwd_mode`. Unknown keys **fail validation**
+instead of being silently ignored, and a `schema_version` newer than the binary
+supports fails closed.
 Edit the file, then run `cb install` to reconcile shims.
 
 ### Explicit host bind mounts (`host_mounts`)
@@ -265,6 +269,33 @@ not a guarantee that every npm package is ABI-compatible with it. For packages
 whose native addons need a different Node ABI, `node22`/`npm22`/`npx22` are a
 second, independent Node-major runtime with their own `node22` state group,
 fully isolating project `node_modules`, the npm cache and the npm global prefix; upgrading an existing installation adds these profiles automatically, but they are not yet locked, so run `cb lock` or `cb update --all` before using them.
+
+## Rust and Cargo state
+
+`rustc` and `cargo` use the official `rust:1.98.1-slim-bookworm` image and
+share one image-lock entry. Cargo's registry and Git caches persist in shared
+named volumes. `cargo install` writes to a separate persistent
+`/cb/cargo-global` volume that is on the container `PATH`, so installed Cargo
+subcommands remain usable through `cargo`; creating generic Windows shims for
+those binaries is a separate exposure step that ContainerBin does not yet
+provide. That directory intentionally precedes the Rust toolchain directories:
+installing a binary named `cargo` or `rustc` shadows the image's toolchain
+command inside this profile, so audit what you install into the shared store.
+
+Cargo build output deliberately stays in the host project tree rather than a
+Docker volume. Cargo uses `project_root_mode = "outermost"`, so a member
+`Cargo.toml` or nested `rust-toolchain` does not hide a parent workspace from
+the container mount. Run Cargo from that project (or a subdirectory), as usual.
+Paths supplied to `--target-dir` and `--manifest-path` are mapped into the
+container, including their `--option=PATH` forms. Path-valued host
+variables such as `CARGO_HOME`, `CARGO_TARGET_DIR` and `RUSTUP_HOME` are not
+forwarded because their Windows values are not meaningful inside Linux;
+registry-specific Cargo variables and selected non-path settings are forwarded
+explicitly.
+
+Existing installations gain these profiles on `cb install`. Because the new
+image is not present in an older lockfile, run `cb update cargo` (or regenerate
+the lock with `cb lock`) before first use in locked mode.
 
 ## Dynamic npm CLI exposure
 
