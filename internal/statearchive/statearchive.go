@@ -492,7 +492,24 @@ func validateTarHeader(header *tar.Header) error {
 		return fmt.Errorf("tar entry %q escapes the volume root", header.Name)
 	}
 	switch header.Typeflag {
-	case tar.TypeReg, tar.TypeRegA, tar.TypeDir, tar.TypeSymlink, tar.TypeLink:
+	case tar.TypeReg, tar.TypeRegA, tar.TypeDir:
+		return nil
+	case tar.TypeSymlink, tar.TypeLink:
+		if header.Linkname == "" || strings.ContainsRune(header.Linkname, 0) {
+			return fmt.Errorf("tar link %q has an empty or NUL-containing target", header.Name)
+		}
+		if path.IsAbs(header.Linkname) {
+			return fmt.Errorf("tar link %q target %q escapes the volume root", header.Name, header.Linkname)
+		}
+		target := path.Clean(header.Linkname)
+		if header.Typeflag == tar.TypeSymlink {
+			// Symlink targets are interpreted relative to the link's parent;
+			// hardlink targets are archive-root-relative names.
+			target = path.Clean(path.Join(path.Dir(clean), header.Linkname))
+		}
+		if target == ".." || strings.HasPrefix(target, "../") {
+			return fmt.Errorf("tar link %q target %q escapes the volume root", header.Name, header.Linkname)
+		}
 		return nil
 	default:
 		return fmt.Errorf("tar entry %q uses unsupported type %d", header.Name, header.Typeflag)

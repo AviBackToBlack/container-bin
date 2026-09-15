@@ -549,6 +549,9 @@ func Backup(cfgPath string, args []string, version string) error {
 	}
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("backup %q already exists; choose a different filename", path)
+		}
 		return err
 	}
 	complete := false

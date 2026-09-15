@@ -399,6 +399,10 @@ tar stream's size and SHA-256. Restore revalidates every archive before changing
 Docker, never remaps a project path, and refuses label-mismatched or non-empty
 destinations. Tar extraction happens only inside a network-disabled helper
 container with a read-only root; no archive path is extracted onto Windows.
+Keep ContainerBin tool invocations stopped for the entire restore: the command
+rechecks running volume users immediately before import, but no filesystem API
+can reserve a Docker volume against a new container starting in the remaining
+check-to-extract window.
 
 The immutable helper image must already be local; ContainerBin never pulls it
 as a backup side effect:
