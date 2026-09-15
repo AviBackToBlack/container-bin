@@ -1,11 +1,129 @@
 package registry
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestInstallShimCopyFailurePreservesExistingShim(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "container-bin.exe")
+	dst := filepath.Join(dir, "tool.exe")
+	if err := os.WriteFile(exe, []byte("new executable"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dst, []byte("existing shim"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	replaceCalled := false
+	_, err := installShim(exe, dst,
+		func(string, string) error { return errors.New("hardlink unavailable") },
+		func(_, temporary string) error {
+			if err := os.WriteFile(temporary, []byte("partial copy"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			return errors.New("copy interrupted")
+		},
+		func(string, string) error {
+			replaceCalled = true
+			return nil
+		},
+	)
+	if err == nil {
+		t.Fatal("expected installation failure")
+	}
+	if replaceCalled {
+		t.Fatal("replacement attempted before the temporary shim was complete")
+	}
+	data, readErr := os.ReadFile(dst)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(data) != "existing shim" {
+		t.Fatalf("existing shim changed after failed installation: %q", data)
+	}
+	temps, globErr := filepath.Glob(filepath.Join(dir, ".tool.exe-*.tmp"))
+	if globErr != nil {
+		t.Fatal(globErr)
+	}
+	if len(temps) != 0 {
+		t.Fatalf("temporary shims were not cleaned up: %v", temps)
+	}
+}
+
+func TestInstallShimAtomicallyReplacesExistingShim(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "container-bin.exe")
+	dst := filepath.Join(dir, "tool.exe")
+	if err := os.WriteFile(exe, []byte("new executable"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dst, []byte("existing shim"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	mode, err := installShim(exe, dst, os.Link, copyFile, os.Rename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode != "hardlink" {
+		t.Fatalf("mode = %q, want hardlink", mode)
+	}
+	data, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "new executable" {
+		t.Fatalf("replacement shim contents = %q", data)
+	}
+	if err := os.WriteFile(exe, []byte("updated through hardlink"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "updated through hardlink" {
+		t.Fatalf("replacement is not a hardlink: %q", data)
+	}
+}
+
+func TestInstallShimReplacementFailurePreservesExistingShim(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "container-bin.exe")
+	dst := filepath.Join(dir, "tool.exe")
+	if err := os.WriteFile(exe, []byte("new executable"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dst, []byte("existing shim"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := installShim(exe, dst, os.Link, copyFile,
+		func(string, string) error { return errors.New("replacement unavailable") },
+	)
+	if err == nil {
+		t.Fatal("expected replacement failure")
+	}
+	data, readErr := os.ReadFile(dst)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(data) != "existing shim" {
+		t.Fatalf("existing shim changed after failed replacement: %q", data)
+	}
+	temps, globErr := filepath.Glob(filepath.Join(dir, ".tool.exe-*.tmp"))
+	if globErr != nil {
+		t.Fatal(globErr)
+	}
+	if len(temps) != 0 {
+		t.Fatalf("temporary shims were not cleaned up: %v", temps)
+	}
+}
 
 func TestAppendMissingDefaultToolsPreservesCustom(t *testing.T) {
 	dir := t.TempDir()
