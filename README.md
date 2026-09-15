@@ -276,6 +276,12 @@ across projects in separate managed volumes. The cache and environments are on
 different filesystems, so the profile deliberately sets `UV_LINK_MODE=copy`
 instead of letting uv attempt hardlinks and warn on every sync.
 
+The project environment's `/cb/uv-project-env/bin` intentionally comes first
+on the `uv` profile's `PATH`, followed by the shared tool-bin directory. This
+lets project commands resolve normally, but it also means installing another
+`uv` executable into that environment shadows the image's pinned `uv`; avoid
+doing that unless the override is deliberate.
+
 Automatic Python downloads are disabled. A project that requires a different
 interpreter fails explicitly instead of silently downloading an untracked
 runtime; use a separately configured uv image/profile for that interpreter.
