@@ -444,7 +444,7 @@ func renderExposedToolSection(sourceName string, source registry.Tool, name, com
 
 func Expose(reg registry.Registry, cfgPath string, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: cb expose TOOL [BINARY ...] (TOOL has a supported global binary store, e.g. npm, npm22, go, cargo, uv, dotnet or gem)")
+		return errors.New("usage: cb expose TOOL [BINARY ...] (TOOL has a supported global binary store, e.g. npm, npm22, go, cargo, uv, dotnet or ruby)")
 	}
 	sourceName := strings.ToLower(args[0])
 	source, resolvedSource, ok := reg.Resolve(sourceName)

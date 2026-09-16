@@ -643,11 +643,11 @@ func TestRenderDotnetExposedToolSection(t *testing.T) {
 	}
 }
 
-func TestRenderRubyGemExposedToolSection(t *testing.T) {
+func TestRenderRubyExposedToolSection(t *testing.T) {
 	reg := registry.Default()
-	source := reg.Tools["gem"]
+	source := reg.Tools["ruby"]
 	const binary = "rake"
-	section := renderExposedToolSection("gem", source, binary, "/cb/ruby-gems/bin/"+binary)
+	section := renderExposedToolSection("ruby", source, binary, "/cb/ruby-gems/bin/"+binary)
 	parsed, err := registry.ParseTOML("schema_version = 1\n" + section)
 	if err != nil {
 		t.Fatalf("rendered RubyGems tool section invalid: %v", err)
@@ -659,8 +659,13 @@ func TestRenderRubyGemExposedToolSection(t *testing.T) {
 	if !reflect.DeepEqual(got.Command, []string{"/cb/ruby-gems/bin/rake"}) {
 		t.Errorf("command = %v", got.Command)
 	}
-	if !reflect.DeepEqual(got.SharedVolumes, source.SharedVolumes) || !reflect.DeepEqual(got.EnvSet, source.EnvSet) {
+	if !reflect.DeepEqual(got.SharedVolumes, source.SharedVolumes) || !reflect.DeepEqual(got.EnvSet, source.EnvSet) || !reflect.DeepEqual(got.EnvNames, source.EnvNames) {
 		t.Error("exposed RubyGems tool profile did not inherit source state/environment")
+	}
+	for _, name := range got.EnvNames {
+		if name == "RUBYGEMS_API_KEY" || name == "HTTP_PROXY_USER" || name == "HTTP_PROXY_PASS" {
+			t.Fatalf("exposed RubyGems tool inherited credential variable %q", name)
+		}
 	}
 	if got.Role != "exposed" {
 		t.Fatalf("role = %q, want exposed", got.Role)

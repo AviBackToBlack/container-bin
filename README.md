@@ -456,8 +456,11 @@ added to the shared gem home.
 Only selected non-path Ruby/Bundler settings, repository credentials and proxy
 variables cross into the container. Host values such as `GEM_HOME`, `GEM_PATH`,
 `BUNDLE_PATH` and `BUNDLE_GEMFILE` are deliberately ignored because Windows
-paths are meaningless in the Linux image. Run `cb expose gem <binary>` to
-create a standalone Windows shim for an executable installed by RubyGems.
+paths are meaningless in the Linux image. Run `cb expose ruby <binary>` to
+create a standalone Windows shim for an executable installed by RubyGems. Use
+the `ruby` source for exposure: it mounts the same gem home without forwarding
+the `gem`/`bundle` profiles' `RUBYGEMS_API_KEY`, `HTTP_PROXY_USER`, or
+`HTTP_PROXY_PASS` credentials to arbitrary installed gem code.
 
 Existing installations gain all three profiles on `cb install`. An older
 lockfile does not include their image, so run `cb update ruby` (or regenerate
@@ -487,7 +490,7 @@ cb expose dotnet dotnet-ef
 dotnet-ef --version
 
 gem install rake
-cb expose gem rake
+cb expose ruby rake
 rake --version
 ```
 
@@ -506,7 +509,7 @@ expose a binary installed under the Node 22 runtime, use
 `cb expose cargo <binary>`; for `uv tool install`, use
 `cb expose uvx <binary>`; for a global .NET tool, use
 `cb expose dotnet <binary>`; for a Ruby gem executable, use
-`cb expose gem <binary>`.
+`cb expose ruby <binary>`.
 
 That inheritance set is deliberately fixed. Generated profiles do **not** copy
 the source's `project_volumes`, `host_mounts`, or `cwd_mode`; a custom source
