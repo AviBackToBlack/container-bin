@@ -147,6 +147,20 @@ func TestConfiguredImagesIncludesDotnetSDK(t *testing.T) {
 	}
 }
 
+func TestConfiguredImagesDeduplicatesRubyRuntime(t *testing.T) {
+	got := ConfiguredImages(registry.Default())
+	const image = "ruby:4.0-trixie"
+	count := 0
+	for _, configured := range got {
+		if configured == image {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("ConfiguredImages contains %d copies of %q; got %v", count, image, got)
+	}
+}
+
 func containsString(xs []string, s string) bool {
 	for _, x := range xs {
 		if x == s {
