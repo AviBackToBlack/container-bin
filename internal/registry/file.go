@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/AviBackToBlack/container-bin/internal/atomicio"
+	"github.com/AviBackToBlack/container-bin/internal/toml"
 )
 
 func Path() (string, error) {
@@ -309,14 +310,21 @@ func RewriteWithoutTools(cfgPath string, remove map[string]bool) error {
 	if err != nil {
 		return err
 	}
+	if _, err := ParseTOML(string(data)); err != nil {
+		return fmt.Errorf("refusing registry rewrite: %w", err)
+	}
 	lines := strings.SplitAfter(string(data), "\n")
 	var out strings.Builder
 	skip := false
 	for _, raw := range lines {
-		trim := strings.TrimSpace(strings.TrimSuffix(raw, "\n"))
-		if strings.HasPrefix(trim, "[tools.") && strings.HasSuffix(trim, "]") {
-			name := strings.ToLower(strings.TrimSuffix(strings.TrimPrefix(trim, "[tools."), "]"))
-			skip = remove[name]
+		trim := strings.TrimSpace(toml.StripComment(raw))
+		if strings.HasPrefix(trim, "[") && strings.HasSuffix(trim, "]") {
+			skip = false
+			section := strings.TrimSpace(trim[1 : len(trim)-1])
+			if strings.HasPrefix(section, "tools.") {
+				name := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(section, "tools.")))
+				skip = remove[name]
+			}
 		}
 		if !skip {
 			out.WriteString(raw)
