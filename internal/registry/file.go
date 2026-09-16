@@ -310,6 +310,9 @@ func RewriteWithoutTools(cfgPath string, remove map[string]bool) error {
 	if err != nil {
 		return err
 	}
+	if _, err := ParseTOML(string(data)); err != nil {
+		return fmt.Errorf("refusing registry rewrite: %w", err)
+	}
 	lines := strings.SplitAfter(string(data), "\n")
 	var out strings.Builder
 	skip := false

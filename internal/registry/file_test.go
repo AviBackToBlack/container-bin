@@ -253,6 +253,75 @@ provider = "stateless"
 	}
 }
 
+func TestRewriteRegistryWithoutToolsRemovesCommentedHeaderAtEOF(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "container-bin.toml")
+	src := `schema_version = 1
+
+[tools.keep]
+image = "keep:1"
+provider = "stateless"
+
+[tools.remove] # deprecated
+image = "remove:1"
+provider = "stateless"`
+	if err := os.WriteFile(path, []byte(src), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := RewriteWithoutTools(path, map[string]bool{"remove": true}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg, err := ParseTOML(string(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := reg.Tools["remove"]; ok {
+		t.Fatal("removed tool still present")
+	}
+	if _, ok := reg.Tools["keep"]; !ok {
+		t.Fatal("preceding tool lost")
+	}
+	if strings.Contains(string(data), "[tools.remove]") {
+		t.Fatal("commented tool header still present")
+	}
+}
+
+func TestRewriteRegistryWithoutToolsRejectsInvalidInput(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "container-bin.toml")
+	src := `schema_version = 1
+
+[tools.keep]
+image = "keep:1"
+provider = "stateless"
+
+[tools.remove]
+image = "remove:1"
+provider = "stateless"
+
+[tools.remove]
+image = "duplicate:1"
+provider = "stateless"
+`
+	if err := os.WriteFile(path, []byte(src), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := RewriteWithoutTools(path, map[string]bool{"remove": true}); err == nil || !strings.Contains(err.Error(), "refusing registry rewrite") {
+		t.Fatalf("invalid input error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != src {
+		t.Fatal("invalid registry was rewritten")
+	}
+}
+
 // A pre-RM-11 registry should be upgraded with every later default profile,
 // while existing sections are left untouched.
 func TestAppendMissingDefaultToolsUpgradesPreRM11(t *testing.T) {
