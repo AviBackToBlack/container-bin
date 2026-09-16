@@ -182,7 +182,7 @@ func resolveRunContext(t registry.Tool, cwd string) (runContext, error) {
 		}, nil
 	}
 
-	root, found := pathmap.FindProjectRoot(cwd, pathmap.ProjectMarkersFor(t))
+	root, found := pathmap.FindProjectRootForTool(cwd, t)
 	if !found {
 		root = cwd
 	}
