@@ -365,6 +365,26 @@ func parseExposedBins(out []byte, store exposeStore) ([]exposedBin, error) {
 	return bins, nil
 }
 
+func selectExposedBins(bins []exposedBin, requested map[string]bool) (selected []exposedBin, missing []string) {
+	if len(requested) == 0 {
+		return bins, nil
+	}
+	found := map[string]bool{}
+	for _, bin := range bins {
+		if requested[bin.name] {
+			selected = append(selected, bin)
+			found[bin.name] = true
+		}
+	}
+	for name := range requested {
+		if !found[name] {
+			missing = append(missing, name)
+		}
+	}
+	sort.Strings(missing)
+	return selected, missing
+}
+
 func renderExposedToolSection(sourceName string, source registry.Tool, name, command string) string {
 	projectRootMode := ""
 	if source.ProjectRootMode != "" {
@@ -418,11 +438,9 @@ func Expose(reg registry.Registry, cfgPath string, args []string) error {
 	if len(args) > 1 && len(requested) == 0 {
 		return errors.New("all requested names are reserved and cannot be exposed")
 	}
-	var selected []exposedBin
-	for _, b := range bins {
-		if len(requested) == 0 || requested[b.name] {
-			selected = append(selected, b)
-		}
+	selected, missing := selectExposedBins(bins, requested)
+	for _, name := range missing {
+		fmt.Printf("skip %-16s not found in %s global store\n", name, store.kind)
 	}
 	if len(selected) == 0 {
 		return fmt.Errorf("no matching globally installed %s binaries found; try: %s", store.kind, store.installHint)

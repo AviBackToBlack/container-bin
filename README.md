@@ -492,12 +492,17 @@ That inheritance set is deliberately fixed. Generated profiles do **not** copy
 the source's `project_volumes`, `host_mounts`, or `cwd_mode`; a custom source
 using those fields must treat the generated profile as a separate access policy
 and edit it explicitly before use. In particular, host access never propagates
-implicitly to an auto-generated shim, as described above.
+implicitly to an auto-generated shim, as described above. Source-command
+argument rules (`args_prefix` and `path_*`) and default-family metadata are not
+copied either: an exposed binary has its own argv semantics and is always a
+concrete profile, never a runtime alias.
 
 With no binary arguments, every valid executable in that source store is
 considered. Explicit names are safer on a long-lived store. Invalid and
 reserved Windows shim names are ignored, and names that differ only by case
-fail closed because they cannot coexist on Windows.
+fail closed because they cannot coexist on Windows. When explicit names are
+given, each name that is not present in the selected store is reported instead
+of being silently ignored alongside successful matches.
 
 Generated profiles carry `role = "exposed"` as explicit provenance.
 `cb unexpose` requires that marker plus a matching command/name and supported
