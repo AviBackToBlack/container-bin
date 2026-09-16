@@ -30,7 +30,7 @@ body:
   - type: textarea
     id: cell-powershell51-previous
     attributes:
-      label: Windows PowerShell 5.1 — previous major Docker Desktop
+      label: Windows PowerShell 5.1 — previous stable Docker Desktop
       description: Docker Desktop version, `cb doctor` output (sanitized), `cb self-test --release` result, and any smoke-test commands.
       render: text
   - type: textarea
@@ -42,7 +42,7 @@ body:
   - type: textarea
     id: cell-pwsh-previous
     attributes:
-      label: PowerShell 7.x — previous major Docker Desktop
+      label: PowerShell 7.x — previous stable Docker Desktop
       description: Docker Desktop version, `cb doctor` output (sanitized), `cb self-test --release` result, and any smoke-test commands.
       render: text
   - type: textarea
@@ -54,6 +54,6 @@ body:
   - type: textarea
     id: cell-cmd-previous
     attributes:
-      label: cmd.exe — previous major Docker Desktop
+      label: cmd.exe — previous stable Docker Desktop
       description: Docker Desktop version, `cb doctor` output (sanitized), `cb self-test --release` result, and any smoke-test commands.
       render: text

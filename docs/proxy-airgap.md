@@ -137,56 +137,42 @@ and [`docker image load`](https://docs.docker.com/reference/cli/docker/image/loa
 Always finish with `cb lock --check`; do not infer readiness merely because a tag
 appears in `docker image ls`.
 
-## What `cb backup` currently protects
+## What `cb backup` protects
 
-Current `cb backup` archives only:
+Plain `cb backup` archives `container-bin.toml`, the lockfile when present, and
+informational metadata. Add `--state` followed by explicit names from `cb state`
+to include selected ContainerBin-managed Docker volumes:
 
-- `container-bin.toml`;
-- `container-bin.lock`, when present; and
-- informational backup metadata.
+```powershell
+cb state
+cb backup transfer.zip --state cb-node24-npm-global cb-go124-gobin
+cb restore transfer.zip --state           # validate and check destinations
+cb restore transfer.zip --state --apply   # import state, then registry/lock
+```
 
-`cb restore` validates those files, performs a dry run by default, and replaces
-the registry/lock only with `--apply`. It does **not** include Docker images,
-registry credentials, Docker Desktop settings, project files, or Docker named
-volumes.
+State backup is deliberately explicit and fail-closed. It never sweeps Docker
+volumes, accepts unlabeled state, or guesses a replacement project path. Every
+selected volume must have consistent ContainerBin ownership labels and must not
+be mounted by a running container. The manifest records labels, project identity,
+archive sizes, and SHA-256 checksums. Restore validates every payload before it
+changes Docker, refuses non-empty or label-mismatched destinations, and extracts
+only inside a network-disabled helper container with a read-only root.
 
-Treat persistent Python environments, npm globals/caches, Go caches/binaries,
-and project state as separate disaster-recovery data. `cb state` inventories the
-volumes ContainerBin can identify. Docker documents a helper-container pattern
-for [backing up, restoring, or migrating volumes](https://docs.docker.com/engine/storage/volumes/#back-up-restore-or-migrate-data-volumes),
-but ContainerBin does not currently automate or validate that operation.
+The helper image is immutable and must already be available; backup and restore
+never pull it as a side effect:
 
-For a manual recovery procedure:
+```powershell
+docker pull docker.io/library/alpine:3.23@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40
+```
 
-1. Quiesce every process that could write to the selected volume.
-2. Record `cb state` and `docker volume inspect VOLUME` output with the archive.
-3. Back up only an explicitly named volume to a controlled destination.
-4. Record a cryptographic checksum for each archive.
-5. On restore, create or select the expected target volume explicitly, verify its
-   labels and emptiness, restore it, and run the owning tool's smoke test.
+Quiesce every ContainerBin invocation that could use the selected state for the
+entire restore. The command checks for active volume users immediately before
+import, but Docker has no reservation primitive that can eliminate the final
+check-to-extract race.
 
-Project-volume names encode the canonical Windows project path. If the project
-moves, do not rename or guess the destination volume. Let ContainerBin establish
-the state expected for the new project path, inspect it, and deliberately migrate
-the data into that verified target.
-
-## Planned `cb backup --state` safety contract
-
-RM-32 tracks a future state-aware backup/restore command. Its implementation must
-preserve the same explicit, fail-closed rules as `cb gc` and `cb restore`:
-
-- select only named, ContainerBin-managed volumes; never sweep every Docker
-  volume or silently include legacy/unlabeled state;
-- detect active writers or require the caller to confirm that state is quiescent;
-- store a versioned manifest containing volume names, ownership labels, project
-  identity, archive sizes, and checksums;
-- make restore a dry run by default and validate every manifest/archive before
-  changing Docker state;
-- refuse label mismatches, ambiguous project-path remapping, and existing
-  non-empty destinations unless a separately designed explicit collision policy
-  says otherwise; and
-- never restore arbitrary archive paths onto the Windows host.
-
-Until that contract is implemented and tested, `cb backup --state` is not a
-command. Scripts should not probe for it and then silently fall back to copying
-all volumes.
+Backups still exclude Docker images, registry credentials, Docker Desktop
+settings, and host project files. Volume payloads can contain package-manager
+credentials or other secrets, so handle the archive as sensitive data. Project
+volume names encode the canonical Windows project path; after moving a project,
+let ContainerBin create and identify the new destination and migrate into that
+verified volume rather than renaming or guessing it.

@@ -56,12 +56,15 @@ placeholder value in `.github/ISSUE_TEMPLATE/bug_report.yml`:
 Use two representative versions, determined at qualification time:
 
 1. **the current stable Docker Desktop release**, and
-2. **the previous major Docker Desktop release still receiving updates**.
+2. **the previous stable Docker Desktop release still available from the
+   official release notes**.
 
 Specific version numbers (e.g. `4.32`) are deliberately not hardcoded: this doc
 has no CI that would catch drift, so a pinned number would be stale within one
-release cycle. The person qualifying the release looks up the current versions
-and records them in the issue template.
+release cycle. The person qualifying the release looks up the current and
+immediately preceding versions in Docker's
+[release notes](https://docs.docker.com/desktop/release-notes/) and records their
+exact version and build numbers in the issue template.
 
 ### Grid
 
@@ -71,11 +74,11 @@ with Linux-containers mode as a shared precondition.
 | Host OS | Shell | Docker Desktop version |
 |---|---|---|
 | Windows 11 | Windows PowerShell 5.1 | current stable |
-| Windows 11 | Windows PowerShell 5.1 | previous major (still receiving updates) |
+| Windows 11 | Windows PowerShell 5.1 | previous stable |
 | Windows 11 | PowerShell 7.x | current stable |
-| Windows 11 | PowerShell 7.x | previous major (still receiving updates) |
+| Windows 11 | PowerShell 7.x | previous stable |
 | Windows 11 | `cmd.exe` | current stable |
-| Windows 11 | `cmd.exe` | previous major (still receiving updates) |
+| Windows 11 | `cmd.exe` | previous stable |
 
 ## Per-cell procedure
 
@@ -91,7 +94,7 @@ mode:
 3. Run `cb self-test --release`. This uses already-local locked images and
    reports every check. Its output is documented in README's
    [`cb self-test --json` report format](../README.md#cb-self-test---json-report-format)
-   section: 12 `checks` IDs, 7 `environment` IDs, the `pass`/`fail`/`skip`
+   section: 15 `checks` IDs, 7 `environment` IDs, the `pass`/`fail`/`skip`
    vocabulary, and the `skip`-vs-`warn` message-prefix distinction. See that
    section for the full schema rather than restating it here, because the schema
    is the kind of detail that drifts.
