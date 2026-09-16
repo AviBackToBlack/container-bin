@@ -333,6 +333,10 @@ func TestExposeStoreForBuiltins(t *testing.T) {
 		{tool: "cargo", kind: "Cargo", target: "/cb/cargo-global", binDir: "/cb/cargo-global/bin", volumeEnd: "global"},
 		{tool: "uv", kind: "uv tool", target: "/cb/uv-bin", binDir: "/cb/uv-bin", volumeEnd: "tool-bin", companion: "/cb/uv-tools", compEnd: "tools"},
 		{tool: "uvx", kind: "uv tool", target: "/cb/uv-bin", binDir: "/cb/uv-bin", volumeEnd: "tool-bin", companion: "/cb/uv-tools", compEnd: "tools"},
+		{tool: "dotnet", kind: ".NET tool", target: "/root/.dotnet", binDir: "/root/.dotnet/tools", volumeEnd: "dotnet-home"},
+		{tool: "ruby", kind: "RubyGems", target: "/cb/ruby-gems", binDir: "/cb/ruby-gems/bin", volumeEnd: "gems"},
+		{tool: "gem", kind: "RubyGems", target: "/cb/ruby-gems", binDir: "/cb/ruby-gems/bin", volumeEnd: "gems"},
+		{tool: "bundle", kind: "RubyGems", target: "/cb/ruby-gems", binDir: "/cb/ruby-gems/bin", volumeEnd: "gems"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.tool, func(t *testing.T) {
@@ -615,6 +619,54 @@ func TestRenderUVToolExposedToolSection(t *testing.T) {
 	}
 }
 
+func TestRenderDotnetExposedToolSection(t *testing.T) {
+	reg := registry.Default()
+	source := reg.Tools["dotnet"]
+	const binary = "dotnet-ef"
+	section := renderExposedToolSection("dotnet", source, binary, "/root/.dotnet/tools/"+binary)
+	parsed, err := registry.ParseTOML("schema_version = 1\n" + section)
+	if err != nil {
+		t.Fatalf("rendered .NET tool section invalid: %v", err)
+	}
+	got := parsed.Tools[binary]
+	if got.Image != source.Image || got.StateGroup != source.StateGroup {
+		t.Fatalf("exposed .NET tool identity = %#v", got)
+	}
+	if !reflect.DeepEqual(got.Command, []string{"/root/.dotnet/tools/dotnet-ef"}) {
+		t.Errorf("command = %v", got.Command)
+	}
+	if !reflect.DeepEqual(got.SharedVolumes, source.SharedVolumes) || !reflect.DeepEqual(got.EnvSet, source.EnvSet) {
+		t.Error("exposed .NET tool profile did not inherit source state/environment")
+	}
+	if got.Role != "exposed" {
+		t.Fatalf("role = %q, want exposed", got.Role)
+	}
+}
+
+func TestRenderRubyGemExposedToolSection(t *testing.T) {
+	reg := registry.Default()
+	source := reg.Tools["gem"]
+	const binary = "rake"
+	section := renderExposedToolSection("gem", source, binary, "/cb/ruby-gems/bin/"+binary)
+	parsed, err := registry.ParseTOML("schema_version = 1\n" + section)
+	if err != nil {
+		t.Fatalf("rendered RubyGems tool section invalid: %v", err)
+	}
+	got := parsed.Tools[binary]
+	if got.Image != source.Image || got.StateGroup != source.StateGroup {
+		t.Fatalf("exposed RubyGems tool identity = %#v", got)
+	}
+	if !reflect.DeepEqual(got.Command, []string{"/cb/ruby-gems/bin/rake"}) {
+		t.Errorf("command = %v", got.Command)
+	}
+	if !reflect.DeepEqual(got.SharedVolumes, source.SharedVolumes) || !reflect.DeepEqual(got.EnvSet, source.EnvSet) {
+		t.Error("exposed RubyGems tool profile did not inherit source state/environment")
+	}
+	if got.Role != "exposed" {
+		t.Fatalf("role = %q, want exposed", got.Role)
+	}
+}
+
 func TestManagedExposedToolRecognition(t *testing.T) {
 	for _, tt := range []struct {
 		name string
@@ -624,6 +676,8 @@ func TestManagedExposedToolRecognition(t *testing.T) {
 		{name: "stringer", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/go/bin/Stringer"}, SharedVolumes: []string{"gobin:/go/bin"}}},
 		{name: "just", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/cb/cargo-global/bin/just"}, SharedVolumes: []string{"global:/cb/cargo-global"}}},
 		{name: "ruff", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/cb/uv-bin/ruff"}, SharedVolumes: []string{"tools:/cb/uv-tools", "tool-bin:/cb/uv-bin"}}},
+		{name: "dotnet-ef", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/root/.dotnet/tools/dotnet-ef"}, SharedVolumes: []string{"dotnet-home:/root/.dotnet"}}},
+		{name: "rake", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/cb/ruby-gems/bin/rake"}, SharedVolumes: []string{"gems:/cb/ruby-gems"}}},
 	} {
 		if !isManagedExposedTool(tt.name, tt.tool) {
 			t.Fatalf("expected exposed tool: %#v", tt.tool)
@@ -643,6 +697,8 @@ func TestManagedExposedToolRecognition(t *testing.T) {
 		{name: "just", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/cb/cargo-global/bin/just"}, SharedVolumes: []string{"global:/other"}}},
 		{name: "ruff", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/cb/uv-bin/ruff"}, SharedVolumes: []string{"tool-bin:/cb/uv-bin"}}},
 		{name: "ruff", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/cb/uv-bin/ruff"}, SharedVolumes: []string{"tool-bin:/other"}}},
+		{name: "dotnet-ef", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/root/.dotnet/tools/dotnet-ef"}, SharedVolumes: []string{"dotnet-home:/other"}}},
+		{name: "rake", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/cb/ruby-gems/bin/rake"}, SharedVolumes: []string{"gems:/other"}}},
 	} {
 		if isManagedExposedTool(tt.name, tt.tool) {
 			t.Fatalf("unexpected exposed tool: %#v", tt.tool)
