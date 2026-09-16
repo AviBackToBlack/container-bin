@@ -480,22 +480,29 @@ just --version
 `cb expose` takes a stateful source profile with one supported global binary
 store: the npm prefix (`npm`, `npm22`, ...), Go's shared `/go/bin` (`go`), or
 Cargo's install root (`cargo`). It adds registry profiles that inherit the
-source image, `state_group`, shared volumes and environment policy, and creates
-Windows shims — `cowsay.exe`, `stringer.exe`, or `just.exe` appears on PATH
-without Node, Go, or Rust touching the host. To expose a binary installed under
-the Node 22 runtime, use `cb expose npm22 <binary>`; for `go install` output,
-use `cb expose go <binary>`; for `cargo install`, use `cb expose cargo <binary>`.
+source image, `state_group`, project-root markers and mode, shared volumes, and
+environment policy, then creates Windows shims — `cowsay.exe`, `stringer.exe`,
+or `just.exe` appears on PATH without Node, Go, or Rust touching the host. To
+expose a binary installed under the Node 22 runtime, use
+`cb expose npm22 <binary>`; for `go install` output, use
+`cb expose go <binary>`; for `cargo install`, use
+`cb expose cargo <binary>`.
+
+That inheritance set is deliberately fixed. Generated profiles do **not** copy
+the source's `project_volumes`, `host_mounts`, or `cwd_mode`; a custom source
+using those fields must treat the generated profile as a separate access policy
+and edit it explicitly before use. In particular, host access never propagates
+implicitly to an auto-generated shim, as described above.
 
 With no binary arguments, every valid executable in that source store is
 considered. Explicit names are safer on a long-lived store. Invalid and
 reserved Windows shim names are ignored, and names that differ only by case
 fail closed because they cannot coexist on Windows.
 
-Generated profiles carry `role = "exposed"` as explicit provenance and inherit
-the source profile's project-root markers. `cb unexpose` requires that marker
-plus a matching command/name and supported store mount, so a hand-authored
-profile is not deleted merely because its command lives under a global bin
-directory.
+Generated profiles carry `role = "exposed"` as explicit provenance.
+`cb unexpose` requires that marker plus a matching command/name and supported
+store mount, so a hand-authored profile is not deleted merely because its
+command lives under a global bin directory.
 
 Exposed profiles are keyed by binary name only, so a binary already exposed
 from one runtime cannot also be exposed from the other under the same name —
