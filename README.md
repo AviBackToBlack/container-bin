@@ -494,7 +494,9 @@ pipeline, the provider model (stateless / python / stateful), volume naming,
 and the reasoning behind apparently odd behavior (PowerShell argv repair,
 FFmpeg's unforced paths, empty `node_modules` mountpoints, shared lock
 entries, legacy Python compatibility state). The shell/process semantics of
-that pipeline are in [docs/shell-contract.md](docs/shell-contract.md).
+that pipeline are in [docs/shell-contract.md](docs/shell-contract.md). Startup
+benchmark methodology and the disposable-container tradeoff are in
+[docs/performance.md](docs/performance.md).
 
 ## Current limitations
 
