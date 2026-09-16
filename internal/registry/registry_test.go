@@ -42,6 +42,56 @@ func TestParseDefaultRegistry(t *testing.T) {
 	}
 }
 
+func TestParseRegistrySectionHeadersUseSharedSyntax(t *testing.T) {
+	src := `schema_version = 1
+
+[tools.demo] # inline section comment
+image = "example/demo:1"
+provider = "stateless"
+args_prefix = ["literal # value"] # actual comment
+`
+	reg, err := ParseTOML(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(reg.Tools["demo"].ArgsPrefix, "|"); got != "literal # value" {
+		t.Fatalf("args_prefix = %q, want quoted hash preserved", got)
+	}
+
+	for _, malformed := range []string{
+		"[[tools.demo]]\n",
+		"[tools.demo] trailing\n",
+		"[tools.demo]]\n",
+	} {
+		if _, err := ParseTOML(malformed); err == nil {
+			t.Fatalf("ParseTOML(%q) unexpectedly succeeded", malformed)
+		}
+	}
+}
+
+func TestSectionsFromTOMLUsesSharedHeaderParser(t *testing.T) {
+	src := `[tools.alpha] # keep this comment
+image = "alpha:1"
+
+[defaults.node] # next section
+version = "24"
+`
+	sections, err := sectionsFromTOML(src, "tools.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "\n[tools.alpha] # keep this comment\nimage = \"alpha:1\"\n\n"
+	if sections["alpha"] != want {
+		t.Fatalf("alpha section = %q, want %q", sections["alpha"], want)
+	}
+	if len(sections) != 1 {
+		t.Fatalf("sections = %#v, want only alpha", sections)
+	}
+	if _, err := sectionsFromTOML("[[tools.alpha]]\n", "tools."); err == nil || !strings.Contains(err.Error(), "array table") {
+		t.Fatalf("array-table error = %v", err)
+	}
+}
+
 func TestDefaultAliasesSwitchAsOneFamily(t *testing.T) {
 	reg, err := ParseTOML(DefaultTOML)
 	if err != nil {

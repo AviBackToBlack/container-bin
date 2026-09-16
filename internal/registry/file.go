@@ -143,7 +143,7 @@ func upgradeV1Registry(path string, data []byte, reg Registry, cbVersion string)
 	}
 	var out strings.Builder
 	foundSchema := false
-	for _, raw := range strings.SplitAfter(string(data), "\n") {
+	for lineNo, raw := range strings.SplitAfter(string(data), "\n") {
 		line := strings.TrimSuffix(raw, "\n")
 		line = strings.TrimSuffix(line, "\r")
 		trim := strings.TrimSpace(line)
@@ -152,10 +152,19 @@ func upgradeV1Registry(path string, data []byte, reg Registry, cbVersion string)
 			out.WriteString(fmt.Sprintf("schema_version = %d%s", MaxSchemaVersion, newline))
 			continue
 		}
-		if strings.HasPrefix(trim, "[tools.") && strings.HasSuffix(trim, "]") {
-			name := strings.ToLower(strings.TrimSuffix(strings.TrimPrefix(trim, "[tools."), "]"))
+		section, isHeader, err := toml.ParseSectionHeader(line)
+		if err != nil {
+			return fmt.Errorf("refusing registry v1 to v2 upgrade at line %d: %w", lineNo+1, err)
+		}
+		if isHeader && strings.HasPrefix(section, "tools.") {
+			name := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(section, "tools.")))
 			if migration, ok := migrations[name]; ok {
-				out.WriteString("[tools." + migration.newName + "]" + newline)
+				out.WriteString("[tools." + migration.newName + "]")
+				withoutComment := toml.StripComment(line)
+				if len(withoutComment) < len(line) {
+					out.WriteString(" " + strings.TrimSpace(line[len(withoutComment):]))
+				}
+				out.WriteString(newline)
 				out.WriteString("default_family = \"" + migration.family + "\"" + newline)
 				out.WriteString("default_version = \"" + migration.version + "\"" + newline)
 				out.WriteString("default_alias = \"" + migration.alias + "\"" + newline)
@@ -265,11 +274,15 @@ func SetDefaultVersion(path, family, version string) error {
 	}
 	var out strings.Builder
 	inFamily, replaced := false, false
-	for _, raw := range strings.SplitAfter(string(data), "\n") {
+	for lineNo, raw := range strings.SplitAfter(string(data), "\n") {
 		line := strings.TrimSuffix(strings.TrimSuffix(raw, "\n"), "\r")
 		trim := strings.TrimSpace(line)
-		if strings.HasPrefix(trim, "[") && strings.HasSuffix(trim, "]") {
-			inFamily = strings.EqualFold(trim, "[defaults."+family+"]")
+		section, isHeader, err := toml.ParseSectionHeader(line)
+		if err != nil {
+			return fmt.Errorf("refusing default update at line %d: %w", lineNo+1, err)
+		}
+		if isHeader {
+			inFamily = strings.EqualFold(section, "defaults."+family)
 		}
 		if inFamily && strings.HasPrefix(trim, "version") {
 			key := strings.TrimSpace(strings.SplitN(trim, "=", 2)[0])
@@ -316,11 +329,13 @@ func RewriteWithoutTools(cfgPath string, remove map[string]bool) error {
 	lines := strings.SplitAfter(string(data), "\n")
 	var out strings.Builder
 	skip := false
-	for _, raw := range lines {
-		trim := strings.TrimSpace(toml.StripComment(raw))
-		if strings.HasPrefix(trim, "[") && strings.HasSuffix(trim, "]") {
+	for lineNo, raw := range lines {
+		section, isHeader, err := toml.ParseSectionHeader(raw)
+		if err != nil {
+			return fmt.Errorf("refusing registry rewrite at line %d: %w", lineNo+1, err)
+		}
+		if isHeader {
 			skip = false
-			section := strings.TrimSpace(trim[1 : len(trim)-1])
 			if strings.HasPrefix(section, "tools.") {
 				name := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(section, "tools.")))
 				skip = remove[name]
