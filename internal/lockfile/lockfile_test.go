@@ -125,6 +125,20 @@ func TestConfiguredImagesDeduplicatesRustToolchain(t *testing.T) {
 	}
 }
 
+func TestConfiguredImagesDeduplicatesUVRuntime(t *testing.T) {
+	got := ConfiguredImages(registry.Default())
+	const uvImage = "ghcr.io/astral-sh/uv:0.12-python3.13-trixie-slim"
+	count := 0
+	for _, image := range got {
+		if image == uvImage {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("ConfiguredImages contains %d copies of %q; got %v", count, uvImage, got)
+	}
+}
+
 func containsString(xs []string, s string) bool {
 	for _, x := range xs {
 		if x == s {

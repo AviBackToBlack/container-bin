@@ -419,6 +419,45 @@ func TestMapToolArgsForcedOptionsStopAtDoubleDash(t *testing.T) {
 	}
 }
 
+func TestUVForcedOptionsStopAtDoubleDash(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows path mapping is required")
+	}
+	root, ext := windowsFixtures(t)
+	tool := registry.Tool{Name: "uv", PathEquals: []string{"--project"}}
+	externalProject := mustCanonical(t, ext)
+	in := []string{"run", "--project=" + filepath.Join(root, "sub"), "--", "--project=" + externalProject}
+	mapped, mounts, err := MapToolArgs(tool, root, root, "/workspace", in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"run", "--project=/workspace/sub", "--", "--project=" + externalProject}
+	if !reflect.DeepEqual(mapped, want) {
+		t.Fatalf("mapped = %#v, want %#v", mapped, want)
+	}
+	if len(mounts) != 0 {
+		t.Fatalf("mounts = %#v, want none", mounts)
+	}
+}
+
+func TestUVEqualsPathOptions(t *testing.T) {
+	root, ext := windowsFixtures(t)
+	tool := registry.Default().Tools["uv"]
+	config := filepath.Join(ext, "b.txt")
+	in := []string{"run", "--project=" + filepath.Join(root, "sub"), "--directory=" + root, "--config-file=" + config, "--cache-dir=" + filepath.Join(root, "cache")}
+	mapped, mounts, err := MapToolArgs(tool, root, root, "/workspace", in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"run", "--project=/workspace/sub", "--directory=/workspace", "--config-file=/cb/mounts/0/b.txt", "--cache-dir=/workspace/cache"}
+	if !reflect.DeepEqual(mapped, want) {
+		t.Fatalf("mapped = %#v, want %#v", mapped, want)
+	}
+	if len(mounts) != 1 || mounts[0].Source != ext || mounts[0].Target != "/cb/mounts/0" {
+		t.Fatalf("mounts = %#v", mounts)
+	}
+}
+
 func TestFindProjectRootForToolOutermostWorkspace(t *testing.T) {
 	workspace := t.TempDir()
 	member := filepath.Join(workspace, "crates", "app")

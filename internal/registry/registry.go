@@ -260,6 +260,33 @@ env_prefixes = ["CARGO_REGISTRIES_"]
 env_names = ["CARGO_NET_OFFLINE", "CARGO_TERM_COLOR", "CARGO_HTTP_TIMEOUT", "CARGO_HTTP_MULTIPLEXING", "CARGO_HTTP_LOW_SPEED_LIMIT", "RUST_BACKTRACE", "RUST_LOG", "RUSTFLAGS", "RUSTDOCFLAGS", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"]
 path_next = ["--target-dir", "--manifest-path"]
 path_equals = ["--target-dir", "--manifest-path"]
+
+[tools.uv]
+image = "ghcr.io/astral-sh/uv:0.12-python3.13-trixie-slim"
+provider = "stateful"
+command = ["uv"]
+state_group = "uv012-py313"
+project_markers = ["pyproject.toml", "uv.lock", "requirements.txt", "setup.py", "setup.cfg", ".python-version", ".git"]
+project_volumes = ["project-env:/cb/uv-project-env"]
+shared_volumes = ["cache:/root/.cache/uv", "tools:/cb/uv-tools", "tool-bin:/cb/uv-bin"]
+env_set = ["UV_PROJECT_ENVIRONMENT=/cb/uv-project-env", "VIRTUAL_ENV=/cb/uv-project-env", "UV_CACHE_DIR=/root/.cache/uv", "UV_TOOL_DIR=/cb/uv-tools", "UV_TOOL_BIN_DIR=/cb/uv-bin", "UV_LINK_MODE=copy", "UV_PYTHON_DOWNLOADS=never", "PATH=/cb/uv-project-env/bin:/cb/uv-bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"]
+env_prefixes = ["UV_INDEX_"]
+env_names = ["UV_INDEX", "UV_DEFAULT_INDEX", "UV_EXTRA_INDEX_URL", "UV_NO_INDEX", "UV_NATIVE_TLS", "UV_OFFLINE", "UV_NO_CACHE", "UV_FROZEN", "UV_LOCKED", "UV_NO_PROGRESS", "UV_COLOR", "UV_HTTP_TIMEOUT", "UV_HTTP_RETRIES", "UV_CONCURRENT_DOWNLOADS", "UV_CONCURRENT_BUILDS", "UV_CONCURRENT_INSTALLS", "UV_INSECURE_HOST", "UV_KEYRING_PROVIDER", "UV_PRERELEASE", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"]
+# These global options are always paths. Forced option mapping stops at --, so
+# child-command payloads with the same spelling remain untouched.
+path_equals = ["--project", "--directory", "--config-file", "--cache-dir"]
+
+[tools.uvx]
+image = "ghcr.io/astral-sh/uv:0.12-python3.13-trixie-slim"
+provider = "stateful"
+command = ["uvx"]
+state_group = "uv012-py313"
+project_markers = ["pyproject.toml", "uv.lock", "requirements.txt", "setup.py", "setup.cfg", ".python-version", ".git"]
+shared_volumes = ["cache:/root/.cache/uv", "tools:/cb/uv-tools", "tool-bin:/cb/uv-bin"]
+env_set = ["UV_CACHE_DIR=/root/.cache/uv", "UV_TOOL_DIR=/cb/uv-tools", "UV_TOOL_BIN_DIR=/cb/uv-bin", "UV_LINK_MODE=copy", "UV_PYTHON_DOWNLOADS=never", "PATH=/cb/uv-bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"]
+env_prefixes = ["UV_INDEX_"]
+env_names = ["UV_INDEX", "UV_DEFAULT_INDEX", "UV_EXTRA_INDEX_URL", "UV_NO_INDEX", "UV_NATIVE_TLS", "UV_OFFLINE", "UV_NO_CACHE", "UV_NO_PROGRESS", "UV_COLOR", "UV_HTTP_TIMEOUT", "UV_HTTP_RETRIES", "UV_CONCURRENT_DOWNLOADS", "UV_CONCURRENT_BUILDS", "UV_CONCURRENT_INSTALLS", "UV_INSECURE_HOST", "UV_KEYRING_PROVIDER", "UV_PRERELEASE", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"]
+path_equals = ["--project", "--directory", "--config-file", "--cache-dir"]
 `
 
 func Default() Registry {

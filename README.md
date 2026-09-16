@@ -4,10 +4,10 @@
 installing the runtimes on the host.**
 
 ContainerBin makes commands such as `python`, `pip`, `node`, `npm`, `npx`,
-`go`, `cargo`, `rustc`, `jq`, `yq`, `terraform` and `ffmpeg` look like ordinary
+`uv`, `uvx`, `go`, `cargo`, `rustc`, `jq`, `yq`, `terraform` and `ffmpeg` look like ordinary
 Windows executables while their real implementations run inside disposable
 Linux containers on Docker Desktop. Your Windows installation stays clean: no
-Python, Node, Go or Rust toolchain on the host — just one small Go binary,
+Python, Node, Go, Rust or uv toolchain on the host — just one small Go binary,
 `cb.exe`.
 
 ```powershell
@@ -124,6 +124,7 @@ cb lock
 | `go`, `gofmt` | `golang:1.24` | stateful (`go124` state group) |
 | `rustc` | `rust:1.98.1-slim-bookworm` | stateless |
 | `cargo` | `rust:1.98.1-slim-bookworm` | stateful (`rust198` state group) |
+| `uv`, `uvx` | `ghcr.io/astral-sh/uv:0.12-python3.13-trixie-slim` | stateful (`uv012-py313` state group) |
 | `jq` | `ghcr.io/jqlang/jq:latest` | stateless |
 | `yq` | `mikefarah/yq:latest` | stateless |
 | `terraform` | `hashicorp/terraform:latest` | stateless (`-chdir` path semantics) |
@@ -358,6 +359,43 @@ explicitly.
 Existing installations gain these profiles on `cb install`. Because the new
 image is not present in an older lockfile, run `cb update cargo` (or regenerate
 the lock with `cb lock`) before first use in locked mode.
+
+## uv state model
+
+`uv` and `uvx` use Astral's `uv 0.12` image line with Python 3.13. Each
+project gets a persistent environment mounted at `/cb/uv-project-env`; the uv
+package cache, installed tool environments and tool executables are shared
+across projects in separate managed volumes. The cache and environments are on
+different filesystems, so the profile deliberately sets `UV_LINK_MODE=copy`
+instead of letting uv attempt hardlinks and warn on every sync.
+
+The project environment's `/cb/uv-project-env/bin` intentionally comes first
+on the `uv` profile's `PATH`, followed by the shared tool-bin directory. This
+lets project commands resolve normally, but it also means installing another
+`uv` executable into that environment shadows the image's pinned `uv`; avoid
+doing that unless the override is deliberate.
+
+Automatic Python downloads are disabled. A project that requires a different
+interpreter fails explicitly instead of silently downloading an untracked
+runtime; use a separately configured uv image/profile for that interpreter.
+Index, offline, TLS and proxy settings are forwarded from a narrow allowlist,
+while path-valued Windows settings such as `UV_PROJECT`, `UV_CACHE_DIR` and
+`VIRTUAL_ENV` are not.
+
+`uv tool install ruff` persists its environment and executable, and `uvx ruff`
+reuses the shared cache. The tool executable is available inside the uv
+containers; creating a standalone `ruff.exe` Windows shim requires the future
+generic exposure support tracked by RM-26.
+
+Equals-form global path options (`--cache-dir=`, `--directory=`, `--project=`,
+and `--config-file=`) are translated to their container paths. The mapper stops
+forced option handling at `--`, so same-named options intended for a command
+launched by `uv run` or `uvx` are not mistaken for uv options; ordinary
+path-shaped arguments still receive the generic mapping.
+
+Existing installations gain `uv` and `uvx` on `cb install`. An older lockfile
+does not include their image, so run `cb update uv` (or regenerate the lock with
+`cb lock`) before first use in locked mode.
 
 ## Dynamic global CLI exposure
 
