@@ -65,6 +65,9 @@ emits a Markdown table or a versioned JSON report with p50/p95 percentage
 changes. It fails closed instead of comparing confounded runs: Windows and
 PowerShell versions, working directory, shim and arguments, image ID,
 container command, warmup/iteration counts, and measurement names must match.
+The PowerShell version stays in the signature because the measured wall-clock
+region includes host-shell command dispatch and native-process startup, not
+only time spent inside Docker.
 Docker Engine version and capture time are intentionally allowed to differ and
 are recorded on every row. Keep the raw JSON inputs as the durable benchmark
 record; generated tables can always be reproduced from them.

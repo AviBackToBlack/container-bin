@@ -172,6 +172,9 @@ function Read-BenchmarkResult {
     $seen = @{}
     $measurements = @(
         foreach ($measurement in $measurementsRaw) {
+            if ($null -eq $measurement -or $measurement -isnot [pscustomobject]) {
+                throw "$resolved measurement must be a JSON object."
+            }
             $name = Get-RequiredString -Object $measurement -Name 'name' -Source "$resolved measurement"
             if ($seen.ContainsKey($name)) {
                 throw "$resolved contains duplicate measurement '$name'."
@@ -353,7 +356,7 @@ $report = [pscustomobject][ordered]@{
 
 if ($Format -eq 'Json') {
     $report | ConvertTo-Json -Depth 8
-    exit 0
+    return
 }
 
 $lines = @(
