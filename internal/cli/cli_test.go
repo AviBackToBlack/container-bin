@@ -220,9 +220,9 @@ shared_volumes = ["global:/cb/npm-global"]
 }
 
 // These tests cover Expose guard paths that need no Docker daemon.
-// The Docker-dependent discovery path (discoverNPMGlobalBins onward) remains
-// untested here because it requires a real Docker daemon and a populated
-// npm-global volume.
+// The Docker-dependent discovery path (discoverGlobalBins onward) remains
+// untested here because it requires a real Docker daemon and a populated npm
+// or Go global volume.
 
 func TestParseLockArgs(t *testing.T) {
 	check, local, err := parseLockArgs([]string{"--local", "LOCAL-TOOL", "--local", "other"})
@@ -298,21 +298,88 @@ func TestExposeRejectsUnknownSource(t *testing.T) {
 	}
 }
 
-// terraform exists in the registry but is not npm-shaped (stateless), so
+// terraform exists in the registry but is not stateful, so
 // Expose must fail closed here before any docker invocation. This also pins
 // that the new %q-formatted error carries the source tool's actual name rather
 // than an empty string.
-func TestExposeRejectsNonNpmShapedTool(t *testing.T) {
+func TestExposeRejectsStatelessTool(t *testing.T) {
 	reg := registry.Default()
 	err := Expose(reg, filepath.Join(t.TempDir(), "container-bin.toml"), []string{"terraform"})
 	if err == nil {
-		t.Fatal("expected error for non-npm-shaped source tool")
+		t.Fatal("expected error for stateless source tool")
 	}
-	if !strings.Contains(err.Error(), "is not a stateful npm-shaped profile") {
+	if !strings.Contains(err.Error(), "is not a stateful profile") {
 		t.Fatalf("unexpected error message: %v", err)
 	}
 	if !strings.Contains(err.Error(), `"terraform"`) {
 		t.Fatalf("error message does not name the source tool: %v", err)
+	}
+}
+
+func TestExposeStoreForBuiltins(t *testing.T) {
+	reg := registry.Default()
+	tests := []struct {
+		tool      string
+		kind      string
+		target    string
+		binDir    string
+		volumeEnd string
+	}{
+		{tool: "npm", kind: "npm", target: "/cb/npm-global", binDir: "/cb/npm-global/bin", volumeEnd: "npm-global"},
+		{tool: "npm22", kind: "npm", target: "/cb/npm-global", binDir: "/cb/npm-global/bin", volumeEnd: "npm-global"},
+		{tool: "go", kind: "Go", target: "/go/bin", binDir: "/go/bin", volumeEnd: "gobin"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.tool, func(t *testing.T) {
+			tool, _, ok := reg.Resolve(tt.tool)
+			if !ok {
+				t.Fatalf("tool %q did not resolve", tt.tool)
+			}
+			store, err := exposeStoreFor(tool)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if store.kind != tt.kind || store.mountTarget != tt.target || store.binDirectory != tt.binDir || !strings.HasSuffix(store.volumeName, tt.volumeEnd) {
+				t.Fatalf("store = %#v", store)
+			}
+		})
+	}
+}
+
+func TestExposeStoreRejectsAmbiguousProfile(t *testing.T) {
+	reg, err := registry.ParseTOML(`[tools.demo]
+image = "example/demo:1"
+provider = "stateful"
+state_group = "demo"
+shared_volumes = ["npm:/cb/npm-global", "go:/go/bin"]
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := exposeStoreFor(reg.Tools["demo"]); err == nil || !strings.Contains(err.Error(), "more than one supported global binary store") {
+		t.Fatalf("ambiguous store error = %v", err)
+	}
+}
+
+func TestParseExposedBinsPreservesContainerCase(t *testing.T) {
+	store := exposeStore{binDirectory: "/go/bin"}
+	bins, err := parseExposedBins([]byte("Stringer\x00bad.name\x00cb\x00lower\x00"), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []exposedBin{
+		{name: "lower", command: "/go/bin/lower"},
+		{name: "stringer", command: "/go/bin/Stringer"},
+	}
+	if !reflect.DeepEqual(bins, want) {
+		t.Fatalf("bins = %#v, want %#v", bins, want)
+	}
+}
+
+func TestParseExposedBinsRejectsCaseCollision(t *testing.T) {
+	store := exposeStore{binDirectory: "/go/bin"}
+	if _, err := parseExposedBins([]byte("Stringer\x00stringer\x00"), store); err == nil || !strings.Contains(err.Error(), "differ only by case") {
+		t.Fatalf("case-collision error = %v", err)
 	}
 }
 
@@ -329,7 +396,7 @@ func TestRenderExposedToolSection(t *testing.T) {
 	}
 
 	const binary = "cowsay"
-	section := renderExposedToolSection("npm22", source, binary)
+	section := renderExposedToolSection("npm22", source, binary, "/cb/npm-global/bin/"+binary)
 	parsed, err := registry.ParseTOML("schema_version = 1\n" + section)
 	if err != nil {
 		t.Fatalf("rendered section invalid: %v", err)
@@ -351,6 +418,109 @@ func TestRenderExposedToolSection(t *testing.T) {
 	wantCommand := []string{"/cb/npm-global/bin/" + binary}
 	if !reflect.DeepEqual(got.Command, wantCommand) {
 		t.Errorf("command = %v, want %v", got.Command, wantCommand)
+	}
+}
+
+func TestRenderGoExposedToolSection(t *testing.T) {
+	reg := registry.Default()
+	source, ok := reg.Tools["go"]
+	if !ok {
+		t.Fatal("go not in default registry")
+	}
+	const binary = "stringer"
+	section := renderExposedToolSection("go", source, binary, "/go/bin/"+binary)
+	parsed, err := registry.ParseTOML("schema_version = 1\n" + section)
+	if err != nil {
+		t.Fatalf("rendered Go section invalid: %v", err)
+	}
+	got := parsed.Tools[binary]
+	if got.Image != source.Image || got.StateGroup != "go124" {
+		t.Fatalf("exposed Go identity = %#v", got)
+	}
+	if !reflect.DeepEqual(got.Command, []string{"/go/bin/stringer"}) {
+		t.Errorf("command = %v", got.Command)
+	}
+	if !reflect.DeepEqual(got.SharedVolumes, source.SharedVolumes) || !reflect.DeepEqual(got.EnvNames, source.EnvNames) {
+		t.Error("exposed Go profile did not inherit source state/environment")
+	}
+	if !reflect.DeepEqual(got.ProjectMarkers, source.ProjectMarkers) {
+		t.Fatalf("project markers = %v, want %v", got.ProjectMarkers, source.ProjectMarkers)
+	}
+	if got.Role != "exposed" {
+		t.Fatalf("role = %q, want exposed", got.Role)
+	}
+
+	moduleRoot := t.TempDir()
+	nested := filepath.Join(moduleRoot, "cmd", "api")
+	if err := os.MkdirAll(nested, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(moduleRoot, "go.mod"), []byte("module example.test/demo\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	root, found := pathmap.FindProjectRoot(nested, pathmap.ProjectMarkersFor(got))
+	if !found || root != moduleRoot {
+		t.Fatalf("nested Go module root = %q, %v; want %q, true", root, found, moduleRoot)
+	}
+}
+
+func TestManagedExposedToolRecognition(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		tool registry.Tool
+	}{
+		{name: "cowsay", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/cb/npm-global/bin/cowsay"}, SharedVolumes: []string{"npm-global:/cb/npm-global"}}},
+		{name: "stringer", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/go/bin/Stringer"}, SharedVolumes: []string{"gobin:/go/bin"}}},
+	} {
+		if !isManagedExposedTool(tt.name, tt.tool) {
+			t.Fatalf("expected exposed tool: %#v", tt.tool)
+		}
+	}
+	for _, tt := range []struct {
+		name string
+		tool registry.Tool
+	}{
+		{name: "stringer", tool: registry.Tool{Provider: "stateful", Command: []string{"/go/bin/stringer"}, SharedVolumes: []string{"gobin:/go/bin"}}},
+		{name: "stringer", tool: registry.Tool{Provider: "stateless", Role: "exposed", Command: []string{"/go/bin/stringer"}, SharedVolumes: []string{"gobin:/go/bin"}}},
+		{name: "stringer", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/go/bin/"}, SharedVolumes: []string{"gobin:/go/bin"}}},
+		{name: "stringer", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/usr/local/bin/stringer"}, SharedVolumes: []string{"gobin:/go/bin"}}},
+		{name: "stringer", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/go/bin/other"}, SharedVolumes: []string{"gobin:/go/bin"}}},
+		{name: "stringer", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/go/bin/stringer"}, SharedVolumes: []string{"cache:/other"}}},
+		{name: "stringer", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/go/bin/a", "extra"}, SharedVolumes: []string{"gobin:/go/bin"}}},
+	} {
+		if isManagedExposedTool(tt.name, tt.tool) {
+			t.Fatalf("unexpected exposed tool: %#v", tt.tool)
+		}
+	}
+}
+
+func TestUnexposeRefusesUnmarkedCustomGoProfile(t *testing.T) {
+	const config = `schema_version = 1
+
+[tools.acme]
+image = "example/acme:1"
+provider = "stateful"
+command = ["/go/bin/acme"]
+state_group = "acme"
+shared_volumes = ["cache:/other"]
+`
+	reg, err := registry.ParseTOML(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "container-bin.toml")
+	if err := os.WriteFile(path, []byte(config), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Unexpose(reg, path, []string{"acme"}); err == nil || !strings.Contains(err.Error(), "not marked as a cb-exposed") {
+		t.Fatalf("unexpose error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != config {
+		t.Fatal("unexpose rewrote an unmarked custom profile")
 	}
 }
 

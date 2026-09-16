@@ -6,11 +6,13 @@ package cli
 
 import (
 	"archive/zip"
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -272,57 +274,95 @@ func Default(reg registry.Registry, cfgPath string, args []string) error {
 	return nil
 }
 
-func discoverNPMGlobalBins(t registry.Tool) ([]string, error) {
-	var globalVol, logicalName string
+type exposeStore struct {
+	kind         string
+	volumeName   string
+	mountTarget  string
+	binDirectory string
+	installHint  string
+}
+
+type exposedBin struct {
+	name    string
+	command string
+}
+
+func exposeStoreFor(t registry.Tool) (exposeStore, error) {
+	var found *exposeStore
 	for _, spec := range t.SharedVolumes {
 		logical, dst, err := registry.ParseVolumeBinding(spec)
 		if err != nil {
-			return nil, err
+			return exposeStore{}, err
 		}
-		if dst == "/cb/npm-global" {
-			logicalName = logical
-			globalVol = pathmap.StatefulSharedVolumeID(t.StateGroup, logicalName)
-			break
+		var candidate exposeStore
+		switch dst {
+		case "/cb/npm-global":
+			candidate = exposeStore{kind: "npm", mountTarget: dst, binDirectory: dst + "/bin", installHint: "npm install -g <package>"}
+		case "/go/bin":
+			candidate = exposeStore{kind: "Go", mountTarget: dst, binDirectory: dst, installHint: "go install <module>@latest"}
+		default:
+			continue
 		}
+		if found != nil {
+			return exposeStore{}, fmt.Errorf("tool %q declares more than one supported global binary store; expose source is ambiguous", t.Name)
+		}
+		candidate.volumeName = pathmap.StatefulSharedVolumeID(t.StateGroup, logical)
+		found = &candidate
 	}
-	if globalVol == "" {
-		return nil, fmt.Errorf("tool %q has no npm-global shared volume", t.Name)
+	if found == nil {
+		return exposeStore{}, fmt.Errorf("tool %q has no supported global binary store (/cb/npm-global or /go/bin)", t.Name)
 	}
+	return *found, nil
+}
+
+func discoverGlobalBins(t registry.Tool, store exposeStore) ([]exposedBin, error) {
 	image, err := lockfile.RuntimeImageForTool(t)
 	if err != nil {
 		return nil, err
 	}
-	script := `if [ -d /cb/npm-global/bin ]; then for f in /cb/npm-global/bin/*; do [ -e "$f" ] || continue; basename "$f"; done; fi`
-	mount, err := dockerrun.MountSpec("volume", globalVol, "/cb/npm-global")
+	script := `if [ -d "$1" ]; then for f in "$1"/*; do [ -f "$f" ] && [ -x "$f" ] || continue; printf '%s\000' "${f##*/}"; done; fi`
+	mount, err := dockerrun.MountSpecMode("volume", store.volumeName, store.mountTarget, "ro")
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.Command("docker", "run", "--rm", "--mount", mount, image, "sh", "-lc", script)
+	cmd := exec.Command("docker", "run", "--rm", "--mount", mount, image, "sh", "-c", script, "cb-expose", store.binDirectory)
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("inspect npm global bin: %w", err)
+		return nil, fmt.Errorf("inspect %s global bin: %w", store.kind, err)
 	}
-	seen := map[string]bool{}
-	var bins []string
-	for _, line := range strings.Split(string(out), "\n") {
-		name := strings.ToLower(strings.TrimSpace(line))
+	return parseExposedBins(out, store)
+}
+
+func parseExposedBins(out []byte, store exposeStore) ([]exposedBin, error) {
+	seen := map[string]string{}
+	var bins []exposedBin
+	for _, raw := range bytes.Split(out, []byte{0}) {
+		binary := string(raw)
+		name := strings.ToLower(binary)
 		// Untrusted names discovered inside the container: skip anything that
 		// is not a safe shim name or that would shadow cb / Windows devices.
-		if name == "" || !registry.ValidToolName(name) || registry.ReservedToolName(name) || seen[name] {
+		if name == "" || !registry.ValidToolName(name) || registry.ReservedToolName(name) {
 			continue
 		}
-		seen[name] = true
-		bins = append(bins, name)
+		if previous, ok := seen[name]; ok {
+			if previous != binary {
+				return nil, fmt.Errorf("global binaries %q and %q differ only by case and cannot share a Windows shim", previous, binary)
+			}
+			continue
+		}
+		seen[name] = binary
+		bins = append(bins, exposedBin{name: name, command: store.binDirectory + "/" + binary})
 	}
-	sort.Strings(bins)
+	sort.Slice(bins, func(i, j int) bool { return bins[i].name < bins[j].name })
 	return bins, nil
 }
 
-func renderExposedToolSection(sourceName string, source registry.Tool, name string) string {
-	return fmt.Sprintf("\n# Exposed from %s global prefix by cb expose %s\n[tools.%s]\nimage = %s\nprovider = \"stateful\"\ncommand = [%s]\nstate_group = %s\nshared_volumes = %s\nenv_set = %s\nenv_prefixes = %s\nenv_names = %s\n",
+func renderExposedToolSection(sourceName string, source registry.Tool, name, command string) string {
+	return fmt.Sprintf("\n# Exposed from %s global store by cb expose %s\n[tools.%s]\nimage = %s\nprovider = \"stateful\"\nrole = \"exposed\"\ncommand = [%s]\nproject_markers = %s\nstate_group = %s\nshared_volumes = %s\nenv_set = %s\nenv_prefixes = %s\nenv_names = %s\n",
 		sourceName, sourceName, name,
 		toml.Quote(source.Image),
-		toml.Quote("/cb/npm-global/bin/"+name),
+		toml.Quote(command),
+		toml.Array(source.ProjectMarkers),
 		toml.Quote(source.StateGroup),
 		toml.Array(source.SharedVolumes),
 		toml.Array(source.EnvSet),
@@ -333,17 +373,21 @@ func renderExposedToolSection(sourceName string, source registry.Tool, name stri
 
 func Expose(reg registry.Registry, cfgPath string, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: cb expose TOOL [BINARY ...] (TOOL is an npm-shaped stateful profile already in the registry, e.g. npm or npm22)")
+		return errors.New("usage: cb expose TOOL [BINARY ...] (TOOL has a supported global binary store, e.g. npm, npm22 or go)")
 	}
 	sourceName := strings.ToLower(args[0])
 	source, resolvedSource, ok := reg.Resolve(sourceName)
 	if !ok {
-		return fmt.Errorf("tool %q not found; cb expose exposes global binaries from an npm-shaped profile already in the registry", sourceName)
+		return fmt.Errorf("tool %q not found; cb expose requires a stateful profile with a supported global binary store", sourceName)
 	}
 	if source.Provider != "stateful" {
-		return fmt.Errorf("tool %q is not a stateful npm-shaped profile", sourceName)
+		return fmt.Errorf("tool %q is not a stateful profile", sourceName)
 	}
-	bins, err := discoverNPMGlobalBins(source)
+	store, err := exposeStoreFor(source)
+	if err != nil {
+		return err
+	}
+	bins, err := discoverGlobalBins(source, store)
 	if err != nil {
 		return err
 	}
@@ -361,14 +405,14 @@ func Expose(reg registry.Registry, cfgPath string, args []string) error {
 	if len(args) > 1 && len(requested) == 0 {
 		return errors.New("all requested names are reserved and cannot be exposed")
 	}
-	var selected []string
+	var selected []exposedBin
 	for _, b := range bins {
-		if len(requested) == 0 || requested[b] {
+		if len(requested) == 0 || requested[b.name] {
 			selected = append(selected, b)
 		}
 	}
 	if len(selected) == 0 {
-		return errors.New("no matching globally installed npm binaries found; try: npm install -g <package>")
+		return fmt.Errorf("no matching globally installed %s binaries found; try: %s", store.kind, store.installHint)
 	}
 	data, err := os.ReadFile(cfgPath)
 	if err != nil {
@@ -376,15 +420,15 @@ func Expose(reg registry.Registry, cfgPath string, args []string) error {
 	}
 	var add strings.Builder
 	added := 0
-	for _, name := range selected {
-		if existing, _, exists := reg.Resolve(name); exists {
-			fmt.Printf("skip %-16s already exists in registry (state_group=%s)\n", name, existing.StateGroup)
+	for _, bin := range selected {
+		if existing, _, exists := reg.Resolve(bin.name); exists {
+			fmt.Printf("skip %-16s already exists in registry (state_group=%s)\n", bin.name, existing.StateGroup)
 			continue
 		}
-		section := renderExposedToolSection(resolvedSource, source, name)
+		section := renderExposedToolSection(resolvedSource, source, bin.name, bin.command)
 		add.WriteString(section)
 		added++
-		fmt.Printf("exposed %-16s /cb/npm-global/bin/%s\n", name, name)
+		fmt.Printf("exposed %-16s %s\n", bin.name, bin.command)
 	}
 	if added == 0 {
 		return nil
@@ -401,6 +445,30 @@ func Expose(reg registry.Registry, cfgPath string, args []string) error {
 		return fmt.Errorf("reload registry: %w", err)
 	}
 	return registry.InstallShims(newReg)
+}
+
+func isManagedExposedTool(name string, t registry.Tool) bool {
+	if t.Provider != "stateful" || t.Role != "exposed" || len(t.Command) != 1 {
+		return false
+	}
+	commandDir := path.Dir(t.Command[0])
+	if commandDir != "/cb/npm-global/bin" && commandDir != "/go/bin" {
+		return false
+	}
+	if !strings.EqualFold(path.Base(t.Command[0]), name) {
+		return false
+	}
+	wantedMount := "/go/bin"
+	if commandDir == "/cb/npm-global/bin" {
+		wantedMount = "/cb/npm-global"
+	}
+	for _, spec := range t.SharedVolumes {
+		_, dst, err := registry.ParseVolumeBinding(spec)
+		if err == nil && dst == wantedMount {
+			return true
+		}
+	}
+	return false
 }
 
 func Inspect(reg registry.Registry, args []string) error {
@@ -523,8 +591,8 @@ func Unexpose(reg registry.Registry, cfgPath string, args []string) error {
 		if resolved != name {
 			return fmt.Errorf("tool %q is an alias for %q; unexpose requires a concrete tool name", name, resolved)
 		}
-		if len(t.Command) != 1 || !strings.HasPrefix(t.Command[0], "/cb/npm-global/bin/") {
-			return fmt.Errorf("%s is not an npm-exposed tool", name)
+		if !isManagedExposedTool(name, t) {
+			return fmt.Errorf("%s is not marked as a cb-exposed npm or Go tool; older generated profiles must be recreated with cb uninstall followed by cb expose", name)
 		}
 		remove[name] = true
 	}
