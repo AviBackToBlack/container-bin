@@ -6,6 +6,25 @@ import (
 	"testing"
 )
 
+func TestRegistrySchemaVerdictUsesParserMaximum(t *testing.T) {
+	cases := []struct {
+		version int
+		status  string
+		message string
+	}{
+		{version: 1, status: "ok", message: "registry schema 1"},
+		{version: 2, status: "ok", message: "registry schema 2"},
+		{version: 0, status: "fail", message: "supported=1..2"},
+		{version: 3, status: "fail", message: "supported=1..2"},
+	}
+	for _, tc := range cases {
+		status, message := registrySchemaVerdict(tc.version)
+		if status != tc.status || !strings.Contains(message, tc.message) {
+			t.Errorf("registrySchemaVerdict(%d) = (%q, %q), want status %q and message containing %q", tc.version, status, message, tc.status, tc.message)
+		}
+	}
+}
+
 func TestDockerOSTypeVerdict(t *testing.T) {
 	cases := []struct {
 		name, raw, status string

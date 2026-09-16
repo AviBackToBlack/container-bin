@@ -161,6 +161,13 @@ func windowsDriveType(driveLetter string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+func registrySchemaVerdict(version int) (status, message string) {
+	if version < 1 || version > registry.MaxSchemaVersion {
+		return "fail", fmt.Sprintf("registry schema=%d (supported=1..%d)", version, registry.MaxSchemaVersion)
+	}
+	return "ok", fmt.Sprintf("registry schema %d", version)
+}
+
 func Doctor(reg registry.Registry, cfgPath string) error {
 	failures := 0
 	warnings := 0
@@ -197,10 +204,10 @@ func Doctor(reg registry.Registry, cfgPath string) error {
 		}
 	}
 
-	if reg.SchemaVersion != 1 {
-		fail("registry schema=%d (supported=1)", reg.SchemaVersion)
+	if status, msg := registrySchemaVerdict(reg.SchemaVersion); status == "ok" {
+		ok("%s: %s", msg, cfgPath)
 	} else {
-		ok("registry schema 1: %s", cfgPath)
+		fail("%s", msg)
 	}
 
 	lf, lockPath, err := lockfile.LoadForRegistry()
@@ -245,7 +252,8 @@ func Doctor(reg registry.Registry, cfgPath string) error {
 	}
 
 	shimProblems := 0
-	for name := range reg.Tools {
+	shimNames := reg.ToolNames()
+	for _, name := range shimNames {
 		shim := filepath.Join(dir, name+".exe")
 		a, e1 := os.Stat(exe)
 		b, e2 := os.Stat(shim)
@@ -258,7 +266,7 @@ func Doctor(reg registry.Registry, cfgPath string) error {
 		}
 	}
 	if shimProblems == 0 {
-		ok("all %d registry shims exist", len(reg.Tools))
+		ok("all %d registry shims exist", len(shimNames))
 	} else {
 		fail("%d registry shim(s) missing; run `cb install`", shimProblems)
 	}
@@ -959,7 +967,7 @@ func selfTestProjectVolumeIDs(reg registry.Registry, root string) []string {
 	seen := map[string]bool{}
 	var ids []string
 	for _, toolName := range []string{"node", "node22"} {
-		tool, ok := reg.Tools[toolName]
+		tool, _, ok := reg.Resolve(toolName)
 		if !ok || tool.Provider != "stateful" {
 			continue
 		}
@@ -994,7 +1002,7 @@ func runSelfTestChecks(reg registry.Registry, project, external string, release 
 	toolOutcomes := map[string]toolSelfTestOutcome{}
 	if dockerAvailable {
 		for _, name := range []string{"python", "node", "node22", "jq", "terraform"} {
-			if t, ok := reg.Tools[name]; ok {
+			if t, _, ok := reg.Resolve(name); ok {
 				toolOutcomes[name] = runSelfTestTool(t, name, project, external)
 			}
 		}

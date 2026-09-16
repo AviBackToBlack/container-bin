@@ -116,7 +116,7 @@ func Trace(reg registry.Registry, args []string) error {
 		return errors.New("usage: cb trace TOOL [ARGS...]")
 	}
 	name := strings.ToLower(args[0])
-	t, ok := reg.Tools[name]
+	t, resolved, ok := reg.Resolve(name)
 	if !ok {
 		return fmt.Errorf("no tool profile for %q", name)
 	}
@@ -150,7 +150,10 @@ func Trace(reg registry.Registry, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("tool:       %s\n", t.Name)
+	fmt.Printf("tool:       %s\n", name)
+	if resolved != name {
+		fmt.Printf("resolved:   %s\n", resolved)
+	}
 	fmt.Printf("image:      %s\n", t.Image)
 	fmt.Printf("provider:   %s\n", t.Provider)
 	fmt.Printf("cwd:        %s\n", cwd)
@@ -238,6 +241,37 @@ func Env(reg registry.Registry) error {
 	return nil
 }
 
+func Default(reg registry.Registry, cfgPath string, args []string) error {
+	if reg.SchemaVersion < 2 {
+		return errors.New("runtime defaults require registry schema 2; run `cb install` to upgrade")
+	}
+	if len(args) == 0 {
+		if len(reg.Defaults) == 0 {
+			return errors.New("no runtime defaults are configured; run `cb install` to upgrade the registry")
+		}
+		families := make([]string, 0, len(reg.Defaults))
+		for family := range reg.Defaults {
+			families = append(families, family)
+		}
+		sort.Strings(families)
+		for _, family := range families {
+			info, _ := reg.DefaultInfo(family)
+			fmt.Printf("%-10s %s  aliases=%s  versions=%s\n", info.Family, info.Selected, strings.Join(info.Aliases, ","), strings.Join(info.Versions, ","))
+		}
+		return nil
+	}
+	if len(args) != 3 || args[0] != "set" {
+		return errors.New("usage: cb default | cb default set FAMILY VERSION")
+	}
+	family, version := strings.ToLower(args[1]), strings.ToLower(args[2])
+	if err := registry.SetDefaultVersion(cfgPath, family, version); err != nil {
+		return err
+	}
+	info, _ := reg.DefaultInfo(family)
+	fmt.Printf("default %s = %s (aliases: %s)\n", family, version, strings.Join(info.Aliases, ", "))
+	return nil
+}
+
 func discoverNPMGlobalBins(t registry.Tool) ([]string, error) {
 	var globalVol, logicalName string
 	for _, spec := range t.SharedVolumes {
@@ -302,7 +336,7 @@ func Expose(reg registry.Registry, cfgPath string, args []string) error {
 		return errors.New("usage: cb expose TOOL [BINARY ...] (TOOL is an npm-shaped stateful profile already in the registry, e.g. npm or npm22)")
 	}
 	sourceName := strings.ToLower(args[0])
-	source, ok := reg.Tools[sourceName]
+	source, resolvedSource, ok := reg.Resolve(sourceName)
 	if !ok {
 		return fmt.Errorf("tool %q not found; cb expose exposes global binaries from an npm-shaped profile already in the registry", sourceName)
 	}
@@ -343,11 +377,11 @@ func Expose(reg registry.Registry, cfgPath string, args []string) error {
 	var add strings.Builder
 	added := 0
 	for _, name := range selected {
-		if _, exists := reg.Tools[name]; exists {
-			fmt.Printf("skip %-16s already exists in registry (state_group=%s)\n", name, reg.Tools[name].StateGroup)
+		if existing, _, exists := reg.Resolve(name); exists {
+			fmt.Printf("skip %-16s already exists in registry (state_group=%s)\n", name, existing.StateGroup)
 			continue
 		}
-		section := renderExposedToolSection(sourceName, source, name)
+		section := renderExposedToolSection(resolvedSource, source, name)
 		add.WriteString(section)
 		added++
 		fmt.Printf("exposed %-16s /cb/npm-global/bin/%s\n", name, name)
@@ -374,7 +408,7 @@ func Inspect(reg registry.Registry, args []string) error {
 		return errors.New("usage: cb inspect TOOL")
 	}
 	name := strings.ToLower(args[0])
-	t, ok := reg.Tools[name]
+	t, resolved, ok := reg.Resolve(name)
 	if !ok {
 		return fmt.Errorf("tool %q not found", name)
 	}
@@ -401,7 +435,11 @@ func Inspect(reg registry.Registry, args []string) error {
 		workspaceRoot = pathmap.WorkspaceRootFor(t, root)
 	}
 
-	fmt.Printf("name:       %s\nimage:      %s\nprovider:   %s\n", t.Name, t.Image, t.Provider)
+	fmt.Printf("name:       %s\n", name)
+	if resolved != name {
+		fmt.Printf("resolved:   %s\n", resolved)
+	}
+	fmt.Printf("image:      %s\nprovider:   %s\n", t.Image, t.Provider)
 	lock, lockPath, lerr := lockfile.LoadForRegistry()
 	if lerr != nil {
 		fmt.Printf("lock:       ERROR (%v)\n", lerr)
@@ -478,9 +516,12 @@ func Unexpose(reg registry.Registry, cfgPath string, args []string) error {
 	remove := map[string]bool{}
 	for _, a := range args {
 		name := strings.ToLower(a)
-		t, ok := reg.Tools[name]
+		t, resolved, ok := reg.Resolve(name)
 		if !ok {
 			return fmt.Errorf("tool %q not found", name)
+		}
+		if resolved != name {
+			return fmt.Errorf("tool %q is an alias for %q; unexpose requires a concrete tool name", name, resolved)
 		}
 		if len(t.Command) != 1 || !strings.HasPrefix(t.Command[0], "/cb/npm-global/bin/") {
 			return fmt.Errorf("%s is not an npm-exposed tool", name)
@@ -509,10 +550,14 @@ func Uninstall(reg registry.Registry, cfgPath string, args []string) error {
 			return fmt.Errorf("unknown option %q", a)
 		}
 		name := strings.ToLower(a)
-		if _, ok := reg.Tools[name]; !ok {
+		_, resolved, ok := reg.Resolve(name)
+		if !ok {
 			return fmt.Errorf("tool %q not found", name)
 		}
-		if _, ok := builtins[name]; ok {
+		if resolved != name {
+			return fmt.Errorf("tool %q is an alias for %q; uninstall requires a concrete tool name", name, resolved)
+		}
+		if _, ok := builtins[resolved]; ok {
 			return fmt.Errorf("%s is a built-in profile managed by cb install; edit the registry manually if you intentionally want to disable it", name)
 		}
 		remove[name] = true
@@ -900,7 +945,7 @@ func Update(reg registry.Registry, cfgPath string, args []string) error {
 		images = lockfile.ConfiguredImages(reg)
 	} else {
 		name := strings.ToLower(target)
-		t, ok := reg.Tools[name]
+		t, _, ok := reg.Resolve(name)
 		if !ok {
 			return fmt.Errorf("tool %q not found", name)
 		}

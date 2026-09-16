@@ -27,7 +27,7 @@ func TestDefaultRegistryContainsBothNodeRuntimes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"node", "npm", "npx", "node22", "npm22", "npx22"} {
+	for _, name := range []string{"node24", "npm24", "npx24", "node22", "npm22", "npx22"} {
 		if _, ok := reg.Tools[name]; !ok {
 			t.Fatalf("missing default tool %q", name)
 		}
