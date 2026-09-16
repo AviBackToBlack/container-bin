@@ -387,7 +387,7 @@ shared_volumes = ["tools:/cb/uv-tools/", "bin:/cb/./uv-bin"]
 	if err != nil {
 		t.Fatal(err)
 	}
-	if store.mountTarget != "/cb/uv-bin" || store.binDirectory != "/cb/uv-bin" {
+	if store.volumeName != "cb-demo-bin" || store.mountTarget != "/cb/uv-bin" || store.binDirectory != "/cb/uv-bin" {
 		t.Fatalf("store paths were not canonicalized: %#v", store)
 	}
 	wantCompanion := []exposeMount{{volumeName: "cb-demo-tools", mountTarget: "/cb/uv-tools"}}

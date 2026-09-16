@@ -385,10 +385,13 @@ while path-valued Windows settings such as `UV_PROJECT`, `UV_CACHE_DIR` and
 `VIRTUAL_ENV` are not.
 
 `uv tool install ruff` persists its environment and executable, and `uvx ruff`
-reuses the shared cache. Run `cb expose uv ruff` to create a standalone
-`ruff.exe` Windows shim backed by those same managed volumes. This is the
-pipx-style global Python-tool workflow; arbitrary pip environments and generic
-shared-volume paths are not exposed implicitly.
+reuses the shared cache. Run `cb expose uvx ruff` to create a standalone
+`ruff.exe` Windows shim backed by those same managed volumes. Prefer `uvx` as
+the expose source because its environment contains only global tool state;
+`uv` also carries project-only `VIRTUAL_ENV` and `UV_PROJECT_ENVIRONMENT`
+settings whose project volume is deliberately not inherited by exposed tools.
+This is the pipx-style global Python-tool workflow; arbitrary pip environments
+and generic shared-volume paths are not exposed implicitly.
 
 Equals-form global path options (`--cache-dir=`, `--directory=`, `--project=`,
 and `--config-file=`) are translated to their container paths. The mapper stops
@@ -478,12 +481,12 @@ cb expose cargo just
 just --version
 
 uv tool install ruff
-cb expose uv ruff
+cb expose uvx ruff
 ruff --version
 ```
 
 `cb expose` takes a stateful source profile with one supported global binary
-store: the npm prefix (`npm`, `npm22`, ...), Go's shared `/go/bin` (`go`), or
+store: the npm prefix (`npm`, `npm22`, ...), Go's shared `/go/bin` (`go`),
 Cargo's install root (`cargo`), or uv's tool-bin directory (`uv`, `uvx`). It
 adds registry profiles that inherit the source image, `state_group`,
 project-root markers and mode, shared volumes, and environment policy, then
@@ -493,7 +496,7 @@ expose a binary installed under the Node 22 runtime, use
 `cb expose npm22 <binary>`; for `go install` output, use
 `cb expose go <binary>`; for `cargo install`, use
 `cb expose cargo <binary>`; for `uv tool install`, use
-`cb expose uv <binary>`.
+`cb expose uvx <binary>`.
 
 That inheritance set is deliberately fixed. Generated profiles do **not** copy
 the source's `project_volumes`, `host_mounts`, or `cwd_mode`; a custom source
