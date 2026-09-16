@@ -317,6 +317,7 @@ func exposeStoreFor(t registry.Tool) (exposeStore, error) {
 		if err != nil {
 			return exposeStore{}, err
 		}
+		dst = path.Clean(dst)
 		volumeName := pathmap.StatefulSharedVolumeID(t.StateGroup, logical)
 		volumesByTarget[dst] = volumeName
 		candidate, ok := exposeStoreForMountTarget(dst)

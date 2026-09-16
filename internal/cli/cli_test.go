@@ -373,6 +373,29 @@ shared_volumes = ["bin:/cb/uv-bin"]
 	}
 }
 
+func TestExposeStoreCanonicalizesVolumeTargets(t *testing.T) {
+	reg, err := registry.ParseTOML(`[tools.demo]
+image = "example/demo:1"
+provider = "stateful"
+state_group = "demo"
+shared_volumes = ["tools:/cb/uv-tools/", "bin:/cb/./uv-bin"]
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := exposeStoreFor(reg.Tools["demo"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.mountTarget != "/cb/uv-bin" || store.binDirectory != "/cb/uv-bin" {
+		t.Fatalf("store paths were not canonicalized: %#v", store)
+	}
+	wantCompanion := []exposeMount{{volumeName: "cb-demo-tools", mountTarget: "/cb/uv-tools"}}
+	if !reflect.DeepEqual(store.companionMounts, wantCompanion) {
+		t.Fatalf("companion mounts = %#v, want %#v", store.companionMounts, wantCompanion)
+	}
+}
+
 func TestUVExposeDiscoveryMountsBinAndToolVolumesReadOnly(t *testing.T) {
 	reg := registry.Default()
 	store, err := exposeStoreFor(reg.Tools["uv"])
@@ -618,6 +641,7 @@ func TestManagedExposedToolRecognition(t *testing.T) {
 		{name: "stringer", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/go/bin/stringer"}, SharedVolumes: []string{"cache:/other"}}},
 		{name: "stringer", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/go/bin/a", "extra"}, SharedVolumes: []string{"gobin:/go/bin"}}},
 		{name: "just", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/cb/cargo-global/bin/just"}, SharedVolumes: []string{"global:/other"}}},
+		{name: "ruff", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/cb/uv-bin/ruff"}, SharedVolumes: []string{"tool-bin:/cb/uv-bin"}}},
 		{name: "ruff", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/cb/uv-bin/ruff"}, SharedVolumes: []string{"tool-bin:/other"}}},
 	} {
 		if isManagedExposedTool(tt.name, tt.tool) {
