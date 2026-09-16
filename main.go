@@ -22,14 +22,22 @@ import (
 // Local/dev builds report "dev".
 var version = "dev"
 
+// loadRegistry is a test seam for proving bootstrap commands return before
+// registry I/O. Production always uses registry.Load.
+var loadRegistry = registry.Load
+
 func main() {
-	reg, cfgPath, err := registry.Load()
+	invoked := invokedName(os.Args[0])
+	if isManagementInvocation(invoked) && handleBootstrapCommand(os.Args[1:]) {
+		return
+	}
+
+	reg, cfgPath, err := loadRegistry()
 	if err != nil {
 		fatalf("registry: %v", err)
 	}
 
-	invoked := invokedName(os.Args[0])
-	if invoked != "cb" && invoked != "container-bin" && !strings.HasPrefix(invoked, "cb-v") {
+	if !isManagementInvocation(invoked) {
 		tool, ok := reg.Tools[invoked]
 		if !ok {
 			fatalf("no tool profile for %q (registry: %s)", invoked, cfgPath)
@@ -41,10 +49,6 @@ func main() {
 		os.Exit(code)
 	}
 
-	if len(os.Args) < 2 {
-		usage(cfgPath)
-		return
-	}
 	switch os.Args[1] {
 	case "install":
 		if err := withMutationLock(cfgPath, func() error {
@@ -156,10 +160,6 @@ func main() {
 		}); err != nil {
 			fatalf("update: %v", err)
 		}
-	case "config":
-		fmt.Println(cfgPath)
-	case "version", "--version", "-V":
-		fmt.Printf("container-bin %s\n", version)
 	default:
 		usage(cfgPath)
 		osExit(exitUsage)
@@ -172,6 +172,40 @@ func main() {
 func invokedName(argv0 string) string {
 	base := strings.ToLower(filepath.Base(argv0))
 	return strings.TrimSuffix(base, filepath.Ext(base))
+}
+
+func isManagementInvocation(invoked string) bool {
+	return invoked == "cb" || invoked == "container-bin" || strings.HasPrefix(invoked, "cb-v")
+}
+
+// handleBootstrapCommand serves commands that must remain available when the
+// registry is missing, corrupt, or was written by a newer container-bin. It
+// deliberately resolves only the registry path for help/config output; it
+// never reads or validates container-bin.toml.
+func handleBootstrapCommand(args []string) bool {
+	if len(args) == 0 {
+		usage(bootstrapRegistryPath())
+		return true
+	}
+	switch args[0] {
+	case "version", "--version", "-V":
+		fmt.Printf("container-bin %s\n", version)
+	case "help", "--help", "-h":
+		usage(bootstrapRegistryPath())
+	case "config":
+		fmt.Println(bootstrapRegistryPath())
+	default:
+		return false
+	}
+	return true
+}
+
+func bootstrapRegistryPath() string {
+	cfgPath, err := registry.Path()
+	if err != nil {
+		fatalf("registry path: %v", err)
+	}
+	return cfgPath
 }
 
 func usage(cfg string) {
@@ -198,6 +232,7 @@ Commands:
   cb update    explicitly refresh one or all locked images
   cb config    print registry path
   cb version   print container-bin version
+  cb help      print this help without loading the registry
 
 Registry:
   %s
