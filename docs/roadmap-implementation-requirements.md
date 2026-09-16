@@ -443,9 +443,9 @@ by later features.
 - Signed-registry policy must define canonical bytes, signature envelope,
   trusted keys/identities, expiry/revocation and rotation. Verify before parsing
   or acting on any registry content.
-- `cb doctor`, `inspect` and `bugreport` should report effective policy and
-  source without disclosing secrets. Policy failures need stable machine-
-  readable diagnostics.
+- `cb doctor`, `cb inspect` and `cb bugreport` should report effective policy
+  and source without disclosing secrets. Policy failures need stable
+  machine-readable diagnostics.
 - Changes require tests showing lower-precedence configuration cannot weaken
   policy and that corrupt, stale, unknown-version and unauthorized policy all
   fail before Docker invocation.
@@ -540,9 +540,9 @@ Requirements:
   deliberate policy says otherwise.
 - Store trust outside the repository. Never honor a trust marker committed by
   the same project.
-- Provide `inspect`, `trust`, `untrust` and doctor visibility, with no automatic
-  execution during review. Symlink/reparse and ownership checks must follow the
-  Windows path classification.
+- Provide `cb inspect`, `cb trust`, `cb untrust` and `cb doctor` visibility,
+  with no automatic execution during review. Symlink/reparse and ownership
+  checks must follow the Windows path classification.
 - Decide whether overlays may define host mounts or env prefixes at all; the
   safe initial slice may prohibit those capabilities.
 
@@ -593,7 +593,7 @@ header grammar.
 
 Add a small helper to `internal/toml` with a result that distinguishes:
 
-1. a valid basic-table header and its normalized inner text;
+1. a valid basic-table header and its whitespace-trimmed inner text;
 2. a line that is not a section header; and
 3. malformed/unsupported header-looking syntax.
 
