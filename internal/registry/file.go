@@ -287,7 +287,10 @@ func SetDefaultVersion(path, family, version string) error {
 		if inFamily && strings.HasPrefix(trim, "version") {
 			key := strings.TrimSpace(strings.SplitN(trim, "=", 2)[0])
 			if key == "version" {
-				out.WriteString("version = \"" + version + "\"" + newline)
+				withoutComment := toml.StripComment(line)
+				valueEnd := len(strings.TrimRight(withoutComment, " \t"))
+				indentEnd := len(line) - len(strings.TrimLeft(line, " \t"))
+				out.WriteString(line[:indentEnd] + "version = \"" + version + "\"" + line[valueEnd:] + newline)
 				replaced = true
 				continue
 			}

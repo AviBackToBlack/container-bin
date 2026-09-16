@@ -45,7 +45,7 @@ func ParseSectionHeader(s string) (section string, isHeader bool, err error) {
 	if strings.HasPrefix(line, "[[") {
 		return "", false, errors.New("array table sections are not supported")
 	}
-	if len(line) < 2 || !strings.HasSuffix(line, "]") {
+	if !strings.HasSuffix(line, "]") {
 		return "", false, errors.New("malformed section header")
 	}
 	section = strings.TrimSpace(line[1 : len(line)-1])

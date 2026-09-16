@@ -472,6 +472,7 @@ func TestSetDefaultVersionRewritesOnlySelection(t *testing.T) {
 func TestSetDefaultVersionRecognizesCommentedSectionHeader(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "container-bin.toml")
 	src := strings.Replace(DefaultTOML, "[defaults.node]", "[defaults.node] # selected runtime", 1)
+	src = strings.Replace(src, "version = \"24\"", "  version = \"24\" # pinned for prod", 1)
 	if err := os.WriteFile(path, []byte(src), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -482,7 +483,7 @@ func TestSetDefaultVersionRecognizesCommentedSectionHeader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := strings.Replace(src, "version = \"24\"", "version = \"22\"", 1)
+	want := strings.Replace(src, "  version = \"24\" # pinned for prod", "  version = \"22\" # pinned for prod", 1)
 	if string(after) != want {
 		t.Fatal("commented default update changed content beyond the selected version line")
 	}
