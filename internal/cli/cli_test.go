@@ -324,11 +324,15 @@ func TestExposeStoreForBuiltins(t *testing.T) {
 		target    string
 		binDir    string
 		volumeEnd string
+		companion string
+		compEnd   string
 	}{
 		{tool: "npm", kind: "npm", target: "/cb/npm-global", binDir: "/cb/npm-global/bin", volumeEnd: "npm-global"},
 		{tool: "npm22", kind: "npm", target: "/cb/npm-global", binDir: "/cb/npm-global/bin", volumeEnd: "npm-global"},
 		{tool: "go", kind: "Go", target: "/go/bin", binDir: "/go/bin", volumeEnd: "gobin"},
 		{tool: "cargo", kind: "Cargo", target: "/cb/cargo-global", binDir: "/cb/cargo-global/bin", volumeEnd: "global"},
+		{tool: "uv", kind: "uv tool", target: "/cb/uv-bin", binDir: "/cb/uv-bin", volumeEnd: "tool-bin", companion: "/cb/uv-tools", compEnd: "tools"},
+		{tool: "uvx", kind: "uv tool", target: "/cb/uv-bin", binDir: "/cb/uv-bin", volumeEnd: "tool-bin", companion: "/cb/uv-tools", compEnd: "tools"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.tool, func(t *testing.T) {
@@ -343,7 +347,50 @@ func TestExposeStoreForBuiltins(t *testing.T) {
 			if store.kind != tt.kind || store.mountTarget != tt.target || store.binDirectory != tt.binDir || !strings.HasSuffix(store.volumeName, tt.volumeEnd) {
 				t.Fatalf("store = %#v", store)
 			}
+			if tt.companion == "" {
+				if len(store.companionMounts) != 0 {
+					t.Fatalf("unexpected companion mounts: %#v", store.companionMounts)
+				}
+			} else if len(store.companionMounts) != 1 || store.companionMounts[0].mountTarget != tt.companion || !strings.HasSuffix(store.companionMounts[0].volumeName, tt.compEnd) {
+				t.Fatalf("companion mounts = %#v", store.companionMounts)
+			}
 		})
+	}
+}
+
+func TestExposeStoreRejectsMissingUVToolsVolume(t *testing.T) {
+	reg, err := registry.ParseTOML(`[tools.demo]
+image = "example/demo:1"
+provider = "stateful"
+state_group = "demo"
+shared_volumes = ["bin:/cb/uv-bin"]
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := exposeStoreFor(reg.Tools["demo"]); err == nil || !strings.Contains(err.Error(), "requires a shared volume mounted at /cb/uv-tools") {
+		t.Fatalf("missing companion error = %v", err)
+	}
+}
+
+func TestUVExposeDiscoveryMountsBinAndToolVolumesReadOnly(t *testing.T) {
+	reg := registry.Default()
+	store, err := exposeStoreFor(reg.Tools["uv"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	args, err := exposeDiscoveryArgs(store, "example/uv:1", "discover-script")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"run", "--rm",
+		"--mount", "type=volume,src=cb-uv012-py313-tool-bin,dst=/cb/uv-bin,readonly",
+		"--mount", "type=volume,src=cb-uv012-py313-tools,dst=/cb/uv-tools,readonly",
+		"example/uv:1", "sh", "-c", "discover-script", "cb-expose", "/cb/uv-bin",
+	}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("discovery args = %#v, want %#v", args, want)
 	}
 }
 
@@ -518,6 +565,33 @@ func TestRenderCargoExposedToolSection(t *testing.T) {
 	}
 }
 
+func TestRenderUVToolExposedToolSection(t *testing.T) {
+	reg := registry.Default()
+	source, ok := reg.Tools["uv"]
+	if !ok {
+		t.Fatal("uv not in default registry")
+	}
+	const binary = "ruff"
+	section := renderExposedToolSection("uv", source, binary, "/cb/uv-bin/"+binary)
+	parsed, err := registry.ParseTOML("schema_version = 1\n" + section)
+	if err != nil {
+		t.Fatalf("rendered uv tool section invalid: %v", err)
+	}
+	got := parsed.Tools[binary]
+	if got.Image != source.Image || got.StateGroup != source.StateGroup {
+		t.Fatalf("exposed uv tool identity = %#v", got)
+	}
+	if !reflect.DeepEqual(got.Command, []string{"/cb/uv-bin/ruff"}) {
+		t.Errorf("command = %v", got.Command)
+	}
+	if !reflect.DeepEqual(got.SharedVolumes, source.SharedVolumes) || !reflect.DeepEqual(got.EnvSet, source.EnvSet) {
+		t.Error("exposed uv tool profile did not inherit source state/environment")
+	}
+	if got.Role != "exposed" {
+		t.Fatalf("role = %q, want exposed", got.Role)
+	}
+}
+
 func TestManagedExposedToolRecognition(t *testing.T) {
 	for _, tt := range []struct {
 		name string
@@ -526,6 +600,7 @@ func TestManagedExposedToolRecognition(t *testing.T) {
 		{name: "cowsay", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/cb/npm-global/bin/cowsay"}, SharedVolumes: []string{"npm-global:/cb/npm-global"}}},
 		{name: "stringer", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/go/bin/Stringer"}, SharedVolumes: []string{"gobin:/go/bin"}}},
 		{name: "just", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/cb/cargo-global/bin/just"}, SharedVolumes: []string{"global:/cb/cargo-global"}}},
+		{name: "ruff", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/cb/uv-bin/ruff"}, SharedVolumes: []string{"tools:/cb/uv-tools", "tool-bin:/cb/uv-bin"}}},
 	} {
 		if !isManagedExposedTool(tt.name, tt.tool) {
 			t.Fatalf("expected exposed tool: %#v", tt.tool)
@@ -543,6 +618,7 @@ func TestManagedExposedToolRecognition(t *testing.T) {
 		{name: "stringer", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/go/bin/stringer"}, SharedVolumes: []string{"cache:/other"}}},
 		{name: "stringer", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/go/bin/a", "extra"}, SharedVolumes: []string{"gobin:/go/bin"}}},
 		{name: "just", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/cb/cargo-global/bin/just"}, SharedVolumes: []string{"global:/other"}}},
+		{name: "ruff", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/cb/uv-bin/ruff"}, SharedVolumes: []string{"tool-bin:/other"}}},
 	} {
 		if isManagedExposedTool(tt.name, tt.tool) {
 			t.Fatalf("unexpected exposed tool: %#v", tt.tool)

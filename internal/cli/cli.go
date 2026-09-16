@@ -275,11 +275,18 @@ func Default(reg registry.Registry, cfgPath string, args []string) error {
 }
 
 type exposeStore struct {
-	kind         string
-	volumeName   string
-	mountTarget  string
-	binDirectory string
-	installHint  string
+	kind             string
+	volumeName       string
+	mountTarget      string
+	binDirectory     string
+	installHint      string
+	companionTargets []string
+	companionMounts  []exposeMount
+}
+
+type exposeMount struct {
+	volumeName  string
+	mountTarget string
 }
 
 type exposedBin struct {
@@ -295,6 +302,8 @@ func exposeStoreForMountTarget(dst string) (exposeStore, bool) {
 		return exposeStore{kind: "Go", mountTarget: dst, binDirectory: dst, installHint: "go install <module>@latest"}, true
 	case "/cb/cargo-global":
 		return exposeStore{kind: "Cargo", mountTarget: dst, binDirectory: dst + "/bin", installHint: "cargo install <crate>"}, true
+	case "/cb/uv-bin":
+		return exposeStore{kind: "uv tool", mountTarget: dst, binDirectory: dst, installHint: "uv tool install <package>", companionTargets: []string{"/cb/uv-tools"}}, true
 	default:
 		return exposeStore{}, false
 	}
@@ -302,11 +311,14 @@ func exposeStoreForMountTarget(dst string) (exposeStore, bool) {
 
 func exposeStoreFor(t registry.Tool) (exposeStore, error) {
 	var found *exposeStore
+	volumesByTarget := map[string]string{}
 	for _, spec := range t.SharedVolumes {
 		logical, dst, err := registry.ParseVolumeBinding(spec)
 		if err != nil {
 			return exposeStore{}, err
 		}
+		volumeName := pathmap.StatefulSharedVolumeID(t.StateGroup, logical)
+		volumesByTarget[dst] = volumeName
 		candidate, ok := exposeStoreForMountTarget(dst)
 		if !ok {
 			continue
@@ -314,11 +326,18 @@ func exposeStoreFor(t registry.Tool) (exposeStore, error) {
 		if found != nil {
 			return exposeStore{}, fmt.Errorf("tool %q declares more than one supported global binary store; expose source is ambiguous", t.Name)
 		}
-		candidate.volumeName = pathmap.StatefulSharedVolumeID(t.StateGroup, logical)
+		candidate.volumeName = volumeName
 		found = &candidate
 	}
 	if found == nil {
-		return exposeStore{}, fmt.Errorf("tool %q has no supported global binary store (/cb/npm-global, /go/bin or /cb/cargo-global)", t.Name)
+		return exposeStore{}, fmt.Errorf("tool %q has no supported global binary store (/cb/npm-global, /go/bin, /cb/cargo-global or /cb/uv-bin)", t.Name)
+	}
+	for _, target := range found.companionTargets {
+		volumeName, ok := volumesByTarget[target]
+		if !ok {
+			return exposeStore{}, fmt.Errorf("tool %q %s global store requires a shared volume mounted at %s", t.Name, found.kind, target)
+		}
+		found.companionMounts = append(found.companionMounts, exposeMount{volumeName: volumeName, mountTarget: target})
 	}
 	return *found, nil
 }
@@ -329,16 +348,30 @@ func discoverGlobalBins(t registry.Tool, store exposeStore) ([]exposedBin, error
 		return nil, err
 	}
 	script := `if [ -d "$1" ]; then for f in "$1"/*; do [ -f "$f" ] && [ -x "$f" ] || continue; printf '%s\000' "${f##*/}"; done; fi`
-	mount, err := dockerrun.MountSpecMode("volume", store.volumeName, store.mountTarget, "ro")
+	dockerArgs, err := exposeDiscoveryArgs(store, image, script)
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.Command("docker", "run", "--rm", "--mount", mount, image, "sh", "-c", script, "cb-expose", store.binDirectory)
+	cmd := exec.Command("docker", dockerArgs...)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("inspect %s global bin: %w", store.kind, err)
 	}
 	return parseExposedBins(out, store)
+}
+
+func exposeDiscoveryArgs(store exposeStore, image, script string) ([]string, error) {
+	dockerArgs := []string{"run", "--rm"}
+	mounts := append([]exposeMount{{volumeName: store.volumeName, mountTarget: store.mountTarget}}, store.companionMounts...)
+	for _, volume := range mounts {
+		mount, err := dockerrun.MountSpecMode("volume", volume.volumeName, volume.mountTarget, "ro")
+		if err != nil {
+			return nil, err
+		}
+		dockerArgs = append(dockerArgs, "--mount", mount)
+	}
+	dockerArgs = append(dockerArgs, image, "sh", "-c", script, "cb-expose", store.binDirectory)
+	return dockerArgs, nil
 }
 
 func parseExposedBins(out []byte, store exposeStore) ([]exposedBin, error) {
@@ -406,7 +439,7 @@ func renderExposedToolSection(sourceName string, source registry.Tool, name, com
 
 func Expose(reg registry.Registry, cfgPath string, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: cb expose TOOL [BINARY ...] (TOOL has a supported global binary store, e.g. npm, npm22, go or cargo)")
+		return errors.New("usage: cb expose TOOL [BINARY ...] (TOOL has a supported global binary store, e.g. npm, npm22, go, cargo or uv)")
 	}
 	sourceName := strings.ToLower(args[0])
 	source, resolvedSource, ok := reg.Resolve(sourceName)
@@ -486,17 +519,8 @@ func isManagedExposedTool(name string, t registry.Tool) bool {
 	if !strings.EqualFold(path.Base(t.Command[0]), name) {
 		return false
 	}
-	for _, spec := range t.SharedVolumes {
-		_, dst, err := registry.ParseVolumeBinding(spec)
-		if err != nil {
-			continue
-		}
-		store, supported := exposeStoreForMountTarget(dst)
-		if supported && store.binDirectory == commandDir {
-			return true
-		}
-	}
-	return false
+	store, err := exposeStoreFor(t)
+	return err == nil && store.binDirectory == commandDir
 }
 
 func Inspect(reg registry.Registry, args []string) error {

@@ -385,9 +385,10 @@ while path-valued Windows settings such as `UV_PROJECT`, `UV_CACHE_DIR` and
 `VIRTUAL_ENV` are not.
 
 `uv tool install ruff` persists its environment and executable, and `uvx ruff`
-reuses the shared cache. The tool executable is available inside the uv
-containers; creating a standalone `ruff.exe` Windows shim requires the future
-generic exposure support tracked by RM-26.
+reuses the shared cache. Run `cb expose uv ruff` to create a standalone
+`ruff.exe` Windows shim backed by those same managed volumes. This is the
+pipx-style global Python-tool workflow; arbitrary pip environments and generic
+shared-volume paths are not exposed implicitly.
 
 Equals-form global path options (`--cache-dir=`, `--directory=`, `--project=`,
 and `--config-file=`) are translated to their container paths. The mapper stops
@@ -475,18 +476,24 @@ stringer -help
 cargo install just
 cb expose cargo just
 just --version
+
+uv tool install ruff
+cb expose uv ruff
+ruff --version
 ```
 
 `cb expose` takes a stateful source profile with one supported global binary
 store: the npm prefix (`npm`, `npm22`, ...), Go's shared `/go/bin` (`go`), or
-Cargo's install root (`cargo`). It adds registry profiles that inherit the
-source image, `state_group`, project-root markers and mode, shared volumes, and
-environment policy, then creates Windows shims — `cowsay.exe`, `stringer.exe`,
-or `just.exe` appears on PATH without Node, Go, or Rust touching the host. To
+Cargo's install root (`cargo`), or uv's tool-bin directory (`uv`, `uvx`). It
+adds registry profiles that inherit the source image, `state_group`,
+project-root markers and mode, shared volumes, and environment policy, then
+creates Windows shims — `cowsay.exe`, `stringer.exe`, `just.exe`, or `ruff.exe`
+appears on PATH without Node, Go, Rust, or Python touching the host. To
 expose a binary installed under the Node 22 runtime, use
 `cb expose npm22 <binary>`; for `go install` output, use
 `cb expose go <binary>`; for `cargo install`, use
-`cb expose cargo <binary>`.
+`cb expose cargo <binary>`; for `uv tool install`, use
+`cb expose uv <binary>`.
 
 That inheritance set is deliberately fixed. Generated profiles do **not** copy
 the source's `project_volumes`, `host_mounts`, or `cwd_mode`; a custom source
@@ -796,8 +803,9 @@ benchmark methodology and the disposable-container tradeoff are in
   default. Set `GOOS=windows` (allowed by the profile) to build a Windows
   executable, e.g. `$env:GOOS="windows"; go build`. `go test` must remain
   native to the container because a Windows test binary cannot run inside it.
-- `cb expose` supports the npm global prefix, Go's shared `/go/bin`, and Cargo's
-  managed install root; pip/pipx and generic volume paths are not yet supported.
+- `cb expose` supports the npm global prefix, Go's shared `/go/bin`, Cargo's
+  managed install root, and uv's pipx-style tool bin; arbitrary pip
+  environments and generic volume paths are not supported.
 
 ## Roadmap
 
