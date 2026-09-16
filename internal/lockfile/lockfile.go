@@ -1,6 +1,6 @@
-// Package lockfile owns container-bin.lock: the immutable image digest
-// lockfile that pins every configured image reference to a resolved
-// repository@sha256 form, plus the digest resolution that produces it.
+// Package lockfile owns container-bin.lock: the immutable image lockfile that
+// pins every configured image reference to either a repository@sha256 digest
+// or a locally built image's sha256 ID, plus the resolution that produces it.
 package lockfile
 
 import (
@@ -80,6 +80,14 @@ func Load(path string) (*LockFile, error) {
 		}
 		if curKey != entryID(cur.Configured) {
 			return fmt.Errorf("lock entry id %q does not match configured image %q", curKey, cur.Configured)
+		}
+		if strings.HasPrefix(cur.Resolved, "sha256:") {
+			if !validImageID(cur.Resolved) {
+				return fmt.Errorf("lock entry %q has invalid local image ID %q", curKey, cur.Resolved)
+			}
+			if cur.Digest != cur.Resolved {
+				return fmt.Errorf("lock entry %q local image digest must match resolved ID", curKey)
+			}
 		}
 		lf.Images[cur.Configured] = *cur
 		return nil
@@ -231,24 +239,43 @@ func matchRepoDigest(configured string, repoDigests []string) (string, bool) {
 	return "", false
 }
 
-func ResolveImage(configured string, pull bool) (LockEntry, error) {
-	if pull {
-		cmd := exec.Command("docker", "pull", configured)
-		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-		if err := cmd.Run(); err != nil {
-			return LockEntry{}, fmt.Errorf("docker pull %s: %w", configured, err)
-		}
+type imageInspection struct {
+	id          string
+	repoDigests []string
+}
+
+func validImageID(id string) bool {
+	if len(id) != len("sha256:")+64 || !strings.HasPrefix(id, "sha256:") {
+		return false
 	}
-	cmd := exec.Command("docker", "image", "inspect", "--format", `{{range .RepoDigests}}{{println .}}{{end}}`, configured)
+	_, err := hex.DecodeString(strings.TrimPrefix(id, "sha256:"))
+	return err == nil
+}
+
+// IsLocalResolved reports whether a lock entry resolves directly to a Docker
+// image ID rather than a repository digest.
+func IsLocalResolved(resolved string) bool {
+	return validImageID(resolved)
+}
+
+func inspectImage(configured string) (imageInspection, error) {
+	cmd := exec.Command("docker", "image", "inspect", "--format", `{{.Id}}{{println}}{{range .RepoDigests}}{{println .}}{{end}}`, configured)
 	out, err := cmd.Output()
 	if err != nil {
-		return LockEntry{}, fmt.Errorf("inspect %s (pull it first or run cb lock): %w", configured, err)
+		return imageInspection{}, fmt.Errorf("inspect %s: %w", configured, err)
 	}
-	lines := strings.Fields(string(out))
-	if len(lines) == 0 {
-		return LockEntry{}, fmt.Errorf("image %s has no RepoDigests; cannot lock it reproducibly", configured)
+	fields := strings.Fields(string(out))
+	if len(fields) == 0 || !validImageID(fields[0]) {
+		return imageInspection{}, fmt.Errorf("inspect %s returned an invalid image ID", configured)
 	}
-	resolved, ok := matchRepoDigest(configured, lines)
+	return imageInspection{id: fields[0], repoDigests: fields[1:]}, nil
+}
+
+func repositoryLockEntry(configured string, inspected imageInspection) (LockEntry, error) {
+	if len(inspected.repoDigests) == 0 {
+		return LockEntry{}, fmt.Errorf("image %s has no RepoDigests; cannot lock it as a registry image", configured)
+	}
+	resolved, ok := matchRepoDigest(configured, inspected.repoDigests)
 	if !ok {
 		// Fail closed: silently locking a digest from a different repository
 		// (e.g. a locally re-tagged image) would record an identity the
@@ -257,6 +284,40 @@ func ResolveImage(configured string, pull bool) (LockEntry, error) {
 	}
 	i := strings.LastIndex(resolved, "@")
 	return LockEntry{Configured: configured, Resolved: resolved, Digest: resolved[i+1:]}, nil
+}
+
+func localLockEntry(configured string, inspected imageInspection) (LockEntry, error) {
+	if !validImageID(inspected.id) {
+		return LockEntry{}, fmt.Errorf("image %s has invalid local image ID %q", configured, inspected.id)
+	}
+	return LockEntry{Configured: configured, Resolved: inspected.id, Digest: inspected.id}, nil
+}
+
+// ResolveRepositoryImage refreshes a registry-backed lock entry. Repository
+// and local identity are deliberately selected by the CLI, never inferred
+// from Docker metadata: current engines can report RepoDigests for both.
+func ResolveRepositoryImage(configured string) (LockEntry, error) {
+	cmd := exec.Command("docker", "pull", configured)
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	if err := cmd.Run(); err != nil {
+		return LockEntry{}, fmt.Errorf("docker pull %s: %w", configured, err)
+	}
+	inspected, err := inspectImage(configured)
+	if err != nil {
+		return LockEntry{}, err
+	}
+	return repositoryLockEntry(configured, inspected)
+}
+
+// ResolveLocalImage refreshes a local-image lock by inspecting the configured
+// tag only. It never pulls or silently switches an existing local lock to a
+// repository identity.
+func ResolveLocalImage(configured string) (LockEntry, error) {
+	inspected, err := inspectImage(configured)
+	if err != nil {
+		return LockEntry{}, fmt.Errorf("local image %s is not available (build or load it before locking): %w", configured, err)
+	}
+	return localLockEntry(configured, inspected)
 }
 
 func RuntimeImageForTool(t registry.Tool) (string, error) {

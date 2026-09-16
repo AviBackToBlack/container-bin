@@ -142,10 +142,14 @@ pipeline, not repeating either.
 
 ## Image locking
 
-`cb lock` pulls each unique configured image and records
-`configured → repository@sha256:digest` entries in `container-bin.lock`
-(section IDs are a hash of the configured reference, validated on load; the
-file is rendered, re-parsed as a self-check, then written atomically).
+`cb lock` pulls each unique registry-backed image and records
+`configured → repository@sha256:digest` entries in `container-bin.lock`.
+Images explicitly selected with `--local TOOL` are not pulled and are recorded
+as `configured → sha256:image-id`. Selection is explicit because current
+Docker engines can expose `RepoDigests` for both local and pulled images, so
+metadata alone does not establish user intent. Section IDs are a hash of the
+configured reference, validated on load; the file is rendered, re-parsed as a
+self-check, then written atomically.
 
 Runtime resolution is fail-closed: lockfile present + configured image missing
 from it = refuse to run and say exactly which command fixes it. Tools sharing
@@ -153,6 +157,11 @@ an image share one entry, so `node`, `npm`, `npx` and every npm-exposed tool
 update together — by design: they are the same runtime and diverging them
 would create unrepresentable states. The Node 22 family (`node22`, `npm22`,
 `npx22` and anything exposed from `npm22`) is a separate `node:22-slim` entry.
+Updates preserve the entry's identity mode: repository locks pull and resolve
+a fresh matching RepoDigest, while local locks only re-inspect the configured
+tag and record its current image ID. A missing local tag is an error, not an
+implicit switch to a registry image. `cb update --local TOOL` and
+`cb update --registry TOOL` are the explicit mode-switch operations.
 
 ## Atomic writes
 

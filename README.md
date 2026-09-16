@@ -46,7 +46,7 @@ cb.exe              dispatches on argv[0]
         │  argv normalization + conservative Windows→container path mapping
         │  image lock resolution (container-bin.lock)
         ▼
-docker run --rm ... image@sha256:digest
+docker run --rm ... repository@sha256:digest | sha256:local-image-id
         ▼
 real Linux CLI/runtime in an ephemeral container
 ```
@@ -59,9 +59,10 @@ real Linux CLI/runtime in an ephemeral container
 - **Persistent state where it matters:** `pip install` and `npm install`
   results survive across invocations in Docker named volumes, even though
   every container is disposable.
-- **Reproducible images:** `cb lock` pins every configured image to an
-  immutable `repository@sha256:digest`. Updates are explicit (`cb update`),
-  never a side effect of a mutable tag moving.
+- **Reproducible images:** `cb lock` pins registry images to an immutable
+  `repository@sha256:digest` and locally built images to their exact Docker
+  `sha256` image ID. Updates are explicit (`cb update`), never a side effect
+  of a mutable tag moving.
 
 ## Platform support
 
@@ -298,16 +299,20 @@ a failed validation refuses the update.
 ## Image locking and explicit updates
 
 ```powershell
-cb lock          # pull configured images, write container-bin.lock digests
+cb lock          # pull registry images and write the complete lockfile
 cb lock --check  # verify lock completeness and local availability
+cb lock --local mytool  # lock mytool's current image ID; repeat for more local tools
 cb update jq     # explicitly refresh one image
 cb update --all  # explicitly refresh everything
+cb update --local mytool     # switch/refresh one entry as a local image ID
+cb update --registry mytool  # switch/refresh one entry from its registry
 ```
 
 Runtime behavior is fail-closed:
 
 - no lockfile → backwards-compatible UNLOCKED mode;
-- lockfile present → exact `repository@sha256:digest` execution;
+- lockfile present → exact `repository@sha256:digest` or local `sha256`
+  image-ID execution;
 - an image configured in the registry but missing from the lock → execution
   **fails** and asks for `cb update TOOL` or `cb lock`.
 
@@ -315,6 +320,24 @@ Tools sharing an image share one lock entry (`node`, `npm`, `npx` and all
 npm-exposed tools ride the single `node:24-slim` entry). The Node 22 runtime
 family (`node22`, `npm22`, `npx22` and anything exposed from `npm22`) ride a
 separate `node:22-slim` lock entry.
+
+Use `cb lock --local TOOL` for an image produced by `docker build -t` or loaded
+from an archive. The option is explicit because current Docker engines can
+report `RepoDigests` for both local and pulled images; ContainerBin refuses to
+guess which identity you intended. Repeat `--local TOOL` for each local image
+in a full lock operation. Because locks are keyed by configured image, related
+tools sharing that image switch together.
+
+Plain `cb update TOOL` preserves an existing entry's identity mode: rebuild the
+same local tag, then update to record the new ID. If that tag is missing, the
+update fails instead of silently pulling a registry image. Use the explicit
+`--local` or `--registry` override to switch modes. Images with non-matching,
+foreign `RepoDigests` still fail closed in registry mode; ContainerBin does not
+guess that a retagged registry image should be treated as a local build.
+
+An image-ID lock is deliberately host-local: it makes execution immutable on
+that Docker daemon, but it does not make the image portable or pullable. Keep
+the Dockerfile/build inputs or export the image separately for recovery.
 
 ## State inspection and garbage collection
 
