@@ -44,6 +44,31 @@ direct Docker controls intentionally do not recreate every ContainerBin mount
 and volume, so they bound the Docker process/container cost rather than
 isolating nanosecond-level Go overhead.
 
+Save the JSON from each otherwise-identical run, then compare two or more
+Docker Desktop / engine versions with the first file as the baseline:
+
+```powershell
+& '.\scripts\benchmark-startup.ps1' `
+  -ShimPath 'D:\Tools\ContainerBin\node22.exe' `
+  -Image 'node:22-slim' `
+  -ContainerCommand @('node', '--version') |
+  Set-Content -LiteralPath 'D:\Benchmarks\container-bin\engine-29.7.2.json' -Encoding utf8
+
+& '.\scripts\compare-startup-benchmarks.ps1' -InputPath @(
+  'D:\Benchmarks\container-bin\engine-29.7.2.json',
+  'D:\Benchmarks\container-bin\engine-29.8.0.json'
+) -Format Markdown
+```
+
+[`scripts/compare-startup-benchmarks.ps1`](../scripts/compare-startup-benchmarks.ps1)
+emits a Markdown table or a versioned JSON report with p50/p95 percentage
+changes. It fails closed instead of comparing confounded runs: Windows and
+PowerShell versions, working directory, shim and arguments, image ID,
+container command, warmup/iteration counts, and measurement names must match.
+Docker Engine version and capture time are intentionally allowed to differ and
+are recorded on every row. Keep the raw JSON inputs as the durable benchmark
+record; generated tables can always be reproduced from them.
+
 ## Observed baseline
 
 One development-host run on 2026-09-14 used Windows NT 10.0.26200.0,
