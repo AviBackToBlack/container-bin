@@ -425,11 +425,10 @@ portable, but native apphosts and self-contained publishes target Linux unless
 you explicitly select a Windows runtime identifier such as `-r win-x64`.
 
 `dotnet tool install --global TOOL` persists under `/root/.dotnet`; inspect it
-later with `dotnet tool list --global`. The executable is available inside the
-dotnet container, while creating a standalone Windows shim for it requires the
-future generic exposure support tracked by RM-26. The global-tools directory
-intentionally comes first on the profile's `PATH`, so a global tool named
-`dotnet` would shadow the SDK command inside that profile.
+later with `dotnet tool list --global`. Run `cb expose dotnet <binary>` to
+create a standalone Windows shim backed by the same managed .NET home. The
+global-tools directory intentionally comes first on the profile's `PATH`, so a
+global tool named `dotnet` would shadow the SDK command inside that profile.
 
 Existing installations gain `dotnet` on `cb install`. An older lockfile does
 not include the SDK image, so run `cb update dotnet` (or regenerate the lock
@@ -457,9 +456,11 @@ added to the shared gem home.
 Only selected non-path Ruby/Bundler settings, repository credentials and proxy
 variables cross into the container. Host values such as `GEM_HOME`, `GEM_PATH`,
 `BUNDLE_PATH` and `BUNDLE_GEMFILE` are deliberately ignored because Windows
-paths are meaningless in the Linux image. Gem executables are usable inside
-the Ruby containers; standalone Windows shims for them require the future
-generic exposure support tracked by RM-26.
+paths are meaningless in the Linux image. Run `cb expose ruby <binary>` to
+create a standalone Windows shim for an executable installed by RubyGems. Use
+the `ruby` source for exposure: it mounts the same gem home without forwarding
+the `gem`/`bundle` profiles' `RUBYGEMS_API_KEY`, `HTTP_PROXY_USER`, or
+`HTTP_PROXY_PASS` credentials to arbitrary installed gem code.
 
 Existing installations gain all three profiles on `cb install`. An older
 lockfile does not include their image, so run `cb update ruby` (or regenerate
@@ -483,20 +484,32 @@ just --version
 uv tool install ruff
 cb expose uvx ruff
 ruff --version
+
+dotnet tool install --global dotnet-ef
+cb expose dotnet dotnet-ef
+dotnet-ef --version
+
+gem install rake
+cb expose ruby rake
+rake --version
 ```
 
 `cb expose` takes a stateful source profile with one supported global binary
 store: the npm prefix (`npm`, `npm22`, ...), Go's shared `/go/bin` (`go`),
-Cargo's install root (`cargo`), or uv's tool-bin directory (`uv`, `uvx`). It
+Cargo's install root (`cargo`), uv's tool-bin directory (`uv`, `uvx`), .NET's
+global tool home (`dotnet`), or the RubyGems home (`ruby`, `gem`, `bundle`). It
 adds registry profiles that inherit the source image, `state_group`,
 project-root markers and mode, shared volumes, and environment policy, then
-creates Windows shims — `cowsay.exe`, `stringer.exe`, `just.exe`, or `ruff.exe`
-appears on PATH without Node, Go, Rust, or Python touching the host. To
+creates Windows shims — `cowsay.exe`, `stringer.exe`, `just.exe`, `ruff.exe`,
+`dotnet-ef.exe`, or `rake.exe` appears on PATH without Node, Go, Rust, Python,
+.NET, or Ruby touching the host. To
 expose a binary installed under the Node 22 runtime, use
 `cb expose npm22 <binary>`; for `go install` output, use
 `cb expose go <binary>`; for `cargo install`, use
 `cb expose cargo <binary>`; for `uv tool install`, use
-`cb expose uvx <binary>`.
+`cb expose uvx <binary>`; for a global .NET tool, use
+`cb expose dotnet <binary>`; for a Ruby gem executable, use
+`cb expose ruby <binary>`.
 
 That inheritance set is deliberately fixed. Generated profiles do **not** copy
 the source's `project_volumes`, `host_mounts`, or `cwd_mode`; a custom source
@@ -807,8 +820,9 @@ benchmark methodology and the disposable-container tradeoff are in
   executable, e.g. `$env:GOOS="windows"; go build`. `go test` must remain
   native to the container because a Windows test binary cannot run inside it.
 - `cb expose` supports the npm global prefix, Go's shared `/go/bin`, Cargo's
-  managed install root, and uv's pipx-style tool bin; arbitrary pip
-  environments and generic volume paths are not supported.
+  managed install root, uv's pipx-style tool bin, .NET's global tool home, and
+  RubyGems executables; arbitrary pip environments and generic volume paths are
+  not supported.
 
 ## Roadmap
 

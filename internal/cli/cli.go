@@ -304,6 +304,10 @@ func exposeStoreForMountTarget(dst string) (exposeStore, bool) {
 		return exposeStore{kind: "Cargo", mountTarget: dst, binDirectory: dst + "/bin", installHint: "cargo install <crate>"}, true
 	case "/cb/uv-bin":
 		return exposeStore{kind: "uv tool", mountTarget: dst, binDirectory: dst, installHint: "uv tool install <package>", companionTargets: []string{"/cb/uv-tools"}}, true
+	case "/root/.dotnet":
+		return exposeStore{kind: ".NET tool", mountTarget: dst, binDirectory: dst + "/tools", installHint: "dotnet tool install --global <package>"}, true
+	case "/cb/ruby-gems":
+		return exposeStore{kind: "RubyGems", mountTarget: dst, binDirectory: dst + "/bin", installHint: "gem install <gem>"}, true
 	default:
 		return exposeStore{}, false
 	}
@@ -331,7 +335,7 @@ func exposeStoreFor(t registry.Tool) (exposeStore, error) {
 		found = &candidate
 	}
 	if found == nil {
-		return exposeStore{}, fmt.Errorf("tool %q has no supported global binary store (/cb/npm-global, /go/bin, /cb/cargo-global or /cb/uv-bin)", t.Name)
+		return exposeStore{}, fmt.Errorf("tool %q has no supported global binary store (/cb/npm-global, /go/bin, /cb/cargo-global, /cb/uv-bin, /root/.dotnet or /cb/ruby-gems)", t.Name)
 	}
 	for _, target := range found.companionTargets {
 		volumeName, ok := volumesByTarget[target]
@@ -440,7 +444,7 @@ func renderExposedToolSection(sourceName string, source registry.Tool, name, com
 
 func Expose(reg registry.Registry, cfgPath string, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: cb expose TOOL [BINARY ...] (TOOL has a supported global binary store, e.g. npm, npm22, go, cargo or uv)")
+		return errors.New("usage: cb expose TOOL [BINARY ...] (TOOL has a supported global binary store, e.g. npm, npm22, go, cargo, uv, dotnet or ruby)")
 	}
 	sourceName := strings.ToLower(args[0])
 	source, resolvedSource, ok := reg.Resolve(sourceName)
