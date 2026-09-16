@@ -159,6 +159,56 @@ func TestParseVolumeBinding(t *testing.T) {
 	if _, _, err := ParseVolumeBinding("broken"); err == nil {
 		t.Fatal("expected invalid binding error")
 	}
+	for _, spec := range []string{
+		"data:/venv",
+		"data:/venv/bin",
+		"data:/venv/./bin",
+		"cache:/root/.cache/pip",
+		"cache:/root/.cache/pip/http",
+	} {
+		if _, _, err := ParseVolumeBinding(spec); err == nil || !strings.Contains(err.Error(), "reserved for python provider state") {
+			t.Errorf("ParseVolumeBinding(%q) error = %v, want reserved-path error", spec, err)
+		}
+	}
+	for _, spec := range []string{
+		"data:/venv/..",
+		"cache:/root/.cache/pip/..",
+		"data:/safe/../venv",
+		"data:/safe/../x",
+	} {
+		if _, _, err := ParseVolumeBinding(spec); err == nil || !strings.Contains(err.Error(), "must not contain \"..\"") {
+			t.Errorf("ParseVolumeBinding(%q) error = %v, want traversal error", spec, err)
+		}
+	}
+	for _, spec := range []string{"data:/", "data:/./"} {
+		if _, _, err := ParseVolumeBinding(spec); err == nil || !strings.Contains(err.Error(), "must not be the filesystem root") {
+			t.Errorf("ParseVolumeBinding(%q) error = %v, want filesystem-root error", spec, err)
+		}
+	}
+	for _, spec := range []string{"data:/venv-data", "cache:/root/.cache/pipeline"} {
+		if _, _, err := ParseVolumeBinding(spec); err != nil {
+			t.Errorf("ParseVolumeBinding(%q) unexpected error: %v", spec, err)
+		}
+	}
+}
+
+func TestRegistryRejectsProviderReservedVolumeDestinations(t *testing.T) {
+	base := `[tools.x]
+image = "x:1"
+provider = "stateful"
+state_group = "xgroup"
+`
+	for _, field := range []string{"project_volumes", "shared_volumes"} {
+		for _, dst := range []string{"/venv", "/venv/bin", "/root/.cache/pip", "/root/.cache/pip/http"} {
+			t.Run(field+strings.ReplaceAll(dst, "/", "_"), func(t *testing.T) {
+				src := base + field + " = " + toml.Array([]string{"data:" + dst}) + "\n"
+				_, err := ParseTOML(src)
+				if err == nil || !strings.Contains(err.Error(), "reserved for python provider state") {
+					t.Fatalf("ParseTOML error = %v, want reserved-path error", err)
+				}
+			})
+		}
+	}
 }
 
 func TestEnvSetValidation(t *testing.T) {
