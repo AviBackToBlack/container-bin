@@ -91,6 +91,6 @@ jobs:
         # unaffected: govulncheck downloads the live vulnerability database at
         # scan time regardless of the tool version. Bump the pin manually
         # (Dependabot cannot track `go install` versions inside workflows).
-        run: go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
       - name: Run govulncheck
         run: govulncheck ./...
