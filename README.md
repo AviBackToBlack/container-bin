@@ -339,6 +339,11 @@ cb restore BACKUP.zip           # dry-run: validates and reports
 cb restore BACKUP.zip --apply   # atomic replacement after validation
 ```
 
+Named volumes and Docker images are not included. See
+[proxies, private registries, and air-gapped operation](docs/proxy-airgap.md)
+for mirror identity rules, disconnected image preparation, and the current
+state-backup boundary.
+
 ## Concurrency and the mutation lock
 
 `cb install`, `cb setup`, `cb restore`, `cb expose`, `cb unexpose`,
