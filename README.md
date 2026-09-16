@@ -341,9 +341,9 @@ fully isolating project `node_modules`, the npm cache and the npm global prefix;
 share one image-lock entry. Cargo's registry and Git caches persist in shared
 named volumes. `cargo install` writes to a separate persistent
 `/cb/cargo-global` volume that is on the container `PATH`, so installed Cargo
-subcommands remain usable through `cargo`; creating generic Windows shims for
-those binaries is a separate exposure step that ContainerBin does not yet
-provide. That directory intentionally precedes the Rust toolchain directories:
+subcommands remain usable through `cargo`. Run `cb expose cargo <binary>` to
+create a standalone Windows shim for an installed executable. That directory
+intentionally precedes the Rust toolchain directories:
 installing a binary named `cargo` or `rustc` shadows the image's toolchain
 command inside this profile, so audit what you install into the shared store.
 
@@ -471,15 +471,20 @@ cowsay "hello from a container"
 go install golang.org/x/tools/cmd/stringer@v0.36.0
 cb expose go stringer
 stringer -help
+
+cargo install just
+cb expose cargo just
+just --version
 ```
 
 `cb expose` takes a stateful source profile with one supported global binary
-store: the npm prefix (`npm`, `npm22`, ...) or Go's shared `/go/bin` (`go`). It
-adds registry profiles that inherit the source image, `state_group`, shared
-volumes and environment policy, and creates Windows shims — `cowsay.exe` or
-`stringer.exe` appears on PATH without Node or Go touching the host. To expose
-a binary installed under the Node 22 runtime, use `cb expose npm22 <binary>`;
-for `go install` output, use `cb expose go <binary>`.
+store: the npm prefix (`npm`, `npm22`, ...), Go's shared `/go/bin` (`go`), or
+Cargo's install root (`cargo`). It adds registry profiles that inherit the
+source image, `state_group`, shared volumes and environment policy, and creates
+Windows shims — `cowsay.exe`, `stringer.exe`, or `just.exe` appears on PATH
+without Node, Go, or Rust touching the host. To expose a binary installed under
+the Node 22 runtime, use `cb expose npm22 <binary>`; for `go install` output,
+use `cb expose go <binary>`; for `cargo install`, use `cb expose cargo <binary>`.
 
 With no binary arguments, every valid executable in that source store is
 considered. Explicit names are safer on a long-lived store. Invalid and
@@ -779,8 +784,8 @@ benchmark methodology and the disposable-container tradeoff are in
   default. Set `GOOS=windows` (allowed by the profile) to build a Windows
   executable, e.g. `$env:GOOS="windows"; go build`. `go test` must remain
   native to the container because a Windows test binary cannot run inside it.
-- `cb expose` supports the npm global prefix and Go's shared `/go/bin`;
-  pip/pipx, cargo and generic volume paths are not yet supported.
+- `cb expose` supports the npm global prefix, Go's shared `/go/bin`, and Cargo's
+  managed install root; pip/pipx and generic volume paths are not yet supported.
 
 ## Roadmap
 

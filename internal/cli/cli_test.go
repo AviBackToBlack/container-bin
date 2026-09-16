@@ -221,8 +221,8 @@ shared_volumes = ["global:/cb/npm-global"]
 
 // These tests cover Expose guard paths that need no Docker daemon.
 // The Docker-dependent discovery path (discoverGlobalBins onward) remains
-// untested here because it requires a real Docker daemon and a populated npm
-// or Go global volume.
+// untested here because it requires a real Docker daemon and a populated npm,
+// Go or Cargo global volume.
 
 func TestParseLockArgs(t *testing.T) {
 	check, local, err := parseLockArgs([]string{"--local", "LOCAL-TOOL", "--local", "other"})
@@ -328,6 +328,7 @@ func TestExposeStoreForBuiltins(t *testing.T) {
 		{tool: "npm", kind: "npm", target: "/cb/npm-global", binDir: "/cb/npm-global/bin", volumeEnd: "npm-global"},
 		{tool: "npm22", kind: "npm", target: "/cb/npm-global", binDir: "/cb/npm-global/bin", volumeEnd: "npm-global"},
 		{tool: "go", kind: "Go", target: "/go/bin", binDir: "/go/bin", volumeEnd: "gobin"},
+		{tool: "cargo", kind: "Cargo", target: "/cb/cargo-global", binDir: "/cb/cargo-global/bin", volumeEnd: "global"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.tool, func(t *testing.T) {
@@ -464,6 +465,36 @@ func TestRenderGoExposedToolSection(t *testing.T) {
 	}
 }
 
+func TestRenderCargoExposedToolSection(t *testing.T) {
+	reg := registry.Default()
+	source, ok := reg.Tools["cargo"]
+	if !ok {
+		t.Fatal("cargo not in default registry")
+	}
+	const binary = "just"
+	section := renderExposedToolSection("cargo", source, binary, "/cb/cargo-global/bin/"+binary)
+	parsed, err := registry.ParseTOML("schema_version = 1\n" + section)
+	if err != nil {
+		t.Fatalf("rendered Cargo section invalid: %v", err)
+	}
+	got := parsed.Tools[binary]
+	if got.Image != source.Image || got.StateGroup != source.StateGroup {
+		t.Fatalf("exposed Cargo identity = %#v", got)
+	}
+	if !reflect.DeepEqual(got.Command, []string{"/cb/cargo-global/bin/just"}) {
+		t.Errorf("command = %v", got.Command)
+	}
+	if !reflect.DeepEqual(got.SharedVolumes, source.SharedVolumes) || !reflect.DeepEqual(got.EnvSet, source.EnvSet) {
+		t.Error("exposed Cargo profile did not inherit source state/environment")
+	}
+	if !reflect.DeepEqual(got.ProjectMarkers, source.ProjectMarkers) || got.ProjectRootMode != source.ProjectRootMode {
+		t.Fatal("exposed Cargo profile did not inherit project-root policy")
+	}
+	if got.Role != "exposed" {
+		t.Fatalf("role = %q, want exposed", got.Role)
+	}
+}
+
 func TestManagedExposedToolRecognition(t *testing.T) {
 	for _, tt := range []struct {
 		name string
@@ -471,6 +502,7 @@ func TestManagedExposedToolRecognition(t *testing.T) {
 	}{
 		{name: "cowsay", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/cb/npm-global/bin/cowsay"}, SharedVolumes: []string{"npm-global:/cb/npm-global"}}},
 		{name: "stringer", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/go/bin/Stringer"}, SharedVolumes: []string{"gobin:/go/bin"}}},
+		{name: "just", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/cb/cargo-global/bin/just"}, SharedVolumes: []string{"global:/cb/cargo-global"}}},
 	} {
 		if !isManagedExposedTool(tt.name, tt.tool) {
 			t.Fatalf("expected exposed tool: %#v", tt.tool)
@@ -487,6 +519,7 @@ func TestManagedExposedToolRecognition(t *testing.T) {
 		{name: "stringer", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/go/bin/other"}, SharedVolumes: []string{"gobin:/go/bin"}}},
 		{name: "stringer", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/go/bin/stringer"}, SharedVolumes: []string{"cache:/other"}}},
 		{name: "stringer", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/go/bin/a", "extra"}, SharedVolumes: []string{"gobin:/go/bin"}}},
+		{name: "just", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/cb/cargo-global/bin/just"}, SharedVolumes: []string{"global:/other"}}},
 	} {
 		if isManagedExposedTool(tt.name, tt.tool) {
 			t.Fatalf("unexpected exposed tool: %#v", tt.tool)
