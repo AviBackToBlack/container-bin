@@ -287,6 +287,19 @@ type exposedBin struct {
 	command string
 }
 
+func exposeStoreForMountTarget(dst string) (exposeStore, bool) {
+	switch dst {
+	case "/cb/npm-global":
+		return exposeStore{kind: "npm", mountTarget: dst, binDirectory: dst + "/bin", installHint: "npm install -g <package>"}, true
+	case "/go/bin":
+		return exposeStore{kind: "Go", mountTarget: dst, binDirectory: dst, installHint: "go install <module>@latest"}, true
+	case "/cb/cargo-global":
+		return exposeStore{kind: "Cargo", mountTarget: dst, binDirectory: dst + "/bin", installHint: "cargo install <crate>"}, true
+	default:
+		return exposeStore{}, false
+	}
+}
+
 func exposeStoreFor(t registry.Tool) (exposeStore, error) {
 	var found *exposeStore
 	for _, spec := range t.SharedVolumes {
@@ -294,13 +307,8 @@ func exposeStoreFor(t registry.Tool) (exposeStore, error) {
 		if err != nil {
 			return exposeStore{}, err
 		}
-		var candidate exposeStore
-		switch dst {
-		case "/cb/npm-global":
-			candidate = exposeStore{kind: "npm", mountTarget: dst, binDirectory: dst + "/bin", installHint: "npm install -g <package>"}
-		case "/go/bin":
-			candidate = exposeStore{kind: "Go", mountTarget: dst, binDirectory: dst, installHint: "go install <module>@latest"}
-		default:
+		candidate, ok := exposeStoreForMountTarget(dst)
+		if !ok {
 			continue
 		}
 		if found != nil {
@@ -310,7 +318,7 @@ func exposeStoreFor(t registry.Tool) (exposeStore, error) {
 		found = &candidate
 	}
 	if found == nil {
-		return exposeStore{}, fmt.Errorf("tool %q has no supported global binary store (/cb/npm-global or /go/bin)", t.Name)
+		return exposeStore{}, fmt.Errorf("tool %q has no supported global binary store (/cb/npm-global, /go/bin or /cb/cargo-global)", t.Name)
 	}
 	return *found, nil
 }
@@ -357,12 +365,37 @@ func parseExposedBins(out []byte, store exposeStore) ([]exposedBin, error) {
 	return bins, nil
 }
 
+func selectExposedBins(bins []exposedBin, requested map[string]bool) (selected []exposedBin, missing []string) {
+	if len(requested) == 0 {
+		return bins, nil
+	}
+	found := map[string]bool{}
+	for _, bin := range bins {
+		if requested[bin.name] {
+			selected = append(selected, bin)
+			found[bin.name] = true
+		}
+	}
+	for name := range requested {
+		if !found[name] {
+			missing = append(missing, name)
+		}
+	}
+	sort.Strings(missing)
+	return selected, missing
+}
+
 func renderExposedToolSection(sourceName string, source registry.Tool, name, command string) string {
-	return fmt.Sprintf("\n# Exposed from %s global store by cb expose %s\n[tools.%s]\nimage = %s\nprovider = \"stateful\"\nrole = \"exposed\"\ncommand = [%s]\nproject_markers = %s\nstate_group = %s\nshared_volumes = %s\nenv_set = %s\nenv_prefixes = %s\nenv_names = %s\n",
+	projectRootMode := ""
+	if source.ProjectRootMode != "" {
+		projectRootMode = fmt.Sprintf("project_root_mode = %s\n", toml.Quote(source.ProjectRootMode))
+	}
+	return fmt.Sprintf("\n# Exposed from %s global store by cb expose %s\n[tools.%s]\nimage = %s\nprovider = \"stateful\"\nrole = \"exposed\"\ncommand = [%s]\nproject_markers = %s\n%sstate_group = %s\nshared_volumes = %s\nenv_set = %s\nenv_prefixes = %s\nenv_names = %s\n",
 		sourceName, sourceName, name,
 		toml.Quote(source.Image),
 		toml.Quote(command),
 		toml.Array(source.ProjectMarkers),
+		projectRootMode,
 		toml.Quote(source.StateGroup),
 		toml.Array(source.SharedVolumes),
 		toml.Array(source.EnvSet),
@@ -373,7 +406,7 @@ func renderExposedToolSection(sourceName string, source registry.Tool, name, com
 
 func Expose(reg registry.Registry, cfgPath string, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: cb expose TOOL [BINARY ...] (TOOL has a supported global binary store, e.g. npm, npm22 or go)")
+		return errors.New("usage: cb expose TOOL [BINARY ...] (TOOL has a supported global binary store, e.g. npm, npm22, go or cargo)")
 	}
 	sourceName := strings.ToLower(args[0])
 	source, resolvedSource, ok := reg.Resolve(sourceName)
@@ -405,11 +438,9 @@ func Expose(reg registry.Registry, cfgPath string, args []string) error {
 	if len(args) > 1 && len(requested) == 0 {
 		return errors.New("all requested names are reserved and cannot be exposed")
 	}
-	var selected []exposedBin
-	for _, b := range bins {
-		if len(requested) == 0 || requested[b.name] {
-			selected = append(selected, b)
-		}
+	selected, missing := selectExposedBins(bins, requested)
+	for _, name := range missing {
+		fmt.Printf("skip %-16s not found in %s global store\n", name, store.kind)
 	}
 	if len(selected) == 0 {
 		return fmt.Errorf("no matching globally installed %s binaries found; try: %s", store.kind, store.installHint)
@@ -452,19 +483,16 @@ func isManagedExposedTool(name string, t registry.Tool) bool {
 		return false
 	}
 	commandDir := path.Dir(t.Command[0])
-	if commandDir != "/cb/npm-global/bin" && commandDir != "/go/bin" {
-		return false
-	}
 	if !strings.EqualFold(path.Base(t.Command[0]), name) {
 		return false
 	}
-	wantedMount := "/go/bin"
-	if commandDir == "/cb/npm-global/bin" {
-		wantedMount = "/cb/npm-global"
-	}
 	for _, spec := range t.SharedVolumes {
 		_, dst, err := registry.ParseVolumeBinding(spec)
-		if err == nil && dst == wantedMount {
+		if err != nil {
+			continue
+		}
+		store, supported := exposeStoreForMountTarget(dst)
+		if supported && store.binDirectory == commandDir {
 			return true
 		}
 	}
@@ -592,7 +620,7 @@ func Unexpose(reg registry.Registry, cfgPath string, args []string) error {
 			return fmt.Errorf("tool %q is an alias for %q; unexpose requires a concrete tool name", name, resolved)
 		}
 		if !isManagedExposedTool(name, t) {
-			return fmt.Errorf("%s is not marked as a cb-exposed npm or Go tool; older generated profiles must be recreated with cb uninstall followed by cb expose", name)
+			return fmt.Errorf("%s is not marked as a cb-exposed tool; older generated profiles must be recreated with cb uninstall followed by cb expose", name)
 		}
 		remove[name] = true
 	}

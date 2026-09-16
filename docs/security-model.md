@@ -48,8 +48,8 @@ readable, and dangerous to let others edit.
   as are versioned management-binary names beginning with `cb-v` plus a digit.
   Names such as `cb-vault` that lack that version digit remain available to
   registered tools. The same validation applies to binaries discovered from
-  npm or Go global stores (which are untrusted input). Case-colliding names
-  fail closed because Windows shims cannot represent both safely.
+  npm, Go or Cargo global stores (which are untrusted input). Case-colliding
+  names fail closed because Windows shims cannot represent both safely.
 - **Conservative deletion.** `cb gc` is dry-run by default, deletes only
   explicitly selected current-project state with `--apply`, and only considers
   a volume an orphan when *its own labels* record a project path that no
@@ -75,9 +75,10 @@ readable, and dangerous to let others edit.
   project (and any explicitly referenced external paths) read-write, plus the
   allowlisted environment variables. `cb lock` gives you *reproducibility* —
   the same digest every time — not *safety* of that digest's contents.
-- **Malicious packages.** `pip install` / `npm install -g` execute inside
-  containers, but the packages can read/write the mounted project and persist
-  in state volumes; an exposed npm binary runs whenever you invoke its shim.
+- **Malicious packages.** `pip install`, `npm install -g`, and `cargo install`
+  execute inside containers, but the packages can read/write the mounted project
+  and persist in state volumes; an exposed global binary runs whenever you
+  invoke its shim.
 - **Secrets you pass through.** `env_prefixes = ["AWS_"]` exists so Terraform
   can authenticate — which means your AWS credentials enter that container.
   That is the feature working as designed; scope prefixes deliberately.
