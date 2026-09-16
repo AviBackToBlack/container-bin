@@ -45,8 +45,10 @@ readable, and dangerous to let others edit.
   registry-image-not-in-lock all refuse to run rather than guess.
 - **Reserved shim names.** Tool names that would collide with `cb` itself or
   Windows device names (`con`, `nul`, `com1`, …) are rejected at validation,
-  including for binaries discovered from the npm global prefix (which are
-  untrusted input).
+  as are versioned management-binary names beginning with `cb-v` plus a digit.
+  Names such as `cb-vault` that lack that version digit remain available to
+  registered tools. The same validation applies to binaries discovered from
+  the npm global prefix (which are untrusted input).
 - **Conservative deletion.** `cb gc` is dry-run by default, deletes only
   explicitly selected current-project state with `--apply`, and only considers
   a volume an orphan when *its own labels* record a project path that no
