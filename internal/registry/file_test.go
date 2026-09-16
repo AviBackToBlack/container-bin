@@ -209,6 +209,50 @@ provider = "stateless"
 	}
 }
 
+func TestRewriteRegistryWithoutToolsPreservesFollowingDefaultsSection(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "container-bin.toml")
+	src := `schema_version = 2
+
+[tools.remove]
+image = "remove:1"
+provider = "stateless"
+
+[defaults.node]
+version = "1"
+
+[tools.node1]
+default_family = "node"
+default_version = "1"
+default_alias = "node"
+image = "node:1"
+provider = "stateless"
+`
+	if err := os.WriteFile(path, []byte(src), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := RewriteWithoutTools(path, map[string]bool{"remove": true}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg, err := ParseTOML(string(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := reg.Tools["remove"]; ok {
+		t.Fatal("removed tool still present")
+	}
+	if reg.Defaults["node"] != "1" {
+		t.Fatalf("node default = %q, want 1", reg.Defaults["node"])
+	}
+	if _, resolved, ok := reg.Resolve("node"); !ok || resolved != "node1" {
+		t.Fatalf("node alias resolved to %q, ok=%v", resolved, ok)
+	}
+}
+
 // A pre-RM-11 registry should be upgraded with every later default profile,
 // while existing sections are left untouched.
 func TestAppendMissingDefaultToolsUpgradesPreRM11(t *testing.T) {
