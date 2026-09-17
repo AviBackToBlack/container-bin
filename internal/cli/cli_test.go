@@ -289,6 +289,19 @@ func TestExposeRequiresSourceTool(t *testing.T) {
 	}
 }
 
+func TestExposeRejectsFlagShapedArgumentsBeforeDocker(t *testing.T) {
+	reg := registry.Default()
+	for _, args := range [][]string{
+		{"--unknown"},
+		{"go", "--shared-file", "gobin", "/go/bin/stringer"},
+		{"go", "-h"},
+	} {
+		if err := Expose(reg, filepath.Join(t.TempDir(), "container-bin.toml"), args); err == nil || !strings.Contains(err.Error(), "usage: cb expose TOOL") {
+			t.Fatalf("Expose(%v) error = %v, want usage", args, err)
+		}
+	}
+}
+
 func TestExposeRejectsUnknownSource(t *testing.T) {
 	reg := registry.Default()
 	if err := Expose(reg, filepath.Join(t.TempDir(), "container-bin.toml"), []string{"notarealtool"}); err == nil {
@@ -313,6 +326,32 @@ func TestExposeRejectsStatelessTool(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), `"terraform"`) {
 		t.Fatalf("error message does not name the source tool: %v", err)
+	}
+}
+
+func TestExposeSharedFileModeValidatesBeforeDocker(t *testing.T) {
+	reg, err := registry.ParseTOML(`[tools.acme]
+image = "example/acme:1"
+provider = "stateful"
+state_group = "acme"
+shared_volumes = ["tools:/opt/acme"]
+
+[tools.acme-lint]
+image = "example/existing:1"
+provider = "stateless"
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(t.TempDir(), "container-bin.toml")
+	if err := Expose(reg, cfgPath, []string{"--shared-file", "acme"}); err == nil || !strings.Contains(err.Error(), "usage: cb expose --shared-file") {
+		t.Fatalf("short shared-file args error = %v", err)
+	}
+	if err := Expose(reg, cfgPath, []string{"--shared-file", "acme-lint", "tools", "/opt/acme/tool"}); err == nil || !strings.Contains(err.Error(), "not a stateful profile") {
+		t.Fatalf("stateless shared-file source error = %v", err)
+	}
+	if err := Expose(reg, cfgPath, []string{"--shared-file", "acme", "tools", "/opt/acme/bin/acme-lint"}); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("shared-file collision error = %v", err)
 	}
 }
 
@@ -411,10 +450,10 @@ func TestUVExposeDiscoveryMountsBinAndToolVolumesReadOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		"run", "--rm",
+		"run", "--rm", "--pull", "never", "--network", "none", "--read-only",
 		"--mount", "type=volume,src=cb-uv012-py313-tool-bin,dst=/cb/uv-bin,readonly",
 		"--mount", "type=volume,src=cb-uv012-py313-tools,dst=/cb/uv-tools,readonly",
-		"example/uv:1", "sh", "-c", "discover-script", "cb-expose", "/cb/uv-bin",
+		"--entrypoint", "sh", "example/uv:1", "-c", "discover-script", "cb-expose", "/cb/uv-bin",
 	}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("discovery args = %#v, want %#v", args, want)
@@ -436,9 +475,149 @@ shared_volumes = ["npm:/cb/npm-global", "go:/go/bin"]
 	}
 }
 
+func TestExposeSharedFileFor(t *testing.T) {
+	reg, err := registry.ParseTOML(`[tools.acme]
+image = "example/acme:1"
+provider = "stateful"
+state_group = "acme"
+shared_volumes = ["cache:/root/.cache/acme", "tools:/opt/acme"]
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, bin, err := exposeSharedFileFor(reg.Tools["acme"], "TOOLS", "/opt/acme/./bin/Acme-Lint")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantStore := exposeStore{
+		kind:         "shared volume tools",
+		volumeName:   "cb-acme-tools",
+		mountTarget:  "/opt/acme",
+		binDirectory: "/opt/acme/bin",
+	}
+	if !reflect.DeepEqual(store, wantStore) {
+		t.Fatalf("store = %#v, want %#v", store, wantStore)
+	}
+	wantBin := exposedBin{name: "acme-lint", command: "/opt/acme/bin/Acme-Lint"}
+	if !reflect.DeepEqual(bin, wantBin) {
+		t.Fatalf("bin = %#v, want %#v", bin, wantBin)
+	}
+}
+
+func TestExposeSharedFileForRejectsUnsafeOrAmbiguousInput(t *testing.T) {
+	reg, err := registry.ParseTOML(`[tools.acme]
+image = "example/acme:1"
+provider = "stateful"
+state_group = "acme"
+project_volumes = ["project:/workspace/vendor"]
+shared_volumes = ["tools:/opt/acme"]
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool := reg.Tools["acme"]
+	for _, tc := range []struct {
+		name    string
+		volume  string
+		command string
+		want    string
+	}{
+		{name: "unknown_volume", volume: "missing", command: "/opt/acme/tool", want: "no shared volume"},
+		{name: "project_volume", volume: "project", command: "/workspace/vendor/tool", want: "no shared volume"},
+		{name: "relative", volume: "tools", command: "bin/tool", want: "absolute container path"},
+		{name: "traversal", volume: "tools", command: "/opt/acme/bin/../tool", want: `must not contain ".."`},
+		{name: "mount_root", volume: "tools", command: "/opt/acme", want: "is not beneath"},
+		{name: "sibling_prefix", volume: "tools", command: "/opt/acme-other/tool", want: "is not beneath"},
+		{name: "flag_shim", volume: "tools", command: "/opt/acme/-h", want: "must not begin"},
+		{name: "invalid_shim", volume: "tools", command: "/opt/acme/bad.name", want: "cannot be represented"},
+		{name: "reserved_shim", volume: "tools", command: "/opt/acme/cb", want: "is reserved"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := exposeSharedFileFor(tool, tc.volume, tc.command)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want substring %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestExposeSharedFileForRejectsKnownGlobalStore(t *testing.T) {
+	reg := registry.Default()
+	_, _, err := exposeSharedFileFor(reg.Tools["go"], "gobin", "/go/bin/stringer")
+	if err == nil || !strings.Contains(err.Error(), "use `cb expose go") {
+		t.Fatalf("known-store error = %v", err)
+	}
+}
+
+func TestSharedFileDiscoveryArgsAreReadOnlyOfflineAndNoPull(t *testing.T) {
+	store := exposeStore{volumeName: "cb-acme-tools", mountTarget: "/opt/acme"}
+	args, err := sharedFileDiscoveryArgs(store, "example/acme@sha256:abc", "inspect-script", "/opt/acme/bin/tool")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"run", "--rm", "--pull", "never", "--network", "none", "--read-only",
+		"--mount", "type=volume,src=cb-acme-tools,dst=/opt/acme,readonly",
+		"--entrypoint", "sh",
+		"example/acme@sha256:abc", "-c", "inspect-script", "cb-expose", "/opt/acme/bin/tool", "/opt/acme",
+	}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("discovery args = %#v, want %#v", args, want)
+	}
+}
+
+func TestExposeDiscoveryErrorIncludesContainerOutput(t *testing.T) {
+	commandErr := errors.New("exit status 127")
+	err := exposeDiscoveryError("Cargo", []byte("sh: not found\n"), commandErr)
+	if !errors.Is(err, commandErr) {
+		t.Fatalf("exposeDiscoveryError() = %v, want wrapped command error", err)
+	}
+	if !strings.Contains(err.Error(), "sh: not found") {
+		t.Fatalf("exposeDiscoveryError() = %q, want container stderr", err)
+	}
+
+	err = exposeDiscoveryError("Cargo", nil, commandErr)
+	if !errors.Is(err, commandErr) {
+		t.Fatalf("exposeDiscoveryError(empty output) = %v, want wrapped command error", err)
+	}
+	if strings.Contains(err.Error(), "not found") {
+		t.Fatalf("exposeDiscoveryError(empty output) = %q, unexpectedly invented output", err)
+	}
+}
+
+func TestRenderExposedSharedFileSection(t *testing.T) {
+	reg, err := registry.ParseTOML(`[tools.acme]
+image = "example/acme:1"
+provider = "stateful"
+project_markers = ["acme.toml"]
+state_group = "acme"
+shared_volumes = ["cache:/root/.cache/acme", "tools:/opt/acme"]
+env_names = ["ACME_TOKEN"]
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := reg.Tools["acme"]
+	section := renderExposedSharedFileSection("acme", "tools", source, "acme-lint", "/opt/acme/bin/acme-lint")
+	parsed, err := registry.ParseTOML("schema_version = 1\n" + section)
+	if err != nil {
+		t.Fatalf("rendered shared-file section invalid: %v", err)
+	}
+	got := parsed.Tools["acme-lint"]
+	if got.Role != "exposed" || got.Image != source.Image || got.StateGroup != source.StateGroup {
+		t.Fatalf("exposed shared-file identity = %#v", got)
+	}
+	if !reflect.DeepEqual(got.Command, []string{"/opt/acme/bin/acme-lint"}) || !reflect.DeepEqual(got.SharedVolumes, source.SharedVolumes) {
+		t.Fatalf("exposed shared-file command/state = %#v", got)
+	}
+	if !reflect.DeepEqual(got.ProjectMarkers, source.ProjectMarkers) || !reflect.DeepEqual(got.EnvNames, source.EnvNames) {
+		t.Fatal("exposed shared-file profile did not inherit source project/environment policy")
+	}
+}
+
 func TestParseExposedBinsPreservesContainerCase(t *testing.T) {
 	store := exposeStore{binDirectory: "/go/bin"}
-	bins, err := parseExposedBins([]byte("Stringer\x00bad.name\x00cb\x00lower\x00"), store)
+	bins, err := parseExposedBins([]byte("Stringer\x00bad.name\x00cb\x00-h\x00--lint\x00lower\x00"), store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -683,6 +862,7 @@ func TestManagedExposedToolRecognition(t *testing.T) {
 		{name: "ruff", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/cb/uv-bin/ruff"}, SharedVolumes: []string{"tools:/cb/uv-tools", "tool-bin:/cb/uv-bin"}}},
 		{name: "dotnet-ef", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/root/.dotnet/tools/dotnet-ef"}, SharedVolumes: []string{"dotnet-home:/root/.dotnet"}}},
 		{name: "rake", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/cb/ruby-gems/bin/rake"}, SharedVolumes: []string{"gems:/cb/ruby-gems"}}},
+		{name: "acme-lint", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/opt/acme/bin/acme-lint"}, SharedVolumes: []string{"tools:/opt/acme"}}},
 	} {
 		if !isManagedExposedTool(tt.name, tt.tool) {
 			t.Fatalf("expected exposed tool: %#v", tt.tool)
@@ -704,6 +884,8 @@ func TestManagedExposedToolRecognition(t *testing.T) {
 		{name: "ruff", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/cb/uv-bin/ruff"}, SharedVolumes: []string{"tool-bin:/other"}}},
 		{name: "dotnet-ef", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/root/.dotnet/tools/dotnet-ef"}, SharedVolumes: []string{"dotnet-home:/other"}}},
 		{name: "rake", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/cb/ruby-gems/bin/rake"}, SharedVolumes: []string{"gems:/other"}}},
+		{name: "acme-lint", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/opt/acme/bin/../acme-lint"}, SharedVolumes: []string{"tools:/opt/acme"}}},
+		{name: "acme-lint", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/opt/acme-other/acme-lint"}, SharedVolumes: []string{"tools:/opt/acme"}}},
 	} {
 		if isManagedExposedTool(tt.name, tt.tool) {
 			t.Fatalf("unexpected exposed tool: %#v", tt.tool)

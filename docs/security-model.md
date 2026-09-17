@@ -48,15 +48,24 @@ readable, and dangerous to let others edit.
   as are versioned management-binary names beginning with `cb-v` plus a digit.
   Names such as `cb-vault` that lack that version digit remain available to
   registered tools. The same validation applies to binaries discovered from
-  npm, Go or Cargo global stores (which are untrusted input). Case-colliding
-  names fail closed because Windows shims cannot represent both safely.
+  managed global stores or selected from a shared volume (which are untrusted
+  input). Case-colliding names fail closed because Windows shims cannot
+  represent both safely.
 - **Conservative deletion.** `cb gc` is dry-run by default, deletes only
   explicitly selected current-project state with `--apply`, and only considers
   a volume an orphan when *its own labels* record a project path that no
   longer exists. Unlabeled volumes are never deleted. `cb unexpose` likewise
   requires the explicit `role = "exposed"` ownership marker plus a matching
-  command/name and supported global-store mount; a similar-looking custom
-  profile is not treated as generated state.
+  command/name beneath a declared shared-volume mount; recognized global
+  stores additionally require their exact bin directory and companion-volume
+  shape. A similar-looking custom profile is not treated as generated state.
+- **Read-only exposure discovery.** `cb expose` requires the locked source image
+  to exist locally, disables pulls and networking, uses a read-only container
+  root and volume mounts, and overrides the image entrypoint with the discovery
+  shell. The source image must provide a POSIX-compatible `sh`; distroless
+  images without one cannot use automatic discovery. Explicit shared-file
+  discovery also rejects a final symlink or a parent directory that resolves
+  outside the selected volume mount.
 - **Validated atomic writes.** Registry/lock mutations parse the complete
   resulting file before atomically replacing the original; backups are
   restored the same way and only with `--apply`.

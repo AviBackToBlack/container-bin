@@ -330,9 +330,13 @@ func RewriteWithoutTools(cfgPath string, remove map[string]bool) error {
 		return fmt.Errorf("refusing registry rewrite: %w", err)
 	}
 	lines := strings.SplitAfter(string(data), "\n")
+	keepProvenance, dropProvenance := exposedProvenanceLines(lines, remove)
 	var out strings.Builder
 	skip := false
 	for lineNo, raw := range lines {
+		if dropProvenance[lineNo] {
+			continue
+		}
 		section, isHeader, err := toml.ParseSectionHeader(raw)
 		if err != nil {
 			return fmt.Errorf("refusing registry rewrite at line %d: %w", lineNo+1, err)
@@ -344,7 +348,7 @@ func RewriteWithoutTools(cfgPath string, remove map[string]bool) error {
 				skip = remove[name]
 			}
 		}
-		if !skip {
+		if !skip || keepProvenance[lineNo] {
 			out.WriteString(raw)
 		}
 	}
@@ -352,6 +356,47 @@ func RewriteWithoutTools(cfgPath string, remove map[string]bool) error {
 		return fmt.Errorf("refusing registry rewrite: %w", err)
 	}
 	return atomicio.WriteFile(cfgPath, []byte(out.String()), 0644)
+}
+
+func toolHeaderName(raw string) (string, bool) {
+	section, isHeader, err := toml.ParseSectionHeader(raw)
+	if err != nil || !isHeader {
+		return "", false
+	}
+	if !strings.HasPrefix(section, "tools.") {
+		return "", false
+	}
+	return strings.ToLower(strings.TrimSpace(strings.TrimPrefix(section, "tools."))), true
+}
+
+func exposedProvenanceLines(lines []string, remove map[string]bool) (keep, drop map[int]bool) {
+	keep = map[int]bool{}
+	drop = map[int]bool{}
+	for i, raw := range lines {
+		trimmed := strings.TrimSpace(raw)
+		if !strings.HasPrefix(trimmed, "# Exposed from ") || !strings.Contains(trimmed, " by cb expose") {
+			continue
+		}
+		header := i + 1
+		for header < len(lines) && strings.TrimSpace(lines[header]) == "" {
+			header++
+		}
+		if header >= len(lines) {
+			continue
+		}
+		name, ok := toolHeaderName(lines[header])
+		if !ok {
+			continue
+		}
+		target := keep
+		if remove[name] {
+			target = drop
+		}
+		for line := i; line < header; line++ {
+			target[line] = true
+		}
+	}
+	return keep, drop
 }
 
 func InstallShims(reg Registry) error {

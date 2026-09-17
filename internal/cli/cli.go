@@ -347,9 +347,81 @@ func exposeStoreFor(t registry.Tool) (exposeStore, error) {
 	return *found, nil
 }
 
+func containerPathHasParentTraversal(p string) bool {
+	for _, segment := range strings.Split(p, "/") {
+		if segment == ".." {
+			return true
+		}
+	}
+	return false
+}
+
+// exposeSharedFileFor resolves one explicit file inside one declared shared
+// volume. Unlike exposeStoreFor, it never guesses which of a profile's stores
+// might contain binaries and never scans the rest of the volume.
+func exposeSharedFileFor(t registry.Tool, logicalName, command string) (exposeStore, exposedBin, error) {
+	logicalName = strings.ToLower(logicalName)
+	if !registry.ValidToolName(logicalName) {
+		return exposeStore{}, exposedBin{}, fmt.Errorf("invalid shared volume name %q (use lowercase letters, digits, '-' or '_')", logicalName)
+	}
+	if !path.IsAbs(command) {
+		return exposeStore{}, exposedBin{}, fmt.Errorf("shared-volume file %q must be an absolute container path", command)
+	}
+	if containerPathHasParentTraversal(command) {
+		return exposeStore{}, exposedBin{}, fmt.Errorf("shared-volume file %q must not contain \"..\"", command)
+	}
+	command = path.Clean(command)
+
+	var store *exposeStore
+	for _, spec := range t.SharedVolumes {
+		name, dst, err := registry.ParseVolumeBinding(spec)
+		if err != nil {
+			return exposeStore{}, exposedBin{}, err
+		}
+		if name != logicalName {
+			continue
+		}
+		if store != nil {
+			return exposeStore{}, exposedBin{}, fmt.Errorf("tool %q declares shared volume %q more than once", t.Name, logicalName)
+		}
+		dst = path.Clean(dst)
+		if _, knownStore := exposeStoreForMountTarget(dst); knownStore {
+			return exposeStore{}, exposedBin{}, fmt.Errorf("shared volume %q is a supported global store at %s; use `cb expose %s [BINARY ...]` instead of --shared-file", logicalName, dst, t.Name)
+		}
+		store = &exposeStore{
+			kind:         "shared volume " + logicalName,
+			volumeName:   pathmap.StatefulSharedVolumeID(t.StateGroup, name),
+			mountTarget:  dst,
+			binDirectory: path.Dir(command),
+		}
+	}
+	if store == nil {
+		return exposeStore{}, exposedBin{}, fmt.Errorf("tool %q has no shared volume named %q", t.Name, logicalName)
+	}
+	if command == store.mountTarget || !strings.HasPrefix(command, store.mountTarget+"/") {
+		return exposeStore{}, exposedBin{}, fmt.Errorf("shared-volume file %q is not beneath %s volume %q mounted at %s", command, t.Name, logicalName, store.mountTarget)
+	}
+
+	containerName := path.Base(command)
+	name := strings.ToLower(containerName)
+	if strings.HasPrefix(name, "-") {
+		return exposeStore{}, exposedBin{}, fmt.Errorf("shared-volume filename %q must not begin with '-'", containerName)
+	}
+	if !registry.ValidToolName(name) {
+		return exposeStore{}, exposedBin{}, fmt.Errorf("shared-volume filename %q cannot be represented as a Windows shim name (use lowercase letters, digits, '-' or '_')", containerName)
+	}
+	if registry.ReservedToolName(name) {
+		return exposeStore{}, exposedBin{}, fmt.Errorf("shared-volume filename %q is reserved and cannot be exposed as a shim", containerName)
+	}
+	return *store, exposedBin{name: name, command: command}, nil
+}
+
 func discoverGlobalBins(t registry.Tool, store exposeStore) ([]exposedBin, error) {
 	image, err := lockfile.RuntimeImageForTool(t)
 	if err != nil {
+		return nil, err
+	}
+	if err := inspectExposeImage(t.Name, image); err != nil {
 		return nil, err
 	}
 	script := `if [ -d "$1" ]; then for f in "$1"/*; do [ -f "$f" ] && [ -x "$f" ] || continue; printf '%s\000' "${f##*/}"; done; fi`
@@ -358,15 +430,23 @@ func discoverGlobalBins(t registry.Tool, store exposeStore) ([]exposedBin, error
 		return nil, err
 	}
 	cmd := exec.Command("docker", dockerArgs...)
-	out, err := cmd.Output()
+	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("inspect %s global bin: %w", store.kind, err)
+		return nil, exposeDiscoveryError(store.kind, out, err)
 	}
 	return parseExposedBins(out, store)
 }
 
+func exposeDiscoveryError(kind string, out []byte, err error) error {
+	detail := strings.TrimSpace(string(out))
+	if detail == "" {
+		return fmt.Errorf("inspect %s global bin: %w", kind, err)
+	}
+	return fmt.Errorf("inspect %s global bin: %w: %s", kind, err, detail)
+}
+
 func exposeDiscoveryArgs(store exposeStore, image, script string) ([]string, error) {
-	dockerArgs := []string{"run", "--rm"}
+	dockerArgs := []string{"run", "--rm", "--pull", "never", "--network", "none", "--read-only"}
 	mounts := append([]exposeMount{{volumeName: store.volumeName, mountTarget: store.mountTarget}}, store.companionMounts...)
 	for _, volume := range mounts {
 		mount, err := dockerrun.MountSpecMode("volume", volume.volumeName, volume.mountTarget, "ro")
@@ -375,8 +455,65 @@ func exposeDiscoveryArgs(store exposeStore, image, script string) ([]string, err
 		}
 		dockerArgs = append(dockerArgs, "--mount", mount)
 	}
-	dockerArgs = append(dockerArgs, image, "sh", "-c", script, "cb-expose", store.binDirectory)
+	dockerArgs = append(dockerArgs, "--entrypoint", "sh", image, "-c", script, "cb-expose", store.binDirectory)
 	return dockerArgs, nil
+}
+
+func sharedFileDiscoveryArgs(store exposeStore, image, script, command string) ([]string, error) {
+	mount, err := dockerrun.MountSpecMode("volume", store.volumeName, store.mountTarget, "ro")
+	if err != nil {
+		return nil, err
+	}
+	return []string{
+		"run", "--rm", "--pull", "never", "--network", "none", "--read-only",
+		"--mount", mount,
+		"--entrypoint", "sh",
+		image, "-c", script, "cb-expose", command, store.mountTarget,
+	}, nil
+}
+
+func inspectExposeImage(sourceName, image string) error {
+	out, err := exec.Command("docker", "image", "inspect", image).CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	detail := strings.TrimSpace(string(out))
+	if detail == "" {
+		detail = err.Error()
+	}
+	return fmt.Errorf("cannot inspect source image %q for tool %q; ensure Docker is available and run `cb lock` or `cb update %s`: %s", image, sourceName, sourceName, detail)
+}
+
+const sharedFileInspectScript = `if [ -L "$1" ]; then printf 'is a symbolic link'; exit 1; fi; if ! cd -P "$2" 2>/dev/null; then printf 'declared volume mount does not exist'; exit 1; fi; resolved_mount=$(pwd -P) || { printf 'cannot resolve declared volume mount'; exit 1; }; parent=${1%/*}; if [ "$parent" = "$1" ]; then parent=/; fi; if ! cd -P "$parent" 2>/dev/null; then printf 'parent directory does not exist'; exit 1; fi; resolved_parent=$(pwd -P) || { printf 'cannot resolve parent directory'; exit 1; }; case "$resolved_parent" in "$resolved_mount"|"$resolved_mount"/*) ;; *) printf 'parent directory resolves outside the declared volume'; exit 1;; esac; if [ ! -e "$1" ]; then printf 'does not exist'; elif [ ! -f "$1" ]; then printf 'is not a regular file'; elif [ ! -x "$1" ]; then printf 'is not executable'; else exit 0; fi; exit 1`
+
+func inspectSharedVolumeFile(t registry.Tool, store exposeStore, command string) error {
+	image, err := lockfile.RuntimeImageForTool(t)
+	if err != nil {
+		return err
+	}
+	if err := inspectExposeImage(t.Name, image); err != nil {
+		return err
+	}
+	if out, err := exec.Command("docker", "volume", "inspect", store.volumeName).CombinedOutput(); err != nil {
+		detail := strings.TrimSpace(string(out))
+		if detail == "" {
+			detail = err.Error()
+		}
+		return fmt.Errorf("shared volume %q is unavailable; run the source tool to create/populate it: %s", store.volumeName, detail)
+	}
+	dockerArgs, err := sharedFileDiscoveryArgs(store, image, sharedFileInspectScript, command)
+	if err != nil {
+		return err
+	}
+	out, err := exec.Command("docker", dockerArgs...).CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	detail := strings.TrimSpace(string(out))
+	if detail == "" {
+		detail = err.Error()
+	}
+	return fmt.Errorf("shared-volume file %q failed validation: %s", command, detail)
 }
 
 func parseExposedBins(out []byte, store exposeStore) ([]exposedBin, error) {
@@ -387,7 +524,7 @@ func parseExposedBins(out []byte, store exposeStore) ([]exposedBin, error) {
 		name := strings.ToLower(binary)
 		// Untrusted names discovered inside the container: skip anything that
 		// is not a safe shim name or that would shadow cb / Windows devices.
-		if name == "" || !registry.ValidToolName(name) || registry.ReservedToolName(name) {
+		if name == "" || strings.HasPrefix(name, "-") || !registry.ValidToolName(name) || registry.ReservedToolName(name) {
 			continue
 		}
 		if previous, ok := seen[name]; ok {
@@ -424,12 +561,22 @@ func selectExposedBins(bins []exposedBin, requested map[string]bool) (selected [
 }
 
 func renderExposedToolSection(sourceName string, source registry.Tool, name, command string) string {
+	comment := fmt.Sprintf("# Exposed from %s global store by cb expose %s", sourceName, sourceName)
+	return renderExposedToolSectionWithComment(comment, source, name, command)
+}
+
+func renderExposedSharedFileSection(sourceName, logicalName string, source registry.Tool, name, command string) string {
+	comment := fmt.Sprintf("# Exposed from %s shared volume %s by cb expose --shared-file", sourceName, logicalName)
+	return renderExposedToolSectionWithComment(comment, source, name, command)
+}
+
+func renderExposedToolSectionWithComment(comment string, source registry.Tool, name, command string) string {
 	projectRootMode := ""
 	if source.ProjectRootMode != "" {
 		projectRootMode = fmt.Sprintf("project_root_mode = %s\n", toml.Quote(source.ProjectRootMode))
 	}
-	return fmt.Sprintf("\n# Exposed from %s global store by cb expose %s\n[tools.%s]\nimage = %s\nprovider = \"stateful\"\nrole = \"exposed\"\ncommand = [%s]\nproject_markers = %s\n%sstate_group = %s\nshared_volumes = %s\nenv_set = %s\nenv_prefixes = %s\nenv_names = %s\n",
-		sourceName, sourceName, name,
+	return fmt.Sprintf("\n%s\n[tools.%s]\nimage = %s\nprovider = \"stateful\"\nrole = \"exposed\"\ncommand = [%s]\nproject_markers = %s\n%sstate_group = %s\nshared_volumes = %s\nenv_set = %s\nenv_prefixes = %s\nenv_names = %s\n",
+		comment, name,
 		toml.Quote(source.Image),
 		toml.Quote(command),
 		toml.Array(source.ProjectMarkers),
@@ -442,9 +589,64 @@ func renderExposedToolSection(sourceName string, source registry.Tool, name, com
 	)
 }
 
+func exposeSharedVolumeFile(reg registry.Registry, cfgPath string, args []string) error {
+	if len(args) != 3 {
+		return errors.New("usage: cb expose --shared-file TOOL VOLUME /absolute/container/file")
+	}
+	sourceName := strings.ToLower(args[0])
+	logicalName := strings.ToLower(args[1])
+	source, resolvedSource, ok := reg.Resolve(sourceName)
+	if !ok {
+		return fmt.Errorf("tool %q not found; --shared-file requires a stateful source profile", sourceName)
+	}
+	if source.Provider != "stateful" {
+		return fmt.Errorf("tool %q is not a stateful profile", sourceName)
+	}
+	store, bin, err := exposeSharedFileFor(source, logicalName, args[2])
+	if err != nil {
+		return err
+	}
+	if _, _, exists := reg.Resolve(bin.name); exists {
+		return fmt.Errorf("tool %q already exists; unexpose/uninstall it or choose a file with a different basename", bin.name)
+	}
+	if err := inspectSharedVolumeFile(source, store, bin.command); err != nil {
+		return err
+	}
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		return err
+	}
+	section := renderExposedSharedFileSection(resolvedSource, logicalName, source, bin.name, bin.command)
+	combined := append(append([]byte{}, data...), []byte(section)...)
+	if _, err := registry.ParseTOML(string(combined)); err != nil {
+		return fmt.Errorf("refusing registry update: %w", err)
+	}
+	if err := atomicio.WriteFile(cfgPath, combined, 0644); err != nil {
+		return err
+	}
+	newReg, _, err := registry.Load()
+	if err != nil {
+		return fmt.Errorf("reload registry: %w", err)
+	}
+	if err := registry.InstallShims(newReg); err != nil {
+		return err
+	}
+	fmt.Printf("exposed %-16s %s (shared volume %s)\n", bin.name, bin.command, logicalName)
+	return nil
+}
+
 func Expose(reg registry.Registry, cfgPath string, args []string) error {
-	if len(args) == 0 {
-		return errors.New("usage: cb expose TOOL [BINARY ...] (TOOL has a supported global binary store, e.g. npm, npm22, go, cargo, uv, dotnet or ruby)")
+	const usage = "usage: cb expose TOOL [BINARY ...] | cb expose --shared-file TOOL VOLUME /absolute/container/file"
+	if len(args) > 0 && args[0] == "--shared-file" {
+		return exposeSharedVolumeFile(reg, cfgPath, args[1:])
+	}
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return errors.New(usage)
+	}
+	for _, arg := range args[1:] {
+		if strings.HasPrefix(arg, "-") {
+			return errors.New(usage)
+		}
 	}
 	sourceName := strings.ToLower(args[0])
 	source, resolvedSource, ok := reg.Resolve(sourceName)
@@ -520,12 +722,33 @@ func isManagedExposedTool(name string, t registry.Tool) bool {
 	if t.Provider != "stateful" || t.Role != "exposed" || len(t.Command) != 1 {
 		return false
 	}
-	commandDir := path.Dir(t.Command[0])
-	if !strings.EqualFold(path.Base(t.Command[0]), name) {
+	command := t.Command[0]
+	if !path.IsAbs(command) || containerPathHasParentTraversal(command) {
 		return false
 	}
-	store, err := exposeStoreFor(t)
-	return err == nil && store.binDirectory == commandDir
+	command = path.Clean(command)
+	if !strings.EqualFold(path.Base(command), name) {
+		return false
+	}
+	knownStore, knownStoreErr := exposeStoreFor(t)
+	for _, spec := range t.SharedVolumes {
+		_, dst, err := registry.ParseVolumeBinding(spec)
+		if err != nil {
+			return false
+		}
+		dst = path.Clean(dst)
+		if command == dst || !strings.HasPrefix(command, dst+"/") {
+			continue
+		}
+		if _, knownTarget := exposeStoreForMountTarget(dst); knownTarget {
+			if knownStoreErr == nil && knownStore.mountTarget == dst && knownStore.binDirectory == path.Dir(command) {
+				return true
+			}
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 func Inspect(reg registry.Registry, args []string) error {
