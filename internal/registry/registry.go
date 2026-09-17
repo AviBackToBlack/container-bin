@@ -352,6 +352,14 @@ func DefaultFamilySections() map[string]string {
 }
 
 func defaultSections(prefix string) map[string]string {
+	sections, err := sectionsFromTOML(DefaultTOML, prefix)
+	if err != nil {
+		panic("invalid built-in registry: " + err.Error())
+	}
+	return sections
+}
+
+func sectionsFromTOML(src, prefix string) (map[string]string, error) {
 	sections := map[string]string{}
 	var current string
 	var b strings.Builder
@@ -361,11 +369,13 @@ func defaultSections(prefix string) map[string]string {
 		}
 		b.Reset()
 	}
-	for _, line := range strings.Split(DefaultTOML, "\n") {
-		trim := strings.TrimSpace(line)
-		if strings.HasPrefix(trim, "[") && strings.HasSuffix(trim, "]") {
+	for lineNo, line := range strings.Split(src, "\n") {
+		section, isHeader, err := toml.ParseSectionHeader(line)
+		if err != nil {
+			return nil, fmt.Errorf("line %d: %w", lineNo+1, err)
+		}
+		if isHeader {
 			flush()
-			section := strings.TrimSuffix(strings.TrimPrefix(trim, "["), "]")
 			current = ""
 			if strings.HasPrefix(section, prefix) {
 				current = strings.TrimPrefix(section, prefix)
@@ -377,7 +387,7 @@ func defaultSections(prefix string) map[string]string {
 		}
 	}
 	flush()
-	return sections
+	return sections, nil
 }
 
 // ParseTOML intentionally supports only the tiny TOML subset used by
@@ -391,15 +401,16 @@ func ParseTOML(s string) (Registry, error) {
 	lineNo := 0
 	for scanner.Scan() {
 		lineNo++
-		line := strings.TrimSpace(toml.StripComment(scanner.Text()))
+		raw := scanner.Text()
+		line := strings.TrimSpace(toml.StripComment(raw))
 		if line == "" {
 			continue
 		}
-		if strings.HasPrefix(line, "[") {
-			if !strings.HasSuffix(line, "]") {
-				return reg, fmt.Errorf("line %d: malformed section", lineNo)
-			}
-			sec := strings.TrimSpace(line[1 : len(line)-1])
+		sec, isHeader, err := toml.ParseSectionHeader(raw)
+		if err != nil {
+			return reg, fmt.Errorf("line %d: %w", lineNo, err)
+		}
+		if isHeader {
 			switch {
 			case strings.HasPrefix(sec, "tools.") && len(sec) > len("tools."):
 				name := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(sec, "tools.")))

@@ -216,13 +216,13 @@ func TestRewriteRegistryWithoutToolsRemovesGeneratedExposeComment(t *testing.T) 
 # user context stays
 # Exposed from acme shared volume tools by cb expose --shared-file
 
-[tools.remove]
+[tools.remove] # generated shared-file profile
 image = "remove:1"
 provider = "stateless"
 
 # Exposed from go global store by cb expose go
 
-[tools.keep]
+[tools.keep] # generated managed-store profile
 image = "keep:1"
 provider = "stateless"
 `
@@ -240,7 +240,7 @@ provider = "stateless"
 	if strings.Contains(got, "Exposed from acme") {
 		t.Fatal("removed tool's generated provenance comment remains")
 	}
-	if !strings.Contains(got, "# user context stays") || !strings.Contains(got, "# Exposed from go global store by cb expose go\n\n[tools.keep]") {
+	if !strings.Contains(got, "# user context stays") || !strings.Contains(got, "# Exposed from go global store by cb expose go\n\n[tools.keep] # generated managed-store profile") {
 		t.Fatal("unrelated comments were removed")
 	}
 }
@@ -250,11 +250,11 @@ func TestRewriteRegistryWithoutToolsPreservesFollowingDefaultsSection(t *testing
 	path := filepath.Join(dir, "container-bin.toml")
 	src := `schema_version = 2
 
-[tools.remove]
+[tools.remove] # remove this section
 image = "remove:1"
 provider = "stateless"
 
-[defaults.node]
+[defaults.node] # keep this following section
 version = "1"
 
 [tools.node1]
@@ -421,6 +421,56 @@ func TestAppendMissingDefaultToolsUpgradesPreRM11(t *testing.T) {
 	}
 }
 
+func TestV1UpgradeRecognizesCommentedToolHeaders(t *testing.T) {
+	sections := DefaultToolSections()
+	var src strings.Builder
+	src.WriteString("schema_version = 1\n")
+	for _, migration := range []struct {
+		oldName string
+		newName string
+		alias   string
+	}{
+		{oldName: "node", newName: "node24", alias: "node"},
+		{oldName: "npm", newName: "npm24", alias: "npm"},
+		{oldName: "npx", newName: "npx24", alias: "npx"},
+	} {
+		section := strings.Replace(sections[migration.newName], "[tools."+migration.newName+"]", "[tools."+migration.oldName+"] # legacy "+migration.alias, 1)
+		for _, key := range []string{"default_family", "default_version", "default_alias"} {
+			start := strings.Index(section, key+" = ")
+			end := strings.Index(section[start:], "\n")
+			section = section[:start] + section[start+end+1:]
+		}
+		src.WriteString(section)
+	}
+
+	path := filepath.Join(t.TempDir(), "container-bin.toml")
+	if err := os.WriteFile(path, []byte(src.String()), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := AppendMissingDefaultTools(path, "dev"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg, err := ParseTOML(string(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pair := range [][2]string{{"node", "node24"}, {"npm", "npm24"}, {"npx", "npx24"}} {
+		if _, exists := reg.Tools[pair[0]]; exists {
+			t.Fatalf("legacy tool %q still exists", pair[0])
+		}
+		if _, exists := reg.Tools[pair[1]]; !exists {
+			t.Fatalf("migrated tool %q is missing", pair[1])
+		}
+		if !strings.Contains(string(data), "[tools."+pair[1]+"] # legacy "+pair[0]) {
+			t.Fatalf("migrated header/comment for %q was not preserved", pair[1])
+		}
+	}
+}
+
 func TestSetDefaultVersionRewritesOnlySelection(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "container-bin.toml")
 	if err := os.WriteFile(path, []byte(DefaultTOML), 0644); err != nil {
@@ -452,6 +502,29 @@ func TestSetDefaultVersionRewritesOnlySelection(t *testing.T) {
 	}
 	if err := SetDefaultVersion(path, "node", "26"); err == nil || !strings.Contains(err.Error(), "available: 22, 24") {
 		t.Fatalf("unexpected unavailable-version error: %v", err)
+	}
+}
+
+func TestSetDefaultVersionRecognizesCommentedSectionHeader(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "container-bin.toml")
+	const defaultNode = "[defaults.node]\nversion = \"24\""
+	if strings.Count(DefaultTOML, defaultNode) != 1 {
+		t.Fatalf("DefaultTOML contains %d exact node-default sections, want 1", strings.Count(DefaultTOML, defaultNode))
+	}
+	src := strings.Replace(DefaultTOML, defaultNode, "[defaults.node] # selected runtime\n  version = \"24\" # pinned for prod", 1)
+	if err := os.WriteFile(path, []byte(src), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetDefaultVersion(path, "node", "22"); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := strings.Replace(src, "  version = \"24\" # pinned for prod", "  version = \"22\" # pinned for prod", 1)
+	if string(after) != want {
+		t.Fatal("commented default update changed content beyond the selected version line")
 	}
 }
 
