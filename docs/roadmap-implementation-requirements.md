@@ -7,9 +7,10 @@ authoritative live roadmap: re-read it, current `main`, open pull requests and
 the relevant code before starting any item. This document is a design aid, not
 a second completion checklist.
 
-Status snapshot: **2026-09-16**, after v1.1.0 and PRs #64-#68 merged. At that
-point issue #2 had 16 unchecked entries: one recurring maintenance task, seven
-numbered enhancements and eight speculative/future items. A later section
+Status snapshot: **2026-09-17**, after v1.1.0, PRs #64-#68 and the addition of
+RM-34 to the live roadmap. At that point issue #2 had 17 unchecked entries: one
+recurring maintenance task, eight numbered enhancements and eight
+speculative/future items. A later section
 also specifies [issue #69](https://github.com/AviBackToBlack/container-bin/issues/69),
 which is related work but is not itself an unchecked issue #2 item.
 
@@ -63,6 +64,7 @@ The minimum delivery gate for a code change is:
 | RM-29 Windows ARM64 | Hardware-gated | Real Windows ARM64 hardware with Docker Desktop |
 | RM-30 Authenticode | External-resource-gated | Code-signing certificate and protected signing mechanism |
 | RM-31 self-update | Design- and trust-gated | Stable release API, attestation verifier and Windows replacement design |
+| RM-34 Cargo expose enhancement | Product-scope gated | Concrete discovery/selection behavior and acceptance cases |
 | Linux/macOS hosts | Demand-gated | Concrete users and maintained qualification hosts |
 | Enterprise policy | Product/security design | Policy authority, precedence and deployment model |
 | Image trust | Ecosystem/security design | Supported signature system and identity policy |
@@ -239,7 +241,7 @@ from every mounted volume.
 - Reject missing, ambiguous, non-regular or directory entries. Normalize and
   validate names through the same reserved/case-collision rules as other
   exposed commands.
-- Mark generated profiles with explicit ownership metadata so `unexpose` can
+- Mark generated profiles with explicit ownership metadata so `cb unexpose` can
   remove them without treating a similar hand-written profile as managed.
 
 ### Generic shared-volume requirements
@@ -269,6 +271,49 @@ from every mounted volume.
 
 Likely areas: `internal/cli` expose/unexpose, registry ownership fields,
 lock-aware discovery and README expose documentation.
+
+## RM-34 — Enhance Cargo binary exposure
+
+PR #64 shipped the current `cb expose cargo [BINARY ...]` workflow as one
+RM-26 slice. Do not change it merely because “enhance” is broad enough to
+permit implementation. Start only after the desired additional discovery or
+selection behavior is stated as a concrete user-visible case.
+
+### Scope requirements
+
+- Describe the current result, the desired result and why explicit existing
+  binary selection does not already satisfy the use case. Do not infer a
+  package/crate identity from a filename or silently choose among candidates.
+- Keep discovery inside Cargo's explicit `/cb/cargo-global` store. Do not scan
+  unrelated shared volumes, container `PATH` or host paths.
+- Define behavior for packages that install multiple binaries, explicitly
+  requested names that are absent, case collisions, registry collisions and
+  Cargo/Rust command-name collisions. Every ambiguity must fail or be reported
+  explicitly rather than selecting a “best” candidate.
+- Preserve the generated profile's fixed inherited-policy boundary. An
+  enhancement must not implicitly copy `project_volumes`, `host_mounts`,
+  `cwd_mode`, source argument/path rules or default-family metadata.
+- Preserve `role = "exposed"` ownership and the existing fail-closed
+  `cb unexpose` checks. A similar hand-written profile must never become
+  managed merely because its command points into the Cargo volume.
+- Keep existing `cb expose cargo`, explicit selection and missing-name output
+  backward compatible unless the scoped use case explicitly justifies and
+  documents a CLI change.
+
+### Acceptance evidence
+
+- Regression tests retain expose-all, explicit-selection, missing-name,
+  reserved-name, case-collision, existing-registry-name and provenance checks.
+- Focused tests cover every newly specified discovery/selection branch,
+  including its negative and ambiguous forms.
+- Windows + Docker Desktop E2E installs a disposable Cargo package, exercises
+  the enhancement, runs the generated shim and removes it with `cb unexpose`
+  without changing an unrelated profile or volume.
+- README, help and security-model text distinguish the new behavior from the
+  existing Cargo store scan and state which policy fields are inherited.
+
+Likely areas: `internal/cli` expose selection/discovery, generated-profile
+rendering, unexpose provenance tests and Cargo expose documentation.
 
 ## RM-29 — Windows ARM64 release target
 
@@ -383,7 +428,7 @@ and [artifact-attestation verification](https://docs.github.com/en/actions/conce
   the parent to exit, replaces the management binary and reconciles only shims
   proven to belong to that installation. Never overwrite an unrelated file.
 - Keep a validated rollback copy until the new binary passes a bootstrap
-  `version` smoke test and shim identity check. On failure, restore the complete
+  `cb version` smoke test and shim identity check. On failure, restore the complete
   prior managed set or leave an actionable recovery artifact.
 - Serialize with registry/shim mutations. Preserve ACL expectations and avoid
   elevation unless the installation already requires it.
@@ -665,8 +710,9 @@ that scanner behavior—not the supported TOML language—changed.
 
 1. Implement #69 as a small independent correctness PR.
 2. Split RM-26 into direct Python discovery and generic shared-volume expose.
-3. Resolve product/security decisions for RM-24, enterprise policy, image
-   trust, WSL2 and overlays before code.
+3. Scope RM-34's concrete Cargo discovery/selection behavior, and resolve
+   product/security decisions for RM-24, enterprise policy, image trust, WSL2
+   and overlays before code.
 4. Implement RM-29 and RM-30 only when hardware/certificate prerequisites are
    available; design RM-31 against their final artifact contracts.
 5. Keep RM-19, RM-23, new hosts, plugins, SBOM and Snyk dormant until their
