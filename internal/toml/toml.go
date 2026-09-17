@@ -32,6 +32,29 @@ func StripComment(s string) string {
 	return s
 }
 
+// ParseSectionHeader recognizes the basic table-header syntax supported by
+// container-bin's tiny TOML subset. A line that does not begin with '[' after
+// quote-aware comment stripping is not a header. A line that does begin with
+// '[' must be a well-formed basic table header; array tables and trailing
+// content fail closed instead of being mistaken for keys or values.
+func ParseSectionHeader(s string) (section string, isHeader bool, err error) {
+	line := strings.TrimSpace(StripComment(s))
+	if line == "" || !strings.HasPrefix(line, "[") {
+		return "", false, nil
+	}
+	if strings.HasPrefix(line, "[[") {
+		return "", false, errors.New("array table sections are not supported")
+	}
+	if !strings.HasSuffix(line, "]") {
+		return "", false, errors.New("malformed section header")
+	}
+	section = strings.TrimSpace(line[1 : len(line)-1])
+	if section == "" || strings.ContainsAny(section, "[]") {
+		return "", false, errors.New("malformed section header")
+	}
+	return section, true, nil
+}
+
 func ParseQuoted(s string) (string, error) {
 	s = strings.TrimSpace(s)
 	if len(s) < 2 || s[0] != '"' || s[len(s)-1] != '"' {
