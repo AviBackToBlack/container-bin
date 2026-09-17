@@ -518,12 +518,18 @@ expose a binary installed under the Node 22 runtime, use
 `cb expose dotnet <binary>`; for a Ruby gem executable, use
 `cb expose ruby <binary>`.
 
+Managed-store discovery uses the already-locked local source image with pulls
+and networking disabled, a read-only container root, an explicit shell
+entrypoint, and read-only mounts for the selected store and any required
+companion volume. Discovery never mutates package-manager state.
+
 For a custom stateful profile, `cb expose --shared-file TOOL VOLUME FILE`
 selects one logical name from that profile's `shared_volumes` and one absolute
 container file beneath the selected mount. The file's basename becomes the
 Windows shim name. ContainerBin does not search other volumes or `PATH`, and it
-rejects traversal, mount escapes, invalid/reserved shim names, directories,
-symlinks, and files without the executable bit. Discovery requires the named
+rejects traversal, mount escapes, invalid/reserved or flag-shaped shim names,
+directories, symlinks (including parent-directory escapes), and files without
+the executable bit. Discovery requires the named
 Docker volume and source image to exist already, mounts only that volume
 read-only, disables networking, prevents image pulls, and runs with a read-only
 container root. The generated profile then inherits the same deliberately

@@ -289,6 +289,19 @@ func TestExposeRequiresSourceTool(t *testing.T) {
 	}
 }
 
+func TestExposeRejectsFlagShapedArgumentsBeforeDocker(t *testing.T) {
+	reg := registry.Default()
+	for _, args := range [][]string{
+		{"--unknown"},
+		{"go", "--shared-file", "gobin", "/go/bin/stringer"},
+		{"go", "-h"},
+	} {
+		if err := Expose(reg, filepath.Join(t.TempDir(), "container-bin.toml"), args); err == nil || !strings.Contains(err.Error(), "usage: cb expose TOOL") {
+			t.Fatalf("Expose(%v) error = %v, want usage", args, err)
+		}
+	}
+}
+
 func TestExposeRejectsUnknownSource(t *testing.T) {
 	reg := registry.Default()
 	if err := Expose(reg, filepath.Join(t.TempDir(), "container-bin.toml"), []string{"notarealtool"}); err == nil {
@@ -437,10 +450,10 @@ func TestUVExposeDiscoveryMountsBinAndToolVolumesReadOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		"run", "--rm",
+		"run", "--rm", "--pull", "never", "--network", "none", "--read-only",
 		"--mount", "type=volume,src=cb-uv012-py313-tool-bin,dst=/cb/uv-bin,readonly",
 		"--mount", "type=volume,src=cb-uv012-py313-tools,dst=/cb/uv-tools,readonly",
-		"example/uv:1", "sh", "-c", "discover-script", "cb-expose", "/cb/uv-bin",
+		"--entrypoint", "sh", "example/uv:1", "-c", "discover-script", "cb-expose", "/cb/uv-bin",
 	}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("discovery args = %#v, want %#v", args, want)
@@ -515,6 +528,7 @@ shared_volumes = ["tools:/opt/acme"]
 		{name: "traversal", volume: "tools", command: "/opt/acme/bin/../tool", want: `must not contain ".."`},
 		{name: "mount_root", volume: "tools", command: "/opt/acme", want: "is not beneath"},
 		{name: "sibling_prefix", volume: "tools", command: "/opt/acme-other/tool", want: "is not beneath"},
+		{name: "flag_shim", volume: "tools", command: "/opt/acme/-h", want: "must not begin"},
 		{name: "invalid_shim", volume: "tools", command: "/opt/acme/bad.name", want: "cannot be represented"},
 		{name: "reserved_shim", volume: "tools", command: "/opt/acme/cb", want: "is reserved"},
 	} {
@@ -545,7 +559,7 @@ func TestSharedFileDiscoveryArgsAreReadOnlyOfflineAndNoPull(t *testing.T) {
 		"run", "--rm", "--pull", "never", "--network", "none", "--read-only",
 		"--mount", "type=volume,src=cb-acme-tools,dst=/opt/acme,readonly",
 		"--entrypoint", "sh",
-		"example/acme@sha256:abc", "-c", "inspect-script", "cb-expose", "/opt/acme/bin/tool",
+		"example/acme@sha256:abc", "-c", "inspect-script", "cb-expose", "/opt/acme/bin/tool", "/opt/acme",
 	}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("discovery args = %#v, want %#v", args, want)
@@ -584,7 +598,7 @@ env_names = ["ACME_TOKEN"]
 
 func TestParseExposedBinsPreservesContainerCase(t *testing.T) {
 	store := exposeStore{binDirectory: "/go/bin"}
-	bins, err := parseExposedBins([]byte("Stringer\x00bad.name\x00cb\x00lower\x00"), store)
+	bins, err := parseExposedBins([]byte("Stringer\x00bad.name\x00cb\x00-h\x00--lint\x00lower\x00"), store)
 	if err != nil {
 		t.Fatal(err)
 	}

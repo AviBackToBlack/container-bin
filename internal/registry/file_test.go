@@ -209,6 +209,40 @@ provider = "stateless"
 	}
 }
 
+func TestRewriteRegistryWithoutToolsRemovesGeneratedExposeComment(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "container-bin.toml")
+	src := `schema_version = 1
+
+# Exposed from go global store by cb expose go
+[tools.keep]
+image = "keep:1"
+provider = "stateless"
+
+# user context stays
+# Exposed from acme shared volume tools by cb expose --shared-file
+[tools.remove]
+image = "remove:1"
+provider = "stateless"
+`
+	if err := os.WriteFile(path, []byte(src), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := RewriteWithoutTools(path, map[string]bool{"remove": true}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	if strings.Contains(got, "Exposed from acme") {
+		t.Fatal("removed tool's generated provenance comment remains")
+	}
+	if !strings.Contains(got, "# user context stays") || !strings.Contains(got, "Exposed from go") {
+		t.Fatal("unrelated comments were removed")
+	}
+}
+
 func TestRewriteRegistryWithoutToolsPreservesFollowingDefaultsSection(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "container-bin.toml")

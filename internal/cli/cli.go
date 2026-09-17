@@ -404,6 +404,9 @@ func exposeSharedFileFor(t registry.Tool, logicalName, command string) (exposeSt
 
 	containerName := path.Base(command)
 	name := strings.ToLower(containerName)
+	if strings.HasPrefix(name, "-") {
+		return exposeStore{}, exposedBin{}, fmt.Errorf("shared-volume filename %q must not begin with '-'", containerName)
+	}
 	if !registry.ValidToolName(name) {
 		return exposeStore{}, exposedBin{}, fmt.Errorf("shared-volume filename %q cannot be represented as a Windows shim name (use lowercase letters, digits, '-' or '_')", containerName)
 	}
@@ -416,6 +419,9 @@ func exposeSharedFileFor(t registry.Tool, logicalName, command string) (exposeSt
 func discoverGlobalBins(t registry.Tool, store exposeStore) ([]exposedBin, error) {
 	image, err := lockfile.RuntimeImageForTool(t)
 	if err != nil {
+		return nil, err
+	}
+	if err := inspectExposeImage(t.Name, image); err != nil {
 		return nil, err
 	}
 	script := `if [ -d "$1" ]; then for f in "$1"/*; do [ -f "$f" ] && [ -x "$f" ] || continue; printf '%s\000' "${f##*/}"; done; fi`
@@ -432,7 +438,7 @@ func discoverGlobalBins(t registry.Tool, store exposeStore) ([]exposedBin, error
 }
 
 func exposeDiscoveryArgs(store exposeStore, image, script string) ([]string, error) {
-	dockerArgs := []string{"run", "--rm"}
+	dockerArgs := []string{"run", "--rm", "--pull", "never", "--network", "none", "--read-only"}
 	mounts := append([]exposeMount{{volumeName: store.volumeName, mountTarget: store.mountTarget}}, store.companionMounts...)
 	for _, volume := range mounts {
 		mount, err := dockerrun.MountSpecMode("volume", volume.volumeName, volume.mountTarget, "ro")
@@ -441,7 +447,7 @@ func exposeDiscoveryArgs(store exposeStore, image, script string) ([]string, err
 		}
 		dockerArgs = append(dockerArgs, "--mount", mount)
 	}
-	dockerArgs = append(dockerArgs, image, "sh", "-c", script, "cb-expose", store.binDirectory)
+	dockerArgs = append(dockerArgs, "--entrypoint", "sh", image, "-c", script, "cb-expose", store.binDirectory)
 	return dockerArgs, nil
 }
 
@@ -454,13 +460,30 @@ func sharedFileDiscoveryArgs(store exposeStore, image, script, command string) (
 		"run", "--rm", "--pull", "never", "--network", "none", "--read-only",
 		"--mount", mount,
 		"--entrypoint", "sh",
-		image, "-c", script, "cb-expose", command,
+		image, "-c", script, "cb-expose", command, store.mountTarget,
 	}, nil
 }
+
+func inspectExposeImage(sourceName, image string) error {
+	out, err := exec.Command("docker", "image", "inspect", image).CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	detail := strings.TrimSpace(string(out))
+	if detail == "" {
+		detail = err.Error()
+	}
+	return fmt.Errorf("cannot inspect source image %q for tool %q; ensure Docker is available and run `cb lock` or `cb update %s`: %s", image, sourceName, sourceName, detail)
+}
+
+const sharedFileInspectScript = `if [ -L "$1" ]; then printf 'is a symbolic link'; exit 1; fi; parent=${1%/*}; if [ "$parent" = "$1" ]; then parent=/; fi; if ! cd -P "$parent" 2>/dev/null; then printf 'parent directory does not exist'; exit 1; fi; resolved_parent=$(pwd -P) || { printf 'cannot resolve parent directory'; exit 1; }; case "$resolved_parent" in "$2"|"$2"/*) ;; *) printf 'parent directory resolves outside the declared volume'; exit 1;; esac; if [ ! -e "$1" ]; then printf 'does not exist'; elif [ ! -f "$1" ]; then printf 'is not a regular file'; elif [ ! -x "$1" ]; then printf 'is not executable'; else exit 0; fi; exit 1`
 
 func inspectSharedVolumeFile(t registry.Tool, store exposeStore, command string) error {
 	image, err := lockfile.RuntimeImageForTool(t)
 	if err != nil {
+		return err
+	}
+	if err := inspectExposeImage(t.Name, image); err != nil {
 		return err
 	}
 	if out, err := exec.Command("docker", "volume", "inspect", store.volumeName).CombinedOutput(); err != nil {
@@ -470,8 +493,7 @@ func inspectSharedVolumeFile(t registry.Tool, store exposeStore, command string)
 		}
 		return fmt.Errorf("shared volume %q is unavailable; run the source tool to create/populate it: %s", store.volumeName, detail)
 	}
-	script := `if [ -L "$1" ]; then printf 'is a symbolic link'; elif [ ! -e "$1" ]; then printf 'does not exist'; elif [ ! -f "$1" ]; then printf 'is not a regular file'; elif [ ! -x "$1" ]; then printf 'is not executable'; else exit 0; fi; exit 1`
-	dockerArgs, err := sharedFileDiscoveryArgs(store, image, script, command)
+	dockerArgs, err := sharedFileDiscoveryArgs(store, image, sharedFileInspectScript, command)
 	if err != nil {
 		return err
 	}
@@ -494,7 +516,7 @@ func parseExposedBins(out []byte, store exposeStore) ([]exposedBin, error) {
 		name := strings.ToLower(binary)
 		// Untrusted names discovered inside the container: skip anything that
 		// is not a safe shim name or that would shadow cb / Windows devices.
-		if name == "" || !registry.ValidToolName(name) || registry.ReservedToolName(name) {
+		if name == "" || strings.HasPrefix(name, "-") || !registry.ValidToolName(name) || registry.ReservedToolName(name) {
 			continue
 		}
 		if previous, ok := seen[name]; ok {
@@ -606,11 +628,17 @@ func exposeSharedVolumeFile(reg registry.Registry, cfgPath string, args []string
 }
 
 func Expose(reg registry.Registry, cfgPath string, args []string) error {
+	const usage = "usage: cb expose TOOL [BINARY ...] | cb expose --shared-file TOOL VOLUME /absolute/container/file"
 	if len(args) > 0 && args[0] == "--shared-file" {
 		return exposeSharedVolumeFile(reg, cfgPath, args[1:])
 	}
-	if len(args) == 0 {
-		return errors.New("usage: cb expose TOOL [BINARY ...] | cb expose --shared-file TOOL VOLUME /absolute/container/file")
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return errors.New(usage)
+	}
+	for _, arg := range args[1:] {
+		if strings.HasPrefix(arg, "-") {
+			return errors.New(usage)
+		}
 	}
 	sourceName := strings.ToLower(args[0])
 	source, resolvedSource, ok := reg.Resolve(sourceName)

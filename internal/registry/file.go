@@ -316,7 +316,11 @@ func RewriteWithoutTools(cfgPath string, remove map[string]bool) error {
 	lines := strings.SplitAfter(string(data), "\n")
 	var out strings.Builder
 	skip := false
-	for _, raw := range lines {
+	for i, raw := range lines {
+		trimmed := strings.TrimSpace(raw)
+		if strings.HasPrefix(trimmed, "# Exposed from ") && strings.Contains(trimmed, " by cb expose") && i+1 < len(lines) && removedToolHeader(lines[i+1], remove) {
+			continue
+		}
 		trim := strings.TrimSpace(toml.StripComment(raw))
 		if strings.HasPrefix(trim, "[") && strings.HasSuffix(trim, "]") {
 			skip = false
@@ -334,6 +338,19 @@ func RewriteWithoutTools(cfgPath string, remove map[string]bool) error {
 		return fmt.Errorf("refusing registry rewrite: %w", err)
 	}
 	return atomicio.WriteFile(cfgPath, []byte(out.String()), 0644)
+}
+
+func removedToolHeader(raw string, remove map[string]bool) bool {
+	trim := strings.TrimSpace(toml.StripComment(raw))
+	if !strings.HasPrefix(trim, "[") || !strings.HasSuffix(trim, "]") {
+		return false
+	}
+	section := strings.TrimSpace(trim[1 : len(trim)-1])
+	if !strings.HasPrefix(section, "tools.") {
+		return false
+	}
+	name := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(section, "tools.")))
+	return remove[name]
 }
 
 func InstallShims(reg Registry) error {
