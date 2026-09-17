@@ -314,11 +314,11 @@ func RewriteWithoutTools(cfgPath string, remove map[string]bool) error {
 		return fmt.Errorf("refusing registry rewrite: %w", err)
 	}
 	lines := strings.SplitAfter(string(data), "\n")
+	keepProvenance, dropProvenance := exposedProvenanceLines(lines, remove)
 	var out strings.Builder
 	skip := false
 	for i, raw := range lines {
-		trimmed := strings.TrimSpace(raw)
-		if strings.HasPrefix(trimmed, "# Exposed from ") && strings.Contains(trimmed, " by cb expose") && i+1 < len(lines) && removedToolHeader(lines[i+1], remove) {
+		if dropProvenance[i] {
 			continue
 		}
 		trim := strings.TrimSpace(toml.StripComment(raw))
@@ -330,7 +330,7 @@ func RewriteWithoutTools(cfgPath string, remove map[string]bool) error {
 				skip = remove[name]
 			}
 		}
-		if !skip {
+		if !skip || keepProvenance[i] {
 			out.WriteString(raw)
 		}
 	}
@@ -340,17 +340,46 @@ func RewriteWithoutTools(cfgPath string, remove map[string]bool) error {
 	return atomicio.WriteFile(cfgPath, []byte(out.String()), 0644)
 }
 
-func removedToolHeader(raw string, remove map[string]bool) bool {
+func toolHeaderName(raw string) (string, bool) {
 	trim := strings.TrimSpace(toml.StripComment(raw))
 	if !strings.HasPrefix(trim, "[") || !strings.HasSuffix(trim, "]") {
-		return false
+		return "", false
 	}
 	section := strings.TrimSpace(trim[1 : len(trim)-1])
 	if !strings.HasPrefix(section, "tools.") {
-		return false
+		return "", false
 	}
-	name := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(section, "tools.")))
-	return remove[name]
+	return strings.ToLower(strings.TrimSpace(strings.TrimPrefix(section, "tools."))), true
+}
+
+func exposedProvenanceLines(lines []string, remove map[string]bool) (keep, drop map[int]bool) {
+	keep = map[int]bool{}
+	drop = map[int]bool{}
+	for i, raw := range lines {
+		trimmed := strings.TrimSpace(raw)
+		if !strings.HasPrefix(trimmed, "# Exposed from ") || !strings.Contains(trimmed, " by cb expose") {
+			continue
+		}
+		header := i + 1
+		for header < len(lines) && strings.TrimSpace(lines[header]) == "" {
+			header++
+		}
+		if header >= len(lines) {
+			continue
+		}
+		name, ok := toolHeaderName(lines[header])
+		if !ok {
+			continue
+		}
+		target := keep
+		if remove[name] {
+			target = drop
+		}
+		for line := i; line < header; line++ {
+			target[line] = true
+		}
+	}
+	return keep, drop
 }
 
 func InstallShims(reg Registry) error {

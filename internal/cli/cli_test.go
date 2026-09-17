@@ -566,6 +566,25 @@ func TestSharedFileDiscoveryArgsAreReadOnlyOfflineAndNoPull(t *testing.T) {
 	}
 }
 
+func TestExposeDiscoveryErrorIncludesContainerOutput(t *testing.T) {
+	commandErr := errors.New("exit status 127")
+	err := exposeDiscoveryError("Cargo", []byte("sh: not found\n"), commandErr)
+	if !errors.Is(err, commandErr) {
+		t.Fatalf("exposeDiscoveryError() = %v, want wrapped command error", err)
+	}
+	if !strings.Contains(err.Error(), "sh: not found") {
+		t.Fatalf("exposeDiscoveryError() = %q, want container stderr", err)
+	}
+
+	err = exposeDiscoveryError("Cargo", nil, commandErr)
+	if !errors.Is(err, commandErr) {
+		t.Fatalf("exposeDiscoveryError(empty output) = %v, want wrapped command error", err)
+	}
+	if strings.Contains(err.Error(), "not found") {
+		t.Fatalf("exposeDiscoveryError(empty output) = %q, unexpectedly invented output", err)
+	}
+}
+
 func TestRenderExposedSharedFileSection(t *testing.T) {
 	reg, err := registry.ParseTOML(`[tools.acme]
 image = "example/acme:1"

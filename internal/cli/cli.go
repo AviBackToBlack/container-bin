@@ -430,11 +430,19 @@ func discoverGlobalBins(t registry.Tool, store exposeStore) ([]exposedBin, error
 		return nil, err
 	}
 	cmd := exec.Command("docker", dockerArgs...)
-	out, err := cmd.Output()
+	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("inspect %s global bin: %w", store.kind, err)
+		return nil, exposeDiscoveryError(store.kind, out, err)
 	}
 	return parseExposedBins(out, store)
+}
+
+func exposeDiscoveryError(kind string, out []byte, err error) error {
+	detail := strings.TrimSpace(string(out))
+	if detail == "" {
+		return fmt.Errorf("inspect %s global bin: %w", kind, err)
+	}
+	return fmt.Errorf("inspect %s global bin: %w: %s", kind, err, detail)
 }
 
 func exposeDiscoveryArgs(store exposeStore, image, script string) ([]string, error) {
@@ -476,7 +484,7 @@ func inspectExposeImage(sourceName, image string) error {
 	return fmt.Errorf("cannot inspect source image %q for tool %q; ensure Docker is available and run `cb lock` or `cb update %s`: %s", image, sourceName, sourceName, detail)
 }
 
-const sharedFileInspectScript = `if [ -L "$1" ]; then printf 'is a symbolic link'; exit 1; fi; parent=${1%/*}; if [ "$parent" = "$1" ]; then parent=/; fi; if ! cd -P "$parent" 2>/dev/null; then printf 'parent directory does not exist'; exit 1; fi; resolved_parent=$(pwd -P) || { printf 'cannot resolve parent directory'; exit 1; }; case "$resolved_parent" in "$2"|"$2"/*) ;; *) printf 'parent directory resolves outside the declared volume'; exit 1;; esac; if [ ! -e "$1" ]; then printf 'does not exist'; elif [ ! -f "$1" ]; then printf 'is not a regular file'; elif [ ! -x "$1" ]; then printf 'is not executable'; else exit 0; fi; exit 1`
+const sharedFileInspectScript = `if [ -L "$1" ]; then printf 'is a symbolic link'; exit 1; fi; if ! cd -P "$2" 2>/dev/null; then printf 'declared volume mount does not exist'; exit 1; fi; resolved_mount=$(pwd -P) || { printf 'cannot resolve declared volume mount'; exit 1; }; parent=${1%/*}; if [ "$parent" = "$1" ]; then parent=/; fi; if ! cd -P "$parent" 2>/dev/null; then printf 'parent directory does not exist'; exit 1; fi; resolved_parent=$(pwd -P) || { printf 'cannot resolve parent directory'; exit 1; }; case "$resolved_parent" in "$resolved_mount"|"$resolved_mount"/*) ;; *) printf 'parent directory resolves outside the declared volume'; exit 1;; esac; if [ ! -e "$1" ]; then printf 'does not exist'; elif [ ! -f "$1" ]; then printf 'is not a regular file'; elif [ ! -x "$1" ]; then printf 'is not executable'; else exit 0; fi; exit 1`
 
 func inspectSharedVolumeFile(t registry.Tool, store exposeStore, command string) error {
 	image, err := lockfile.RuntimeImageForTool(t)

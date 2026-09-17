@@ -213,15 +213,17 @@ func TestRewriteRegistryWithoutToolsRemovesGeneratedExposeComment(t *testing.T) 
 	path := filepath.Join(t.TempDir(), "container-bin.toml")
 	src := `schema_version = 1
 
-# Exposed from go global store by cb expose go
-[tools.keep]
-image = "keep:1"
-provider = "stateless"
-
 # user context stays
 # Exposed from acme shared volume tools by cb expose --shared-file
+
 [tools.remove]
 image = "remove:1"
+provider = "stateless"
+
+# Exposed from go global store by cb expose go
+
+[tools.keep]
+image = "keep:1"
 provider = "stateless"
 `
 	if err := os.WriteFile(path, []byte(src), 0644); err != nil {
@@ -238,7 +240,7 @@ provider = "stateless"
 	if strings.Contains(got, "Exposed from acme") {
 		t.Fatal("removed tool's generated provenance comment remains")
 	}
-	if !strings.Contains(got, "# user context stays") || !strings.Contains(got, "Exposed from go") {
+	if !strings.Contains(got, "# user context stays") || !strings.Contains(got, "# Exposed from go global store by cb expose go\n\n[tools.keep]") {
 		t.Fatal("unrelated comments were removed")
 	}
 }

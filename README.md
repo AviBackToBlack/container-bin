@@ -521,7 +521,9 @@ expose a binary installed under the Node 22 runtime, use
 Managed-store discovery uses the already-locked local source image with pulls
 and networking disabled, a read-only container root, an explicit shell
 entrypoint, and read-only mounts for the selected store and any required
-companion volume. Discovery never mutates package-manager state.
+companion volume. The source image must provide a POSIX-compatible `sh`;
+distroless images without one cannot use automatic discovery. Discovery never
+mutates package-manager state.
 
 For a custom stateful profile, `cb expose --shared-file TOOL VOLUME FILE`
 selects one logical name from that profile's `shared_volumes` and one absolute
@@ -532,10 +534,12 @@ directories, symlinks (including parent-directory escapes), and files without
 the executable bit. Discovery requires the named
 Docker volume and source image to exist already, mounts only that volume
 read-only, disables networking, prevents image pulls, and runs with a read-only
-container root. The generated profile then inherits the same deliberately
-limited source fields described below. A volume mounted at one of the supported
-package-manager store targets must use the normal `cb expose TOOL [BINARY ...]`
-mode so its store-specific companion-volume and ownership checks still apply.
+container root. The source image must provide a POSIX-compatible `sh`;
+distroless images without one cannot use automatic discovery. The generated
+profile then inherits the same deliberately limited source fields described
+below. A volume mounted at one of the supported package-manager store targets
+must use the normal `cb expose TOOL [BINARY ...]` mode so its store-specific
+companion-volume and ownership checks still apply.
 
 That inheritance set is deliberately fixed. Generated profiles do **not** copy
 the source's `project_volumes`, `host_mounts`, or `cwd_mode`; a custom source
