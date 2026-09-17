@@ -471,8 +471,11 @@ func TestSetDefaultVersionRewritesOnlySelection(t *testing.T) {
 
 func TestSetDefaultVersionRecognizesCommentedSectionHeader(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "container-bin.toml")
-	src := strings.Replace(DefaultTOML, "[defaults.node]", "[defaults.node] # selected runtime", 1)
-	src = strings.Replace(src, "version = \"24\"", "  version = \"24\" # pinned for prod", 1)
+	const defaultNode = "[defaults.node]\nversion = \"24\""
+	if strings.Count(DefaultTOML, defaultNode) != 1 {
+		t.Fatalf("DefaultTOML contains %d exact node-default sections, want 1", strings.Count(DefaultTOML, defaultNode))
+	}
+	src := strings.Replace(DefaultTOML, defaultNode, "[defaults.node] # selected runtime\n  version = \"24\" # pinned for prod", 1)
 	if err := os.WriteFile(path, []byte(src), 0644); err != nil {
 		t.Fatal(err)
 	}
