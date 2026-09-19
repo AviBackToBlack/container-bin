@@ -135,6 +135,9 @@ jobs:
               $dockerArgs -notmatch ' --version\s*$') {
             throw "shim did not dispatch the expected jq docker command: $dockerArgs"
           }
+          # The expected shim exit was 42. Clear the native-command status only
+          # after asserting it so pwsh reports this validation step as passed.
+          exit 0
 
   govulncheck:
     name: govulncheck
