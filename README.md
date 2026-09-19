@@ -427,6 +427,9 @@ fail-closed wrapper changes pipx-owned absolute links to relative links within
 the state volume and copies only the known image interpreter into its launcher
 cache and application venvs; this keeps `cb-pipx117-py313-state` portable
 through selected-volume backup/restore without relaxing archive link validation.
+`pipx run` environments remain ephemeral because `PIPX_CACHE_DIR` is not placed
+on the managed volume; each `pipx run` may resolve and download its application
+again and therefore requires the configured package index to be reachable.
 
 ```powershell
 pipx install cowsay==6.1

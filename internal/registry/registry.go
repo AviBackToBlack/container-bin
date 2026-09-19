@@ -58,7 +58,7 @@ const MaxSchemaVersion = 2
 const pipxCommand = `uvx --from pipx==1.17.4 pipx "$@"
 status=$?
 if [ "$status" -eq 0 ]; then
-  python3 -c '
+  /usr/local/bin/python3 -c '
 import os
 import pathlib
 import shutil
@@ -68,7 +68,11 @@ allowed_python = pathlib.Path("/usr/local/bin/python3.13").resolve(strict=True)
 for link in pathlib.Path("/cb/pipx").rglob("*"):
     if not link.is_symlink() or not os.path.isabs(os.readlink(link)):
         continue
-    target = link.resolve(strict=True)
+    raw_target = os.readlink(link)
+    try:
+        target = link.resolve(strict=True)
+    except OSError as exc:
+        raise RuntimeError(f"pipx produced unsupported absolute symlink: {link} -> {raw_target}") from exc
     try:
         target.relative_to(root)
     except ValueError:
@@ -76,7 +80,7 @@ for link in pathlib.Path("/cb/pipx").rglob("*"):
         venv_python = len(parts) == 5 and parts[:2] == ("home", "venvs") and parts[-2:] == ("bin", "python")
         launcher_python = len(parts) == 5 and parts[:2] == ("launcher-cache", "archive-v0") and parts[-2:] == ("bin", "python")
         if target != allowed_python or not (venv_python or launcher_python):
-            raise RuntimeError(f"pipx produced unsupported absolute symlink: {link} -> {os.readlink(link)}")
+            raise RuntimeError(f"pipx produced unsupported absolute symlink: {link} -> {raw_target}")
         temporary = link.with_name(link.name + ".cb-copy")
         if temporary.exists() or temporary.is_symlink():
             temporary.unlink()

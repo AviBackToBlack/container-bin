@@ -689,6 +689,19 @@ func TestPipxProfile(t *testing.T) {
 		!strings.Contains(pipx.Command[2], `pipx produced unsupported absolute symlink`) {
 		t.Fatalf("pipx command = %#v", pipx.Command)
 	}
+	for _, fragment := range []string{
+		`/usr/local/bin/python3 -c '`,
+		`raw_target = os.readlink(link)`,
+		`except OSError as exc:`,
+		`raise RuntimeError(f"pipx produced unsupported absolute symlink: {link} -> {raw_target}") from exc`,
+	} {
+		if !strings.Contains(pipx.Command[2], fragment) {
+			t.Fatalf("pipx command missing %q: %q", fragment, pipx.Command[2])
+		}
+	}
+	if strings.Contains(pipx.Command[2], "\n  python3 -c '") {
+		t.Fatalf("pipx command must invoke the image interpreter by absolute path: %q", pipx.Command[2])
+	}
 	wantVolumes := []string{"state:/cb/pipx"}
 	if !reflect.DeepEqual(pipx.SharedVolumes, wantVolumes) {
 		t.Fatalf("pipx shared_volumes = %#v, want %#v", pipx.SharedVolumes, wantVolumes)
