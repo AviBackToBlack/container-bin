@@ -1,18 +1,24 @@
 # Remaining roadmap implementation requirements
 
-This document turns the unchecked work in
+This document turns the remaining work in
 [roadmap issue #2](https://github.com/AviBackToBlack/container-bin/issues/2)
 into implementation and acceptance requirements. Issue #2 remains the
 authoritative live roadmap: re-read it, current `main`, open pull requests and
-the relevant code before starting any item. This document is a design aid, not
-a second completion checklist.
+the relevant code before starting any item.
 
-Status snapshot: **2026-09-17**, after v1.1.0, PRs #64-#68 and the addition of
-RM-34 to the live roadmap. At that point issue #2 had 17 unchecked entries: one
-recurring maintenance task, eight numbered enhancements and eight
-speculative/future items. A later section
-also specifies [issue #69](https://github.com/AviBackToBlack/container-bin/issues/69),
-which is related work but is not itself an unchecked issue #2 item.
+Maintainer product/security decisions accepted on **2026-09-19** are recorded
+in [roadmap-decisions.md](roadmap-decisions.md). That decision ledger is the
+canonical disposition for design-gated, blocked, dormant and implementation-
+ready items. Requirements below remain useful acceptance detail, but an older
+"decision required" sentence must not be interpreted as reopening an accepted
+decision.
+
+Status snapshot: **2026-09-19**. The earlier 2026-09-17 snapshot counted every
+unchecked roadmap line as unfinished work; that is no longer an accurate model.
+Several items have since shipped, while the maintainer has explicitly accepted
+product/security dispositions for the remaining design gates. Use the readiness
+table below plus [roadmap-decisions.md](roadmap-decisions.md), not checkbox count,
+to decide whether work is actionable.
 
 ## Requirements that apply to every item
 
@@ -54,26 +60,26 @@ The minimum delivery gate for a code change is:
 
 ## Readiness and prerequisite summary
 
-| Item | Status before implementation | Required prerequisite or trigger |
+| Item | Current disposition | Next action / trigger |
 |---|---|---|
-| govulncheck pin | Recurring maintenance | A newer stable upstream release and a deliberate refresh |
-| RM-19 reserved-name migration | Conditional design | A proposal to reserve a name that was legal in a published release |
-| RM-23 8.3 path alias | Speculative prototype | Confirmed user need and a safe Windows-only identity proof |
-| RM-24 Python/uv provider choice | Product decision | Written compatibility and migration decision |
-| RM-26 expose beyond current stores | Implementable in slices | Define direct pip/pipx stores and the generic source contract separately |
-| RM-29 Windows ARM64 | Hardware-gated | Real Windows ARM64 hardware with Docker Desktop |
-| RM-30 Authenticode | External-resource-gated | Code-signing certificate and protected signing mechanism |
-| RM-31 self-update | Design- and trust-gated | Stable release API, attestation verifier and Windows replacement design |
-| RM-34 Cargo expose enhancement | Product-scope gated | Concrete discovery/selection behavior and acceptance cases |
-| Linux/macOS hosts | Demand-gated | Concrete users and maintained qualification hosts |
-| Enterprise policy | Product/security design | Policy authority, precedence and deployment model |
-| Image trust | Ecosystem/security design | Supported signature system and identity policy |
-| Plugin/provider architecture | Demand/security design | At least two concrete external-provider use cases |
-| WSL2 | Model decision | Select exactly one interoperability model first |
-| Per-project overlays | Trust-UX design | Durable trust identity and non-interactive policy |
-| Release SBOM | Conditional | Dependency growth or a compliance/consumer requirement |
-| Snyk | Conditional/external | Dependency growth plus account, token and ownership approval |
-| Issue #69 | Ready now | PR #65 is merged; no remaining dependency |
+| govulncheck pin | **Recurring maintenance** | Deliberately refresh when adopting a newer stable upstream release; never a one-time completion gate |
+| RM-19 reserved-name migration | **Conditionally deferred** | Wake only when a future release proposes reserving a name accepted by a published older release |
+| RM-23 8.3 path alias | **Intentionally deferred** | Keep explicit comma-path rejection; reconsider only on demonstrated user demand |
+| RM-24 Python/uv provider choice | **Decision complete — keep both** | No provider migration; Python provider and uv/uvx remain separate |
+| RM-26 Python global CLI exposure | **Implementation-ready** | Add stateful pipx + `cb expose pipx`; plain pip `/venv/bin` is not globally exposed |
+| RM-29 Windows ARM64 | **Lowest priority / hardware-gated for full support** | Native hosted ARM64 CI may come later; official support requires real Windows-on-Arm + Docker Desktop E2E |
+| RM-30 Authenticode | **Design complete / externally blocked** | Provision real code-signing certificate and protected signing mechanism |
+| RM-31 self-update | **Design complete / implementation-ready** | Implement explicit attestation-verifying transactional update in reviewable slices |
+| RM-34 Cargo expose enhancement | **Intentionally deferred** | Existing expose-all/explicit selection are sufficient; reopen only for concrete unmet use case |
+| Linux/macOS hosts | **Demand-gated** | WSL may factor reusable Linux host code; standalone support needs its own demand and qualification |
+| Enterprise policy | **Design complete / implementation-ready** | Implement machine-owned constraint layer first |
+| Image trust | **Design complete / sequenced** | Implement after enterprise-policy foundation using policy-driven Sigstore/cosign verification |
+| Plugin/provider architecture | **Intentionally deferred** | Reopen only after at least two real integrations cannot fit the declarative model |
+| WSL2 | **Design complete / implementation-ready** | Native WSL frontend using Docker Desktop WSL integration |
+| Per-project overlays | **Design complete / sequenced** | Implement add-only digest-bound trust model after enterprise-policy foundation |
+| Release SBOM | **Conditionally deferred** | Trigger on shipped third-party/runtime dependencies or concrete compliance/consumer demand |
+| Snyk | **Conditionally deferred** | Trigger only for a real coverage gap plus owner/account/token and triage/outage policy |
+| Issue #69 | **Completed** | Superseded by merged implementation; no remaining roadmap dependency |
 
 ## Recurring govulncheck pin maintenance
 
@@ -183,32 +189,15 @@ behavior.
 Likely areas: Windows-specific helpers in `internal/pathmap`, mount assembly in
 `internal/dockerrun`, trace/doctor diagnostics and `docs/windows-paths.md`.
 
-## RM-24 — Decide whether uv replaces the built-in Python provider
+## RM-24 — Python and uv provider decision — completed
 
-No provider replacement should start until a short architecture decision is
-accepted. The present designs are materially different: the legacy Python
-provider owns a per-project `/venv`, shared pip cache and compatibility/global
-fallback, while uv/uvx are independent stateful profiles with a managed global
-tool store.
+Decision accepted: keep both providers. The dedicated Python provider retains
+its existing per-project `/venv`, shared pip cache and compatibility/global
+fallback semantics; uv/uvx remain separate opt-in stateful profiles with their
+own managed tool store. There is no automatic migration or heuristic provider
+selection.
 
-### Decision requirements
-
-The decision must compare at least:
-
-- existing `python`/`pip` command compatibility and project-marker behavior;
-- venv location and persistence, including the no-project compatibility case;
-- lockfile/image identity and offline behavior;
-- package installation semantics and whether existing volumes are reusable;
-- `requirements.txt`, `pyproject.toml`, editable installs and console scripts;
-- environment allowlists and Windows path variables;
-- startup performance, image size and first-run network behavior;
-- downgrade/recovery for existing registries, locks and state backups.
-
-The acceptable outcomes are explicit: keep both providers, make uv opt-in for
-new installs, or migrate the unversioned Python family to uv. “Automatically
-choose whichever works” is not acceptable.
-
-### Requirements if replacement is selected
+### Guardrails if this decision is revisited later
 
 - Versioned profiles must remain stable. Changing an unversioned default must
   use the existing family/default machinery rather than rewriting user tools.
@@ -224,53 +213,49 @@ choose whichever works” is not acceptable.
 Likely areas: provider assembly in `internal/dockerrun`, default registry,
 registry migration, state/backup logic, self-test and Python documentation.
 
-## RM-26 — Direct pip/pipx and generic shared-volume expose
+## RM-26 — pipx global CLI exposure (remaining work)
 
-Implement this as at least two reviewable units: direct Python entry points,
-then a provider-neutral shared-volume primitive. Do not infer arbitrary files
-from every mounted volume.
+The provider-neutral shared-volume primitive shipped in PR #72 as
+`cb expose --shared-file`. The accepted remaining Python scope is narrower:
+plain pip environments are dependency environments and are not a source for
+global exposed shims; pipx is the classic-Python global application store.
 
-### Direct pip/pipx requirements
+### pipx requirements
 
-- Define the supported store(s) and image/profile shapes precisely. A pip
-  environment, pipx home and uv tool store are distinct ownership domains.
-- Discover commands inside the selected locked profile without searching host
-  `PATH` or unrelated container directories.
-- Preserve the source profile's image, state group, mounts, env policy and
-  lock resolution in the generated profile.
+- Add a separate stateful pipx profile with explicit ContainerBin-owned
+  persistent `PIPX_HOME` and `PIPX_BIN_DIR`; do not reuse the Python
+  provider's `/venv`, pip cache, or the uv tool store.
+- `cb expose pipx` discovers and exposes every eligible binary in the managed
+  pipx bin store. `cb expose pipx BINARY...` performs deterministic explicit
+  selection from the same store.
+- Discovery stays inside the selected locked pipx profile and managed bin store;
+  do not search host `PATH`, project venvs, unrelated container directories or
+  other package-manager stores.
+- Preserve the source profile's image, state group, mounts, env policy and lock
+  resolution in generated profiles.
 - Reject missing, ambiguous, non-regular or directory entries. Normalize and
   validate names through the same reserved/case-collision rules as other
   exposed commands.
-- Mark generated profiles with explicit ownership metadata so `cb unexpose` can
-  remove them without treating a similar hand-written profile as managed.
-
-### Generic shared-volume requirements
-
-- The user must name an existing source profile, one of its declared shared
-  volumes and a container-absolute file path beneath that volume's mount.
-  There is no whole-volume search and no host-path mode.
-- Normalize the requested path and prove it remains under the selected mount;
-  reject `..`, mount-root escape, reserved container namespaces and collisions
-  with other declared mounts.
-- Discovery may confirm the file and executable contract, but must not mutate
-  the store, pull an unlocked image or use a different runtime.
-- The generated tool must retain an exact command path and source identity.
-  Runtime failure is preferable to falling back to a same-named executable on
-  container `PATH`.
-- CLI output and `cb inspect` must show where the exposed command came from.
+- Mark generated profiles with explicit ownership metadata so `cb unexpose`
+  removes only proven managed profiles and never a similar hand-written one.
+- Plain pip console scripts under the Python provider's `/venv/bin` are
+  deliberately not eligible for global `cb expose`.
 
 ### Acceptance evidence
 
-- Positive E2E coverage for one direct Python store and one generic custom
-  shared volume on Windows + Docker Desktop.
-- Negative tests for path escape, wrong volume, duplicate/case-colliding name,
-  reserved name, absent file, unlocked image and a custom profile that only
+- Windows + Docker Desktop E2E installs a disposable pipx application, verifies
+  store-wide expose, explicit selection, shim invocation and `cb unexpose`.
+- Negative tests cover absent binary, duplicate/case-colliding name, reserved
+  name, unlocked image, wrong store shape and a hand-written profile that merely
   resembles a generated one.
-- Backup/restore and lock updates preserve generated tools without inventing
+- Backup/restore and lock updates preserve exposed pipx tools without inventing
   new state ownership.
+- README/help/security documentation distinguish project pip dependencies,
+  pipx-managed global applications and the already-supported uv-tool workflow.
 
-Likely areas: `internal/cli` expose/unexpose, registry ownership fields,
-lock-aware discovery and README expose documentation.
+Likely areas: default registry/profile definitions, `internal/cli`
+expose/unexpose, registry ownership fields, lock-aware discovery and expose
+documentation.
 
 ## RM-34 — Enhance Cargo binary exposure
 
@@ -368,8 +353,9 @@ certificate expiry in its
   becomes the input to the final ZIP, checksums and provenance attestations.
 - A signing or verification failure must abort publication. Never publish an
   unsigned fallback under the normal signed asset name.
-- Decide and document whether prereleases are signed and how certificate
-  rotation changes expected publisher identity.
+- Stable and prerelease release artifacts are both signed. Document certificate
+  rotation so old/new expected publisher identities overlap explicitly during
+  the migration window.
 
 ### Acceptance evidence
 
@@ -412,10 +398,10 @@ and [artifact-attestation verification](https://docs.github.com/en/actions/conce
 - Do not treat a hash from the same unverified response as authentication.
   Attestation identity/policy is the authentication step; checksums protect
   packaging and corruption.
-- Decide the verifier dependency explicitly. Bundling a Sigstore verifier,
-  invoking `gh`, or shipping a narrowly scoped verifier have different
-  bootstrap, offline and standard-library implications. No silent “checksum
-  only” fallback is allowed.
+- The initial verifier is external `gh attestation verify`, enforcing the
+  expected repository/workflow/ref and exact downloaded artifact digest.
+  ContainerBin remains standard-library-only. No silent “checksum only” fallback
+  is allowed.
 - If RM-30 has shipped, also verify the expected Authenticode publisher and
   timestamp. Define whether both controls are mandatory or one is a recovery
   policy; do not infer policy from which tool happens to be installed.
@@ -547,24 +533,21 @@ Requirements:
 - Threat-model malicious plugins explicitly: if plugins are fully trusted code,
   say so; do not market process separation as sandboxing.
 
-## WSL2 interoperability model
+## WSL2 interoperability model — native WSL frontend selected
 
-Select exactly one model in an architecture decision before implementation:
+Decision accepted: a WSL invocation uses a native Linux shim/binary inside the
+distribution and Docker Desktop's supported WSL integration. Windows `cb.exe`
+interop and a Windows client talking to a Docker engine exposed by WSL are not
+the supported WSL models.
 
-1. Windows process → Windows `cb.exe` → Docker Desktop (current model).
-2. WSL process → Linux shim/binary → Docker Desktop WSL integration.
-3. Windows `cb.exe` → Docker engine exposed from a WSL distribution.
+Implementation must define native config/shim location, Docker endpoint,
+project identity, named-volume behavior, file permissions, case sensitivity,
+symlinks, stdin/TTY/signals and mixed-invocation rejection. Windows and WSL do
+not share registry/lock/state identity implicitly, and ContainerBin never guesses
+equivalence between Windows paths and `/mnt/<drive>` paths.
 
-Docker documents its supported
-[WSL 2 integration](https://docs.docker.com/desktop/features/wsl/); that does
-not by itself choose ContainerBin's process or path model.
-
-The decision must specify process boundary, config/shim location, Docker
-endpoint, `C:\x` ↔ `/mnt/c/x` mapping, project identity, named-volume sharing,
-file permissions, case sensitivity, symlinks, stdin/TTY/signals and whether a
-Windows and WSL invocation share locks and state. Cross-boundary guessing is
-forbidden. Qualification must include both Windows-filesystem and WSL-
-filesystem projects plus mixed invocation rejection cases.
+Qualification must include both Windows-filesystem and WSL-filesystem projects
+plus mixed invocation rejection cases.
 
 ## Per-project registry overlays
 
@@ -588,8 +571,9 @@ Requirements:
 - Provide `cb inspect`, `cb trust`, `cb untrust` and `cb doctor` visibility,
   with no automatic execution during review. Symlink/reparse and ownership
   checks must follow the Windows path classification.
-- Decide whether overlays may define host mounts or env prefixes at all; the
-  safe initial slice may prohibit those capabilities.
+- The initial overlay capability set excludes `host_mounts`, `env_prefixes`
+  and shared cross-project volumes. Exact `env_names` may be requested and
+  must be shown in the trust summary.
 
 ## Release SBOM
 
@@ -626,97 +610,27 @@ Requirements if adopted:
 - A service outage must follow the documented branch-protection policy; do not
   weaken existing CodeQL, govulncheck, dependency review or Dependabot gates.
 
-## Issue #69 — Unify registry section-header parsing
+## Issue #69 — Unify registry section-header parsing — completed
 
-Issue #69 was originally marked blocked on PR #65. PR #65 is merged, so the
-work is now independent and ready. The defect is semantic drift among
-`upgradeV1Registry`, `SetDefaultVersion`, `RewriteWithoutTools` and
-`defaultSections`; the main `ParseTOML` parser is a fifth consumer of the same
-header grammar.
-
-### Shared helper contract
-
-Add a small helper to `internal/toml` with a result that distinguishes:
-
-1. a valid basic-table header and its whitespace-trimmed inner text;
-2. a line that is not a section header; and
-3. malformed/unsupported header-looking syntax.
-
-An API shaped like
-
-```go
-func ParseSectionHeader(line string) (section string, isHeader bool, err error)
-```
-
-is sufficient; the exact name is not part of the public API. Its behavior must
-be:
-
-- apply the existing quote-aware `StripComment`, then trim whitespace;
-- return `isHeader=false` for blank/comment/key-value lines, including a quoted
-  value containing `#`;
-- accept exactly one basic table header such as `[tools.node]`, including an
-  inline comment after the closing bracket;
-- preserve the inner section text for the registry layer to validate and
-  normalize—`internal/toml` must not learn tool/default naming rules;
-- reject empty headers, missing brackets, extra closing content,
-  `[tools.node] garbage`, nested/extra bracket forms and array-table syntax
-  such as `[[tools.node]]`;
-- return an error for any nonblank line beginning with `[` that is not a valid
-  supported basic-table header. It must never degrade malformed syntax into a
-  normal data line.
-
-### Integration requirements
-
-- Make `ParseTOML` the reference error path and migrate all four line-oriented
-  scanners to the shared helper. There must be one definition of where a
-  supported header ends and an inline comment begins.
-- `upgradeV1Registry` must recognize `[tools.NAME] # comment`, preserve the
-  user's original comment/newline style where practical and never partially
-  migrate a validated profile because its scanner disagreed with `ParseTOML`.
-- `SetDefaultVersion` must recognize commented `[defaults.FAMILY]` headers and
-  update only the exact `version` key in that section. It must not change a
-  similarly prefixed family or a commented/string value.
-- `RewriteWithoutTools` must retain its PR #65 quote-aware behavior while using
-  the shared helper. A malformed source is rejected before writing, and the
-  rewritten result is parsed before atomic replacement.
-- `defaultSections` consumes the compiled-in `DefaultTOML`. Since malformed
-  built-in data is a programmer invariant violation, it may propagate an
-  error to initialization or panic with a precise invariant message; it must
-  not silently return partial default sections.
-- Use the helper for the registry parser itself. Consider the lockfile parser
-  only as a separate, low-risk follow-up if it uses the identical basic-table
-  subset; do not broaden #69 into a general TOML parser rewrite.
-
-### Regression matrix
-
-Add table-driven helper tests plus caller-specific regression tests for:
-
-- `[tools.node]`, leading/trailing whitespace and CRLF input;
-- `[tools.node] # note` and `[defaults.node] # note`;
-- `value = "literal # value" # real comment` returning non-header;
-- `[[tools.node]]`;
-- `[tools.node`, `tools.node]`, `[]`, `[[ ]]`, `[tools.node]]`,
-  `[tools.node] trailing` and `[tools.node] # comment` followed by another
-  valid section;
-- exact/case-normalized tool and family matching without prefix collisions;
-- v1 migration, default update, tool removal and default-section extraction
-  all agreeing on the same commented headers;
-- malformed input producing no file change.
-
-Completion requires the normal full validation gate and a focused diff showing
-that scanner behavior—not the supported TOML language—changed.
+Completed by PR #71 and issue #69 is closed. The shared section-header parsing
+work is retained in repository history and tests; there is no remaining
+implementation task in this roadmap document.
 
 ## Recommended implementation order
 
-1. Implement #69 as a small independent correctness PR.
-2. Split RM-26 into direct Python discovery and generic shared-volume expose.
-3. Scope RM-34's concrete Cargo discovery/selection behavior, and resolve
-   product/security decisions for RM-24, enterprise policy, image trust, WSL2
-   and overlays before code.
-4. Implement RM-29 and RM-30 only when hardware/certificate prerequisites are
-   available; design RM-31 against their final artifact contracts.
-5. Keep RM-19, RM-23, new hosts, plugins, SBOM and Snyk dormant until their
-   stated triggers occur.
+1. RM-26 pipx support.
+2. Enterprise-policy foundation.
+3. Per-project overlay trust foundation.
+4. Signed-registry enterprise policy.
+5. Image trust at lock time.
+6. RM-31 transactional self-update.
+7. WSL2 native frontend.
+8. RM-30 Authenticode only after certificate/protected-signing prerequisites exist.
+9. RM-29 Windows ARM64 last; do not delay higher-value work for it.
 
-This ordering is advisory. The live issue, merged state and open PR coverage
-must be checked again before every implementation unit.
+RM-19, RM-23, RM-34, standalone Linux/macOS, plugins, SBOM and Snyk are dormant
+until their documented triggers occur. The govulncheck pin is recurring
+maintenance.
+
+This ordering is advisory. Re-read the live issue, decision ledger, merged state
+and open PR coverage before every implementation unit.
