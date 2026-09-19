@@ -20,6 +20,12 @@ Inside the boundary (whoever controls these controls execution):
   need ContainerBin to attack you.
 - Docker Desktop itself, and every image you configure or `docker pull`.
 
+An optional administrator-owned machine policy sits above this user-controlled
+boundary. Its fixed path, owner and permissions are validated before use. It
+can require locking and restrict image origins, but schema 1 does not constrain
+mounts, environment allowlists or commands and does not authenticate registry
+or image signatures. See [enterprise machine policy](enterprise-policy.md).
+
 Treat the registry and lockfile like your PowerShell `$PROFILE`: yours,
 readable, and dangerous to let others edit.
 
@@ -43,6 +49,11 @@ readable, and dangerous to let others edit.
 - **Fail-closed configuration.** Unknown registry keys, duplicate tool
   sections, newer schema versions, incomplete lock entries, and
   registry-image-not-in-lock all refuse to run rather than guess.
+- **Machine policy cannot be redirected or weakened.** A present enterprise
+  policy is loaded only from the fixed OS path, requires administrator/root
+  ownership and restrictive permissions, and authorizes the already-resolved
+  image request before pulls, image inspection or execution. Missing means
+  unmanaged; unreadable, malformed, expired or unsupported means stop.
 - **Reserved shim names.** Tool names that would collide with `cb` itself or
   Windows device names (`con`, `nul`, `com1`, …) are rejected at validation,
   as are versioned management-binary names beginning with `cb-v` plus a digit.

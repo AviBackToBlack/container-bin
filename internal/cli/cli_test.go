@@ -10,7 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AviBackToBlack/container-bin/internal/lockfile"
 	"github.com/AviBackToBlack/container-bin/internal/pathmap"
+	"github.com/AviBackToBlack/container-bin/internal/policy"
 	"github.com/AviBackToBlack/container-bin/internal/registry"
 )
 
@@ -23,11 +25,12 @@ func TestAddRequiresExactShape(t *testing.T) {
 		{"--image", "example/demo:1", "demo"},
 		{"demo", "--provider", "stateless"},
 		{"demo", "--image", "example/demo:1", "extra"},
+		{"demo", "--image", "example/demo:1", "--local", "extra"},
 	} {
 		err := add(registry.Default(), filepath.Join(t.TempDir(), "container-bin.toml"), args, func(registry.Registry) error {
 			t.Fatal("installer called for invalid arguments")
 			return nil
-		})
+		}, policy.Policy{})
 		if err == nil || !strings.Contains(err.Error(), "usage: cb add TOOL --image IMAGE") {
 			t.Fatalf("Add(%v) error = %v, want usage error", args, err)
 		}
@@ -51,7 +54,7 @@ func TestAddRejectsUnsafeOrExistingNames(t *testing.T) {
 		err := add(registry.Default(), path, tt.args, func(registry.Registry) error {
 			t.Fatal("installer called for rejected profile")
 			return nil
-		})
+		}, policy.Policy{})
 		if err == nil || !strings.Contains(err.Error(), tt.want) {
 			t.Fatalf("Add(%v) error = %v, want substring %q", tt.args, err, tt.want)
 		}
@@ -69,7 +72,7 @@ func TestAddCreatesMinimalProfileAndInstalls(t *testing.T) {
 		return add(registry.Default(), path, []string{"Demo_Tool", "--image", "registry.example/dev/demo:1.2.3"}, func(got registry.Registry) error {
 			installed = got
 			return nil
-		})
+		}, policy.Policy{})
 	})
 	if captureErr != nil {
 		t.Fatal(captureErr)
@@ -109,6 +112,105 @@ func TestAddCreatesMinimalProfileAndInstalls(t *testing.T) {
 	}
 }
 
+func TestAddPolicyDenialDoesNotMutateRegistry(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "container-bin.toml")
+	p := policy.Policy{SchemaVersion: 1, AllowedRepositories: []string{"ghcr.io/acme"}}
+	err := add(registry.Default(), path, []string{"demo", "--image", "ghcr.io/other/demo:1"}, func(registry.Registry) error {
+		t.Fatal("installer called for policy-denied profile")
+		return nil
+	}, p)
+	if err == nil || !strings.Contains(err.Error(), "[policy.repository_denied]") {
+		t.Fatalf("add policy error = %v", err)
+	}
+	if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("policy-denied add mutated registry: %v", statErr)
+	}
+}
+
+func TestAddLocalIntentUsesLocalPolicyAndReportsLocalLockCommand(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "container-bin.toml")
+	p := policy.Policy{SchemaVersion: 1, AllowLocalImages: true, AllowedRepositories: []string{"ghcr.io/acme"}}
+	out, err := captureStdout(func() error {
+		return add(registry.Default(), path, []string{"demo", "--image", "local/demo:dev", "--local"}, func(registry.Registry) error { return nil }, p)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "run `cb lock --local demo`") {
+		t.Fatalf("local add did not report explicit local lock command:\n%s", out)
+	}
+
+	deniedPath := filepath.Join(t.TempDir(), "container-bin.toml")
+	p.AllowLocalImages = false
+	err = add(registry.Default(), deniedPath, []string{"demo", "--image", "ghcr.io/acme/demo:dev", "--local"}, func(registry.Registry) error {
+		t.Fatal("installer called for policy-denied local profile")
+		return nil
+	}, p)
+	if err == nil || !strings.Contains(err.Error(), "[policy.local_image_denied]") {
+		t.Fatalf("local add policy error = %v", err)
+	}
+	if _, statErr := os.Stat(deniedPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("policy-denied local add mutated registry: %v", statErr)
+	}
+}
+
+func TestAuthorizeRegistrySnapshot(t *testing.T) {
+	reg, err := registry.ParseTOML("schema_version = 1\n[tools.demo]\nimage = \"ghcr.io/acme/demo:1\"\nprovider = \"stateless\"\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := policy.Policy{SchemaVersion: 1, RequireLock: true, AllowedRepositories: []string{"ghcr.io/acme"}}
+	if err := authorizeRegistrySnapshot(reg, nil, p); err == nil || !strings.Contains(err.Error(), "[policy.lock_required]") {
+		t.Fatalf("missing restored lock error = %v", err)
+	}
+	lf := &lockfile.LockFile{Version: 1, Images: map[string]lockfile.LockEntry{
+		"ghcr.io/acme/demo:1": {
+			Configured: "ghcr.io/acme/demo:1",
+			Resolved:   "ghcr.io/acme/demo@sha256:" + strings.Repeat("a", 64),
+			Digest:     "sha256:" + strings.Repeat("a", 64),
+		},
+	}}
+	if err := authorizeRegistrySnapshot(reg, lf, p); err != nil {
+		t.Fatalf("authorized restored snapshot rejected: %v", err)
+	}
+	entry := lf.Images["ghcr.io/acme/demo:1"]
+	entry.Resolved = "evil.example/demo@sha256:" + strings.Repeat("b", 64)
+	lf.Images["ghcr.io/acme/demo:1"] = entry
+	if err := authorizeRegistrySnapshot(reg, lf, p); err == nil || !strings.Contains(err.Error(), "resolved lock reference") {
+		t.Fatalf("foreign resolved repository error = %v", err)
+	}
+	entry.Resolved = "ghcr.io/acme/demo@sha256:" + strings.Repeat("a", 64)
+	lf.Images["ghcr.io/acme/demo:1"] = entry
+	p.AllowedRepositories = []string{"ghcr.io/other"}
+	if err := authorizeRegistrySnapshot(reg, lf, p); err == nil || !strings.Contains(err.Error(), "[policy.repository_denied]") {
+		t.Fatalf("disallowed restored repository error = %v", err)
+	}
+}
+
+func TestBulkLockOperationsPreflightAllPolicyTargetsBeforeDocker(t *testing.T) {
+	reg, err := registry.ParseTOML("schema_version = 1\n[tools.allowed]\nimage = \"ghcr.io/acme/allowed:1\"\nprovider = \"stateless\"\n[tools.denied]\nimage = \"ghcr.io/zzz/denied:1\"\nprovider = \"stateless\"\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// If either operation reaches Docker for the alphabetically first allowed
+	// image, the empty PATH produces an executable-not-found error instead of
+	// the expected policy denial for the later target.
+	t.Setenv("PATH", t.TempDir())
+	p := policy.Policy{SchemaVersion: 1, AllowedRepositories: []string{"ghcr.io/acme"}}
+	cfgPath := filepath.Join(t.TempDir(), "container-bin.toml")
+	for name, run := range map[string]func() error{
+		"lock":       func() error { return Lock(reg, cfgPath, nil, p) },
+		"update_all": func() error { return Update(reg, cfgPath, []string{"--all"}, p) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := run()
+			if err == nil || !strings.Contains(err.Error(), "[policy.repository_denied]") {
+				t.Fatalf("bulk operation error = %v, want policy denial before Docker", err)
+			}
+		})
+	}
+}
+
 func TestAddReportsIncompleteExistingLock(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "container-bin.toml")
@@ -119,7 +221,7 @@ func TestAddReportsIncompleteExistingLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, captureErr := captureStdout(func() error {
-		return add(registry.Default(), path, []string{"demo", "--image", "example/demo:1"}, func(registry.Registry) error { return nil })
+		return add(registry.Default(), path, []string{"demo", "--image", "example/demo:1"}, func(registry.Registry) error { return nil }, policy.Policy{})
 	})
 	if captureErr != nil {
 		t.Fatal(captureErr)
@@ -133,7 +235,7 @@ func TestAddInstallerFailureLeavesValidRegistry(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "container-bin.toml")
 	wantErr := errors.New("shim directory denied")
-	err := add(registry.Default(), path, []string{"demo", "--image", "example/demo:1"}, func(registry.Registry) error { return wantErr })
+	err := add(registry.Default(), path, []string{"demo", "--image", "example/demo:1"}, func(registry.Registry) error { return wantErr }, policy.Policy{})
 	if !errors.Is(err, wantErr) || !strings.Contains(err.Error(), "profile \"demo\" was added") || !strings.Contains(err.Error(), "cb install") {
 		t.Fatalf("installer error = %v", err)
 	}
@@ -152,7 +254,7 @@ func TestAddInstallerFailureLeavesValidRegistry(t *testing.T) {
 
 func TestDefaultAliasesAreVisibleInManagementCommands(t *testing.T) {
 	reg := registry.Default()
-	out, err := captureStdout(func() error { return Trace(reg, []string{"node", "--version"}) })
+	out, err := captureStdout(func() error { return Trace(reg, []string{"node", "--version"}, policy.Policy{}) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +263,7 @@ func TestDefaultAliasesAreVisibleInManagementCommands(t *testing.T) {
 			t.Fatalf("trace output missing %q:\n%s", want, out)
 		}
 	}
-	out, err = captureStdout(func() error { return Default(reg, "unused", nil) })
+	out, err = captureStdout(func() error { return Default(reg, "unused", nil, policy.Policy{}) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,6 +352,57 @@ func TestParseLockArgs(t *testing.T) {
 	}
 }
 
+func TestCheckLockReportsEveryStatusAfterPolicyPreflight(t *testing.T) {
+	reg := registry.Registry{Tools: map[string]registry.Tool{
+		"present": {Image: "ghcr.io/acme/present:1"},
+		"absent":  {Image: "ghcr.io/acme/absent:1"},
+		"denied":  {Image: "ghcr.io/other/denied:1"},
+		"missing": {Image: "ghcr.io/acme/missing:1"},
+	}}
+	digest := "sha256:" + strings.Repeat("a", 64)
+	path := filepath.Join(t.TempDir(), "container-bin.lock")
+	lf := &lockfile.LockFile{Version: 1, Images: map[string]lockfile.LockEntry{
+		"ghcr.io/acme/present:1": {Configured: "ghcr.io/acme/present:1", Resolved: "ghcr.io/acme/present@" + digest, Digest: digest},
+		"ghcr.io/acme/absent:1":  {Configured: "ghcr.io/acme/absent:1", Resolved: "ghcr.io/acme/absent@" + digest, Digest: digest},
+		"ghcr.io/other/denied:1": {Configured: "ghcr.io/other/denied:1", Resolved: "ghcr.io/other/denied@" + digest, Digest: digest},
+	}}
+	if err := lockfile.Write(path, lf); err != nil {
+		t.Fatal(err)
+	}
+	var inspected []string
+	p := policy.Policy{SchemaVersion: 1, AllowedRepositories: []string{"ghcr.io/acme"}}
+	var checkErr error
+	out, captureErr := captureStdout(func() error {
+		checkErr = checkLock(reg, path, p, func(resolved string) error {
+			inspected = append(inspected, resolved)
+			if strings.Contains(resolved, "/absent@") {
+				return errors.New("not present")
+			}
+			return nil
+		})
+		return nil
+	})
+	if captureErr != nil {
+		t.Fatal(captureErr)
+	}
+	if checkErr == nil || !strings.Contains(checkErr.Error(), "3 image(s)") {
+		t.Fatalf("checkLock error = %v, want three failures", checkErr)
+	}
+	for _, want := range []string{"ABSENT   ghcr.io/acme/absent:1", "MISSING  ghcr.io/acme/missing:1", "OK       ghcr.io/acme/present:1", "DENIED   ghcr.io/other/denied:1"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("check output missing %q:\n%s", want, out)
+		}
+	}
+	if len(inspected) != 2 {
+		t.Fatalf("inspected refs = %v, want only two authorized refs", inspected)
+	}
+	for _, ref := range inspected {
+		if strings.Contains(ref, "/denied@") {
+			t.Fatalf("policy-denied ref reached Docker inspection: %s", ref)
+		}
+	}
+}
+
 func TestParseUpdateArgs(t *testing.T) {
 	for _, tt := range []struct {
 		args       []string
@@ -282,7 +435,7 @@ func TestParseUpdateArgs(t *testing.T) {
 
 func TestExposeRequiresSourceTool(t *testing.T) {
 	reg := registry.Default()
-	if err := Expose(reg, filepath.Join(t.TempDir(), "container-bin.toml"), nil); err == nil {
+	if err := Expose(reg, filepath.Join(t.TempDir(), "container-bin.toml"), nil, policy.Policy{}); err == nil {
 		t.Fatal("expected usage error for empty args")
 	} else if !strings.Contains(err.Error(), "usage: cb expose TOOL") {
 		t.Fatalf("unexpected error message: %v", err)
@@ -296,7 +449,7 @@ func TestExposeRejectsFlagShapedArgumentsBeforeDocker(t *testing.T) {
 		{"go", "--shared-file", "gobin", "/go/bin/stringer"},
 		{"go", "-h"},
 	} {
-		if err := Expose(reg, filepath.Join(t.TempDir(), "container-bin.toml"), args); err == nil || !strings.Contains(err.Error(), "usage: cb expose TOOL") {
+		if err := Expose(reg, filepath.Join(t.TempDir(), "container-bin.toml"), args, policy.Policy{}); err == nil || !strings.Contains(err.Error(), "usage: cb expose TOOL") {
 			t.Fatalf("Expose(%v) error = %v, want usage", args, err)
 		}
 	}
@@ -304,7 +457,7 @@ func TestExposeRejectsFlagShapedArgumentsBeforeDocker(t *testing.T) {
 
 func TestExposeRejectsUnknownSource(t *testing.T) {
 	reg := registry.Default()
-	if err := Expose(reg, filepath.Join(t.TempDir(), "container-bin.toml"), []string{"notarealtool"}); err == nil {
+	if err := Expose(reg, filepath.Join(t.TempDir(), "container-bin.toml"), []string{"notarealtool"}, policy.Policy{}); err == nil {
 		t.Fatal("expected not-found error")
 	} else if !strings.Contains(err.Error(), `tool "notarealtool" not found`) {
 		t.Fatalf("unexpected error message: %v", err)
@@ -317,7 +470,7 @@ func TestExposeRejectsUnknownSource(t *testing.T) {
 // than an empty string.
 func TestExposeRejectsStatelessTool(t *testing.T) {
 	reg := registry.Default()
-	err := Expose(reg, filepath.Join(t.TempDir(), "container-bin.toml"), []string{"terraform"})
+	err := Expose(reg, filepath.Join(t.TempDir(), "container-bin.toml"), []string{"terraform"}, policy.Policy{})
 	if err == nil {
 		t.Fatal("expected error for stateless source tool")
 	}
@@ -344,13 +497,13 @@ provider = "stateless"
 		t.Fatal(err)
 	}
 	cfgPath := filepath.Join(t.TempDir(), "container-bin.toml")
-	if err := Expose(reg, cfgPath, []string{"--shared-file", "acme"}); err == nil || !strings.Contains(err.Error(), "usage: cb expose --shared-file") {
+	if err := Expose(reg, cfgPath, []string{"--shared-file", "acme"}, policy.Policy{}); err == nil || !strings.Contains(err.Error(), "usage: cb expose --shared-file") {
 		t.Fatalf("short shared-file args error = %v", err)
 	}
-	if err := Expose(reg, cfgPath, []string{"--shared-file", "acme-lint", "tools", "/opt/acme/tool"}); err == nil || !strings.Contains(err.Error(), "not a stateful profile") {
+	if err := Expose(reg, cfgPath, []string{"--shared-file", "acme-lint", "tools", "/opt/acme/tool"}, policy.Policy{}); err == nil || !strings.Contains(err.Error(), "not a stateful profile") {
 		t.Fatalf("stateless shared-file source error = %v", err)
 	}
-	if err := Expose(reg, cfgPath, []string{"--shared-file", "acme", "tools", "/opt/acme/bin/acme-lint"}); err == nil || !strings.Contains(err.Error(), "already exists") {
+	if err := Expose(reg, cfgPath, []string{"--shared-file", "acme", "tools", "/opt/acme/bin/acme-lint"}, policy.Policy{}); err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("shared-file collision error = %v", err)
 	}
 }
@@ -984,7 +1137,7 @@ host_mounts = ["%USERPROFILE%\\.claude:/root/.claude:ro"]
 		t.Fatalf("parse registry: %v", err)
 	}
 
-	out, err := captureStdout(func() error { return Inspect(reg, []string{"demo"}) })
+	out, err := captureStdout(func() error { return Inspect(reg, []string{"demo"}, policy.Policy{}) })
 	if err != nil {
 		t.Fatalf("capture: %v", err)
 	}
@@ -1024,7 +1177,7 @@ host_mounts = ["%USERPROFILE%/.claude:/root/.claude:ro"]
 		t.Fatal(err)
 	}
 
-	out, err := captureStdout(func() error { return Trace(reg, []string{"demo"}) })
+	out, err := captureStdout(func() error { return Trace(reg, []string{"demo"}, policy.Policy{}) })
 	if err != nil {
 		t.Fatalf("capture: %v", err)
 	}
@@ -1060,7 +1213,7 @@ host_mounts = ["%USERPROFILE%/.claude:/root/.claude:ro"]
 		t.Fatalf("parse registry: %v", err)
 	}
 
-	out, err := captureStdout(func() error { return Trace(reg, []string{"demo"}) })
+	out, err := captureStdout(func() error { return Trace(reg, []string{"demo"}, policy.Policy{}) })
 	if err != nil {
 		t.Fatalf("capture: %v", err)
 	}
@@ -1095,7 +1248,7 @@ host_mounts = ["%USERPROFILE%/does-not-exist:/root/missing:ro"]
 		t.Fatalf("parse registry: %v", err)
 	}
 
-	out, err := captureStdout(func() error { return Trace(reg, []string{"demo"}) })
+	out, err := captureStdout(func() error { return Trace(reg, []string{"demo"}, policy.Policy{}) })
 	if err != nil {
 		t.Fatalf("capture: %v", err)
 	}
@@ -1120,7 +1273,7 @@ provider = "stateless"
 		t.Fatalf("parse registry: %v", err)
 	}
 
-	out, err := captureStdout(func() error { return Inspect(reg, []string{"demo"}) })
+	out, err := captureStdout(func() error { return Inspect(reg, []string{"demo"}, policy.Policy{}) })
 	if err != nil {
 		t.Fatalf("capture: %v", err)
 	}
@@ -1148,7 +1301,7 @@ shared_volumes = ["cache:/root/.cache"]
 		t.Fatalf("parse registry: %v", err)
 	}
 
-	out, err := captureStdout(func() error { return Inspect(reg, []string{"demo"}) })
+	out, err := captureStdout(func() error { return Inspect(reg, []string{"demo"}, policy.Policy{}) })
 	if err != nil {
 		t.Fatalf("capture: %v", err)
 	}
@@ -1188,7 +1341,7 @@ provider = "stateless"
 		t.Fatalf("parse registry: %v", err)
 	}
 
-	out, err := captureStdout(func() error { return Trace(reg, []string{"demo"}) })
+	out, err := captureStdout(func() error { return Trace(reg, []string{"demo"}, policy.Policy{}) })
 	if err != nil {
 		t.Fatalf("capture: %v", err)
 	}
@@ -1222,7 +1375,7 @@ shared_volumes = ["cache:/root/.cache"]
 		t.Fatalf("parse registry: %v", err)
 	}
 
-	out, err := captureStdout(func() error { return Trace(reg, []string{"demo"}) })
+	out, err := captureStdout(func() error { return Trace(reg, []string{"demo"}, policy.Policy{}) })
 	if err != nil {
 		t.Fatalf("capture: %v", err)
 	}
@@ -1268,7 +1421,7 @@ host_mounts = ["%USERPROFILE%/.claude:/root/.claude:ro"]
 		t.Fatalf("parse registry: %v", err)
 	}
 
-	out, err := captureStdout(func() error { return Trace(reg, []string{"demo"}) })
+	out, err := captureStdout(func() error { return Trace(reg, []string{"demo"}, policy.Policy{}) })
 	if err != nil {
 		t.Fatalf("capture: %v", err)
 	}
