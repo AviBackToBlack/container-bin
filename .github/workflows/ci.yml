@@ -76,6 +76,69 @@ jobs:
           if ($v -notmatch '^container-bin \S+') { exit 1 }
         shell: pwsh
 
+  test-windows-arm64:
+    name: Test and build (Windows ARM64)
+    runs-on: windows-11-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: Verify native ARM64 runner
+        shell: pwsh
+        run: |
+          $runtimeArch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+          $goArch = (go env GOARCH).Trim()
+          Write-Host "runtime architecture: $runtimeArch"
+          Write-Host "Go architecture: $goArch"
+          if ($runtimeArch -ne 'Arm64' -or $goArch -ne 'arm64') {
+            throw "expected native Windows ARM64, got runtime=$runtimeArch go=$goArch"
+          }
+      - name: go test
+        run: go test -v ./...
+      - name: Build release-style cb.exe
+        run: go build -trimpath -buildvcs=false -ldflags "-s -w -X main.version=v0.0.0-arm64-citest" -o cb.exe .
+      - name: Smoke-test native management and shim dispatch
+        shell: pwsh
+        run: |
+          $versionOutput = .\cb.exe version
+          Write-Host $versionOutput
+          if ($versionOutput -ne 'container-bin v0.0.0-arm64-citest') {
+            throw "release-style version injection failed: $versionOutput"
+          }
+
+          Copy-Item -LiteralPath .\cb.exe -Destination .\jq.exe
+          $stubDir = Join-Path $env:RUNNER_TEMP 'container-bin-docker-stub'
+          $stubLog = Join-Path $stubDir 'argv.txt'
+          New-Item -ItemType Directory -Path $stubDir -Force | Out-Null
+          @'
+          @echo off
+          > "%CB_DOCKER_STUB_LOG%" echo %*
+          exit /b 42
+          '@ | Set-Content -LiteralPath (Join-Path $stubDir 'docker.cmd') -Encoding Ascii
+          $env:CB_DOCKER_STUB_LOG = $stubLog
+          $env:PATH = "$stubDir;$env:PATH"
+
+          & .\jq.exe --version
+          $shimExit = $LASTEXITCODE
+          $dockerArgs = Get-Content -LiteralPath $stubLog -Raw
+          Write-Host "docker stub argv: $dockerArgs"
+          if ($shimExit -ne 42) {
+            throw "shim did not preserve docker exit 42: got $shimExit"
+          }
+          if ($dockerArgs -notmatch '^run --rm -i ' -or
+              $dockerArgs -notmatch [regex]::Escape('ghcr.io/jqlang/jq:latest') -or
+              $dockerArgs -notmatch ' --version\s*$') {
+            throw "shim did not dispatch the expected jq docker command: $dockerArgs"
+          }
+          # The expected shim exit was 42. Clear the native-command status only
+          # after asserting it so pwsh reports this validation step as passed.
+          exit 0
+
   govulncheck:
     name: govulncheck
     runs-on: ubuntu-latest
