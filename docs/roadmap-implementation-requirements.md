@@ -189,32 +189,15 @@ behavior.
 Likely areas: Windows-specific helpers in `internal/pathmap`, mount assembly in
 `internal/dockerrun`, trace/doctor diagnostics and `docs/windows-paths.md`.
 
-## RM-24 — Decide whether uv replaces the built-in Python provider
+## RM-24 — Python and uv provider decision — completed
 
-No provider replacement should start until a short architecture decision is
-accepted. The present designs are materially different: the legacy Python
-provider owns a per-project `/venv`, shared pip cache and compatibility/global
-fallback, while uv/uvx are independent stateful profiles with a managed global
-tool store.
+Decision accepted: keep both providers. The dedicated Python provider retains
+its existing per-project `/venv`, shared pip cache and compatibility/global
+fallback semantics; uv/uvx remain separate opt-in stateful profiles with their
+own managed tool store. There is no automatic migration or heuristic provider
+selection.
 
-### Decision requirements
-
-The decision must compare at least:
-
-- existing `python`/`pip` command compatibility and project-marker behavior;
-- venv location and persistence, including the no-project compatibility case;
-- lockfile/image identity and offline behavior;
-- package installation semantics and whether existing volumes are reusable;
-- `requirements.txt`, `pyproject.toml`, editable installs and console scripts;
-- environment allowlists and Windows path variables;
-- startup performance, image size and first-run network behavior;
-- downgrade/recovery for existing registries, locks and state backups.
-
-The acceptable outcomes are explicit: keep both providers, make uv opt-in for
-new installs, or migrate the unversioned Python family to uv. “Automatically
-choose whichever works” is not acceptable.
-
-### Requirements if replacement is selected
+### Guardrails if this decision is revisited later
 
 - Versioned profiles must remain stable. Changing an unversioned default must
   use the existing family/default machinery rather than rewriting user tools.
@@ -370,8 +353,9 @@ certificate expiry in its
   becomes the input to the final ZIP, checksums and provenance attestations.
 - A signing or verification failure must abort publication. Never publish an
   unsigned fallback under the normal signed asset name.
-- Decide and document whether prereleases are signed and how certificate
-  rotation changes expected publisher identity.
+- Stable and prerelease release artifacts are both signed. Document certificate
+  rotation so old/new expected publisher identities overlap explicitly during
+  the migration window.
 
 ### Acceptance evidence
 
@@ -414,10 +398,10 @@ and [artifact-attestation verification](https://docs.github.com/en/actions/conce
 - Do not treat a hash from the same unverified response as authentication.
   Attestation identity/policy is the authentication step; checksums protect
   packaging and corruption.
-- Decide the verifier dependency explicitly. Bundling a Sigstore verifier,
-  invoking `gh`, or shipping a narrowly scoped verifier have different
-  bootstrap, offline and standard-library implications. No silent “checksum
-  only” fallback is allowed.
+- The initial verifier is external `gh attestation verify`, enforcing the
+  expected repository/workflow/ref and exact downloaded artifact digest.
+  ContainerBin remains standard-library-only. No silent “checksum only” fallback
+  is allowed.
 - If RM-30 has shipped, also verify the expected Authenticode publisher and
   timestamp. Define whether both controls are mandatory or one is a recovery
   policy; do not infer policy from which tool happens to be installed.
@@ -549,24 +533,21 @@ Requirements:
 - Threat-model malicious plugins explicitly: if plugins are fully trusted code,
   say so; do not market process separation as sandboxing.
 
-## WSL2 interoperability model
+## WSL2 interoperability model — native WSL frontend selected
 
-Select exactly one model in an architecture decision before implementation:
+Decision accepted: a WSL invocation uses a native Linux shim/binary inside the
+distribution and Docker Desktop's supported WSL integration. Windows `cb.exe`
+interop and a Windows client talking to a Docker engine exposed by WSL are not
+the supported WSL models.
 
-1. Windows process → Windows `cb.exe` → Docker Desktop (current model).
-2. WSL process → Linux shim/binary → Docker Desktop WSL integration.
-3. Windows `cb.exe` → Docker engine exposed from a WSL distribution.
+Implementation must define native config/shim location, Docker endpoint,
+project identity, named-volume behavior, file permissions, case sensitivity,
+symlinks, stdin/TTY/signals and mixed-invocation rejection. Windows and WSL do
+not share registry/lock/state identity implicitly, and ContainerBin never guesses
+equivalence between Windows paths and `/mnt/<drive>` paths.
 
-Docker documents its supported
-[WSL 2 integration](https://docs.docker.com/desktop/features/wsl/); that does
-not by itself choose ContainerBin's process or path model.
-
-The decision must specify process boundary, config/shim location, Docker
-endpoint, `C:\x` ↔ `/mnt/c/x` mapping, project identity, named-volume sharing,
-file permissions, case sensitivity, symlinks, stdin/TTY/signals and whether a
-Windows and WSL invocation share locks and state. Cross-boundary guessing is
-forbidden. Qualification must include both Windows-filesystem and WSL-
-filesystem projects plus mixed invocation rejection cases.
+Qualification must include both Windows-filesystem and WSL-filesystem projects
+plus mixed invocation rejection cases.
 
 ## Per-project registry overlays
 
@@ -590,8 +571,9 @@ Requirements:
 - Provide `cb inspect`, `cb trust`, `cb untrust` and `cb doctor` visibility,
   with no automatic execution during review. Symlink/reparse and ownership
   checks must follow the Windows path classification.
-- Decide whether overlays may define host mounts or env prefixes at all; the
-  safe initial slice may prohibit those capabilities.
+- The initial overlay capability set excludes `host_mounts`, `env_prefixes`
+  and shared cross-project volumes. Exact `env_names` may be requested and
+  must be shown in the trust summary.
 
 ## Release SBOM
 
