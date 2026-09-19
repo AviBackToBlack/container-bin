@@ -230,53 +230,49 @@ choose whichever works” is not acceptable.
 Likely areas: provider assembly in `internal/dockerrun`, default registry,
 registry migration, state/backup logic, self-test and Python documentation.
 
-## RM-26 — Direct pip/pipx and generic shared-volume expose
+## RM-26 — pipx global CLI exposure (remaining work)
 
-Implement this as at least two reviewable units: direct Python entry points,
-then a provider-neutral shared-volume primitive. Do not infer arbitrary files
-from every mounted volume.
+The provider-neutral shared-volume primitive shipped in PR #72 as
+`cb expose --shared-file`. The accepted remaining Python scope is narrower:
+plain pip environments are dependency environments and are not a source for
+global exposed shims; pipx is the classic-Python global application store.
 
-### Direct pip/pipx requirements
+### pipx requirements
 
-- Define the supported store(s) and image/profile shapes precisely. A pip
-  environment, pipx home and uv tool store are distinct ownership domains.
-- Discover commands inside the selected locked profile without searching host
-  `PATH` or unrelated container directories.
-- Preserve the source profile's image, state group, mounts, env policy and
-  lock resolution in the generated profile.
+- Add a separate stateful pipx profile with explicit ContainerBin-owned
+  persistent `PIPX_HOME` and `PIPX_BIN_DIR`; do not reuse the Python
+  provider's `/venv`, pip cache, or the uv tool store.
+- `cb expose pipx` discovers and exposes every eligible binary in the managed
+  pipx bin store. `cb expose pipx BINARY...` performs deterministic explicit
+  selection from the same store.
+- Discovery stays inside the selected locked pipx profile and managed bin store;
+  do not search host `PATH`, project venvs, unrelated container directories or
+  other package-manager stores.
+- Preserve the source profile's image, state group, mounts, env policy and lock
+  resolution in generated profiles.
 - Reject missing, ambiguous, non-regular or directory entries. Normalize and
   validate names through the same reserved/case-collision rules as other
   exposed commands.
-- Mark generated profiles with explicit ownership metadata so `cb unexpose` can
-  remove them without treating a similar hand-written profile as managed.
-
-### Generic shared-volume requirements
-
-- The user must name an existing source profile, one of its declared shared
-  volumes and a container-absolute file path beneath that volume's mount.
-  There is no whole-volume search and no host-path mode.
-- Normalize the requested path and prove it remains under the selected mount;
-  reject `..`, mount-root escape, reserved container namespaces and collisions
-  with other declared mounts.
-- Discovery may confirm the file and executable contract, but must not mutate
-  the store, pull an unlocked image or use a different runtime.
-- The generated tool must retain an exact command path and source identity.
-  Runtime failure is preferable to falling back to a same-named executable on
-  container `PATH`.
-- CLI output and `cb inspect` must show where the exposed command came from.
+- Mark generated profiles with explicit ownership metadata so `cb unexpose`
+  removes only proven managed profiles and never a similar hand-written one.
+- Plain pip console scripts under the Python provider's `/venv/bin` are
+  deliberately not eligible for global `cb expose`.
 
 ### Acceptance evidence
 
-- Positive E2E coverage for one direct Python store and one generic custom
-  shared volume on Windows + Docker Desktop.
-- Negative tests for path escape, wrong volume, duplicate/case-colliding name,
-  reserved name, absent file, unlocked image and a custom profile that only
+- Windows + Docker Desktop E2E installs a disposable pipx application, verifies
+  store-wide expose, explicit selection, shim invocation and `cb unexpose`.
+- Negative tests cover absent binary, duplicate/case-colliding name, reserved
+  name, unlocked image, wrong store shape and a hand-written profile that merely
   resembles a generated one.
-- Backup/restore and lock updates preserve generated tools without inventing
+- Backup/restore and lock updates preserve exposed pipx tools without inventing
   new state ownership.
+- README/help/security documentation distinguish project pip dependencies,
+  pipx-managed global applications and the already-supported uv-tool workflow.
 
-Likely areas: `internal/cli` expose/unexpose, registry ownership fields,
-lock-aware discovery and README expose documentation.
+Likely areas: default registry/profile definitions, `internal/cli`
+expose/unexpose, registry ownership fields, lock-aware discovery and expose
+documentation.
 
 ## RM-34 — Enhance Cargo binary exposure
 
@@ -632,85 +628,11 @@ Requirements if adopted:
 - A service outage must follow the documented branch-protection policy; do not
   weaken existing CodeQL, govulncheck, dependency review or Dependabot gates.
 
-## Issue #69 — Unify registry section-header parsing
+## Issue #69 — Unify registry section-header parsing — completed
 
-Issue #69 was originally marked blocked on PR #65. PR #65 is merged, so the
-work is now independent and ready. The defect is semantic drift among
-`upgradeV1Registry`, `SetDefaultVersion`, `RewriteWithoutTools` and
-`defaultSections`; the main `ParseTOML` parser is a fifth consumer of the same
-header grammar.
-
-### Shared helper contract
-
-Add a small helper to `internal/toml` with a result that distinguishes:
-
-1. a valid basic-table header and its whitespace-trimmed inner text;
-2. a line that is not a section header; and
-3. malformed/unsupported header-looking syntax.
-
-An API shaped like
-
-```go
-func ParseSectionHeader(line string) (section string, isHeader bool, err error)
-```
-
-is sufficient; the exact name is not part of the public API. Its behavior must
-be:
-
-- apply the existing quote-aware `StripComment`, then trim whitespace;
-- return `isHeader=false` for blank/comment/key-value lines, including a quoted
-  value containing `#`;
-- accept exactly one basic table header such as `[tools.node]`, including an
-  inline comment after the closing bracket;
-- preserve the inner section text for the registry layer to validate and
-  normalize—`internal/toml` must not learn tool/default naming rules;
-- reject empty headers, missing brackets, extra closing content,
-  `[tools.node] garbage`, nested/extra bracket forms and array-table syntax
-  such as `[[tools.node]]`;
-- return an error for any nonblank line beginning with `[` that is not a valid
-  supported basic-table header. It must never degrade malformed syntax into a
-  normal data line.
-
-### Integration requirements
-
-- Make `ParseTOML` the reference error path and migrate all four line-oriented
-  scanners to the shared helper. There must be one definition of where a
-  supported header ends and an inline comment begins.
-- `upgradeV1Registry` must recognize `[tools.NAME] # comment`, preserve the
-  user's original comment/newline style where practical and never partially
-  migrate a validated profile because its scanner disagreed with `ParseTOML`.
-- `SetDefaultVersion` must recognize commented `[defaults.FAMILY]` headers and
-  update only the exact `version` key in that section. It must not change a
-  similarly prefixed family or a commented/string value.
-- `RewriteWithoutTools` must retain its PR #65 quote-aware behavior while using
-  the shared helper. A malformed source is rejected before writing, and the
-  rewritten result is parsed before atomic replacement.
-- `defaultSections` consumes the compiled-in `DefaultTOML`. Since malformed
-  built-in data is a programmer invariant violation, it may propagate an
-  error to initialization or panic with a precise invariant message; it must
-  not silently return partial default sections.
-- Use the helper for the registry parser itself. Consider the lockfile parser
-  only as a separate, low-risk follow-up if it uses the identical basic-table
-  subset; do not broaden #69 into a general TOML parser rewrite.
-
-### Regression matrix
-
-Add table-driven helper tests plus caller-specific regression tests for:
-
-- `[tools.node]`, leading/trailing whitespace and CRLF input;
-- `[tools.node] # note` and `[defaults.node] # note`;
-- `value = "literal # value" # real comment` returning non-header;
-- `[[tools.node]]`;
-- `[tools.node`, `tools.node]`, `[]`, `[[ ]]`, `[tools.node]]`,
-  `[tools.node] trailing` and `[tools.node] # comment` followed by another
-  valid section;
-- exact/case-normalized tool and family matching without prefix collisions;
-- v1 migration, default update, tool removal and default-section extraction
-  all agreeing on the same commented headers;
-- malformed input producing no file change.
-
-Completion requires the normal full validation gate and a focused diff showing
-that scanner behavior—not the supported TOML language—changed.
+Completed by PR #71 and issue #69 is closed. The shared section-header parsing
+work is retained in repository history and tests; there is no remaining
+implementation task in this roadmap document.
 
 ## Recommended implementation order
 
