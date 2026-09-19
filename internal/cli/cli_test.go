@@ -372,6 +372,7 @@ func TestExposeStoreForBuiltins(t *testing.T) {
 		{tool: "cargo", kind: "Cargo", target: "/cb/cargo-global", binDir: "/cb/cargo-global/bin", volumeEnd: "global"},
 		{tool: "uv", kind: "uv tool", target: "/cb/uv-bin", binDir: "/cb/uv-bin", volumeEnd: "tool-bin", companion: "/cb/uv-tools", compEnd: "tools"},
 		{tool: "uvx", kind: "uv tool", target: "/cb/uv-bin", binDir: "/cb/uv-bin", volumeEnd: "tool-bin", companion: "/cb/uv-tools", compEnd: "tools"},
+		{tool: "pipx", kind: "pipx", target: "/cb/pipx", binDir: "/cb/pipx/bin", volumeEnd: "state"},
 		{tool: "dotnet", kind: ".NET tool", target: "/root/.dotnet", binDir: "/root/.dotnet/tools", volumeEnd: "dotnet-home"},
 		{tool: "ruby", kind: "RubyGems", target: "/cb/ruby-gems", binDir: "/cb/ruby-gems/bin", volumeEnd: "gems"},
 		{tool: "gem", kind: "RubyGems", target: "/cb/ruby-gems", binDir: "/cb/ruby-gems/bin", volumeEnd: "gems"},
@@ -416,6 +417,21 @@ shared_volumes = ["bin:/cb/uv-bin"]
 	}
 }
 
+func TestExposeStoreRejectsLegacySplitPipxBinVolume(t *testing.T) {
+	reg, err := registry.ParseTOML(`[tools.demo]
+image = "example/demo:1"
+provider = "stateful"
+state_group = "demo"
+shared_volumes = ["bin:/cb/pipx-bin"]
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := exposeStoreFor(reg.Tools["demo"]); err == nil || !strings.Contains(err.Error(), "no supported global binary store") {
+		t.Fatalf("legacy split-store error = %v", err)
+	}
+}
+
 func TestExposeStoreCanonicalizesVolumeTargets(t *testing.T) {
 	reg, err := registry.ParseTOML(`[tools.demo]
 image = "example/demo:1"
@@ -454,6 +470,26 @@ func TestUVExposeDiscoveryMountsBinAndToolVolumesReadOnly(t *testing.T) {
 		"--mount", "type=volume,src=cb-uv012-py313-tool-bin,dst=/cb/uv-bin,readonly",
 		"--mount", "type=volume,src=cb-uv012-py313-tools,dst=/cb/uv-tools,readonly",
 		"--entrypoint", "sh", "example/uv:1", "-c", "discover-script", "cb-expose", "/cb/uv-bin",
+	}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("discovery args = %#v, want %#v", args, want)
+	}
+}
+
+func TestPipxExposeDiscoveryMountsStateReadOnly(t *testing.T) {
+	reg := registry.Default()
+	store, err := exposeStoreFor(reg.Tools["pipx"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	args, err := exposeDiscoveryArgs(store, "example/pipx:1", "discover-script")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"run", "--rm", "--pull", "never", "--network", "none", "--read-only",
+		"--mount", "type=volume,src=cb-pipx117-py313-state,dst=/cb/pipx,readonly",
+		"--entrypoint", "sh", "example/pipx:1", "-c", "discover-script", "cb-expose", "/cb/pipx/bin",
 	}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("discovery args = %#v, want %#v", args, want)
@@ -798,6 +834,30 @@ func TestRenderUVToolExposedToolSection(t *testing.T) {
 	}
 }
 
+func TestRenderPipxExposedToolSection(t *testing.T) {
+	reg := registry.Default()
+	source := reg.Tools["pipx"]
+	const binary = "cowsay"
+	section := renderExposedToolSection("pipx", source, binary, "/cb/pipx/bin/"+binary)
+	parsed, err := registry.ParseTOML("schema_version = 1\n" + section)
+	if err != nil {
+		t.Fatalf("rendered pipx section invalid: %v", err)
+	}
+	got := parsed.Tools[binary]
+	if got.Image != source.Image || got.StateGroup != source.StateGroup {
+		t.Fatalf("exposed pipx identity = %#v", got)
+	}
+	if !reflect.DeepEqual(got.Command, []string{"/cb/pipx/bin/cowsay"}) {
+		t.Errorf("command = %v", got.Command)
+	}
+	if !reflect.DeepEqual(got.SharedVolumes, source.SharedVolumes) || !reflect.DeepEqual(got.EnvSet, source.EnvSet) || !reflect.DeepEqual(got.EnvNames, source.EnvNames) {
+		t.Error("exposed pipx profile did not inherit source state/environment")
+	}
+	if got.Role != "exposed" {
+		t.Fatalf("role = %q, want exposed", got.Role)
+	}
+}
+
 func TestRenderDotnetExposedToolSection(t *testing.T) {
 	reg := registry.Default()
 	source := reg.Tools["dotnet"]
@@ -860,6 +920,7 @@ func TestManagedExposedToolRecognition(t *testing.T) {
 		{name: "stringer", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/go/bin/Stringer"}, SharedVolumes: []string{"gobin:/go/bin"}}},
 		{name: "just", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/cb/cargo-global/bin/just"}, SharedVolumes: []string{"global:/cb/cargo-global"}}},
 		{name: "ruff", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/cb/uv-bin/ruff"}, SharedVolumes: []string{"tools:/cb/uv-tools", "tool-bin:/cb/uv-bin"}}},
+		{name: "cowsay", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/cb/pipx/bin/cowsay"}, SharedVolumes: []string{"state:/cb/pipx"}}},
 		{name: "dotnet-ef", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/root/.dotnet/tools/dotnet-ef"}, SharedVolumes: []string{"dotnet-home:/root/.dotnet"}}},
 		{name: "rake", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/cb/ruby-gems/bin/rake"}, SharedVolumes: []string{"gems:/cb/ruby-gems"}}},
 		{name: "acme-lint", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/opt/acme/bin/acme-lint"}, SharedVolumes: []string{"tools:/opt/acme"}}},
@@ -882,6 +943,8 @@ func TestManagedExposedToolRecognition(t *testing.T) {
 		{name: "just", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/cb/cargo-global/bin/just"}, SharedVolumes: []string{"global:/other"}}},
 		{name: "ruff", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/cb/uv-bin/ruff"}, SharedVolumes: []string{"tool-bin:/cb/uv-bin"}}},
 		{name: "ruff", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/cb/uv-bin/ruff"}, SharedVolumes: []string{"tool-bin:/other"}}},
+		{name: "cowsay", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/cb/pipx/bin/cowsay"}, SharedVolumes: []string{"state:/other"}}},
+		{name: "cowsay", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/cb/pipx/cowsay"}, SharedVolumes: []string{"state:/cb/pipx"}}},
 		{name: "dotnet-ef", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/root/.dotnet/tools/dotnet-ef"}, SharedVolumes: []string{"dotnet-home:/other"}}},
 		{name: "rake", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/cb/ruby-gems/bin/rake"}, SharedVolumes: []string{"gems:/other"}}},
 		{name: "acme-lint", tool: registry.Tool{Provider: "stateful", Role: "exposed", Command: []string{"/opt/acme/bin/../acme-lint"}, SharedVolumes: []string{"tools:/opt/acme"}}},

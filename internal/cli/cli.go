@@ -304,6 +304,8 @@ func exposeStoreForMountTarget(dst string) (exposeStore, bool) {
 		return exposeStore{kind: "Cargo", mountTarget: dst, binDirectory: dst + "/bin", installHint: "cargo install <crate>"}, true
 	case "/cb/uv-bin":
 		return exposeStore{kind: "uv tool", mountTarget: dst, binDirectory: dst, installHint: "uv tool install <package>", companionTargets: []string{"/cb/uv-tools"}}, true
+	case "/cb/pipx":
+		return exposeStore{kind: "pipx", mountTarget: dst, binDirectory: dst + "/bin", installHint: "pipx install <package>"}, true
 	case "/root/.dotnet":
 		return exposeStore{kind: ".NET tool", mountTarget: dst, binDirectory: dst + "/tools", installHint: "dotnet tool install --global <package>"}, true
 	case "/cb/ruby-gems":
@@ -335,7 +337,7 @@ func exposeStoreFor(t registry.Tool) (exposeStore, error) {
 		found = &candidate
 	}
 	if found == nil {
-		return exposeStore{}, fmt.Errorf("tool %q has no supported global binary store (/cb/npm-global, /go/bin, /cb/cargo-global, /cb/uv-bin, /root/.dotnet or /cb/ruby-gems)", t.Name)
+		return exposeStore{}, fmt.Errorf("tool %q has no supported global binary store (/cb/npm-global, /go/bin, /cb/cargo-global, /cb/uv-bin, /cb/pipx, /root/.dotnet or /cb/ruby-gems)", t.Name)
 	}
 	for _, target := range found.companionTargets {
 		volumeName, ok := volumesByTarget[target]

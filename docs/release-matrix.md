@@ -105,6 +105,11 @@ mode:
    - `pip install requests`
    - `terraform -chdir=.\tf validate`
 
+   When qualifying a release that changes managed application exposure, also
+   exercise the pipx path end to end: install a disposable app, run both
+   `cb expose pipx APP` and store-wide `cb expose pipx`, invoke the generated
+   shim, then remove it with `cb unexpose APP`.
+
    `cb self-test` alone does not fully replace this, because it uses its own
    temp project volumes and already-local locked images rather than a first-run
    user project.
