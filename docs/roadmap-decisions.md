@@ -51,9 +51,10 @@ global `cb expose`; ContainerBin must not guess which project or compatibility
 venv owns a global shim.
 
 Add direct pipx support as a separate stateful profile with ContainerBin-owned
-persistent `PIPX_HOME` and `PIPX_BIN_DIR`. `cb expose pipx BINARY...` may
-discover only that explicit managed bin store and must preserve the existing
-provenance, collision and fail-closed unexpose rules.
+persistent `PIPX_HOME` and `PIPX_BIN_DIR`. `cb expose pipx` discovers and exposes every eligible binary in that managed
+bin store; `cb expose pipx BINARY...` performs deterministic explicit selection.
+Both forms must preserve the existing provenance, collision and fail-closed
+unexpose rules.
 
 `uv tool` remains the already-supported alternative. No automatic migration
 or interoperability between pip, pipx and uv-tool stores is implied.
