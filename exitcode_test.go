@@ -58,6 +58,14 @@ func TestSubprocessExitCodes(t *testing.T) {
 
 	cbPath := buildTestCb(t)
 	workDir := t.TempDir()
+	if runtime.GOOS != "windows" {
+		unsupportedDir := filepath.Join(workDir, "unsupported-host")
+		if err := os.MkdirAll(unsupportedDir, 0755); err != nil {
+			t.Fatalf("mkdir workdir: %v", err)
+		}
+		runExitTest(t, cbPath, []string{"doctor"}, exitCbFailure, unsupportedDir)
+		return
+	}
 
 	tests := []struct {
 		name    string

@@ -213,7 +213,7 @@ for orientation, not a claim that every package depends on every package in
 the tier below it; see the exact edges further down for that):
 
 ```
-main            argv[0] dispatch, subcommand switch, version, usage,
+main            argv[0] dispatch, host boundary, subcommand switch, version, usage,
                 exit codes + fatalf/osExit, withMutationLock's signal wrapper
   ↓
 internal/cli    setup, install, add, expose, unexpose, uninstall, inspect,
@@ -239,21 +239,23 @@ internal/registry    Tool/Registry, TOML parser, defaults, registry file
 internal/toml        the shared TOML subset lexer                    (leaf)
 internal/atomicio    crash-safe write + .bak recovery                (leaf)
 internal/mutationlock  the registry mutation lock primitive          (leaf)
+internal/hostenv       Windows/WSL/Linux runtime classification       (leaf)
 ```
 
 The exact import edges, from `go list -f '{{.ImportPath}} {{.Imports}}' ./...`,
 project-internal imports only:
 
 ```
-main         -> cli, diag, dockerrun, mutationlock, registry, state
-cli          -> atomicio, diag, dockerrun, lockfile, pathmap, registry, toml
+main         -> cli, diag, dockerrun, hostenv, mutationlock, registry, state
+cli          -> atomicio, diag, dockerrun, lockfile, pathmap, registry, statearchive, toml
 diag         -> dockerrun, dockervol, lockfile, pathmap, registry
 dockerrun    -> dockervol, lockfile, pathmap, registry
 state        -> dockervol, pathmap, registry
+statearchive -> dockervol, pathmap
 lockfile     -> atomicio, registry, toml
 pathmap      -> registry
 registry     -> atomicio, toml
-atomicio, dockervol, mutationlock, toml -> (leaves)
+atomicio, dockervol, hostenv, mutationlock, toml -> (leaves)
 ```
 
 Notably: `lockfile` and `pathmap` both depend on `registry` directly, not on

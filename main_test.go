@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -36,13 +37,18 @@ func TestInvokedNameIsCaseInsensitive(t *testing.T) {
 func TestBootstrapCommandsDoNotLoadRegistry(t *testing.T) {
 	oldArgs := os.Args
 	oldLoadRegistry := loadRegistry
+	oldRequireHostFrontend := requireHostFrontend
 	defer func() {
 		os.Args = oldArgs
 		loadRegistry = oldLoadRegistry
+		requireHostFrontend = oldRequireHostFrontend
 	}()
 
 	loadRegistry = func() (registry.Registry, string, error) {
 		panic("bootstrap command attempted to load the registry")
+	}
+	requireHostFrontend = func() error {
+		panic("bootstrap command attempted host enforcement")
 	}
 
 	tests := []struct {
@@ -71,6 +77,42 @@ func TestBootstrapCommandsDoNotLoadRegistry(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHostBoundaryPrecedesRegistryLoad(t *testing.T) {
+	oldArgs := os.Args
+	oldLoadRegistry := loadRegistry
+	oldRequireHostFrontend := requireHostFrontend
+	oldExit := osExit
+	defer func() {
+		os.Args = oldArgs
+		loadRegistry = oldLoadRegistry
+		requireHostFrontend = oldRequireHostFrontend
+		osExit = oldExit
+	}()
+
+	called := false
+	requireHostFrontend = func() error {
+		called = true
+		return errors.New("unsupported host")
+	}
+	loadRegistry = func() (registry.Registry, string, error) {
+		panic("host boundary attempted to load the registry")
+	}
+	type exitCode int
+	osExit = func(code int) { panic(exitCode(code)) }
+	os.Args = []string{"cb.exe", "doctor"}
+
+	defer func() {
+		got := recover()
+		if got != exitCode(exitCbFailure) {
+			t.Fatalf("main panic = %v, want exit %d", got, exitCbFailure)
+		}
+		if !called {
+			t.Fatal("host boundary was not called")
+		}
+	}()
+	main()
 }
 
 func captureMainStdout(t *testing.T, fn func()) string {

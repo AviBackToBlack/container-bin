@@ -71,6 +71,7 @@ real Linux CLI/runtime in an ephemeral container
 |---|---|
 | Windows 10/11 + Docker Desktop (Linux containers) + PowerShell | **Supported** — this is the validated configuration |
 | cmd.exe invocation of shims | Works for the common cases; less battle-tested than PowerShell |
+| WSL2 | **Not yet supported.** The selected native-Linux frontend now has an explicit fail-closed runtime boundary; config/shim/state implementation and real Docker Desktop WSL qualification remain. See [docs/wsl.md](docs/wsl.md) |
 | Linux / macOS hosts | **Not supported.** The program is Go and cross-compiles, but shim installation, path mapping and doctor checks are Windows-specific |
 | Windows containers | Not supported; images are Linux images |
 
@@ -837,7 +838,9 @@ benchmark methodology and the disposable-container tradeoff are in
 
 ## Current limitations
 
-- Windows + Docker Desktop (Linux containers) only.
+- Windows + Docker Desktop (Linux containers) only. WSL2 runtime detection is
+  present, but native WSL execution remains gated until its host layout, state
+  namespace and Docker Desktop qualification slices land.
 - First invocation of a tool after `cb lock` may still need images present
   locally (`cb lock` pulls them; `cb self-test` never pulls).
 - Container startup adds latency compared to native binaries (typically

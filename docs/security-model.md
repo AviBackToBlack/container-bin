@@ -43,6 +43,12 @@ readable, and dangerous to let others edit.
 - **Fail-closed configuration.** Unknown registry keys, duplicate tool
   sections, newer schema versions, incomplete lock entries, and
   registry-image-not-in-lock all refuse to run rather than guess.
+- **Fail-closed host boundary.** Non-bootstrap work currently runs only in a
+  native Windows process. Windows binaries launched through detected WSL
+  interoperability, WSL1, recognized-but-not-yet-enabled native WSL2,
+  standalone Linux and other hosts refuse before registry or Docker work.
+  WSL2 classification requires Microsoft WSL2 kernel markers; environment
+  variables alone cannot turn ordinary Linux into a supported host.
 - **Reserved shim names.** Tool names that would collide with `cb` itself or
   Windows device names (`con`, `nul`, `com1`, …) are rejected at validation,
   as are versioned management-binary names beginning with `cb-v` plus a digit.

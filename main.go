@@ -10,6 +10,7 @@ import (
 	"github.com/AviBackToBlack/container-bin/internal/cli"
 	"github.com/AviBackToBlack/container-bin/internal/diag"
 	"github.com/AviBackToBlack/container-bin/internal/dockerrun"
+	"github.com/AviBackToBlack/container-bin/internal/hostenv"
 	"github.com/AviBackToBlack/container-bin/internal/mutationlock"
 	"github.com/AviBackToBlack/container-bin/internal/registry"
 	"github.com/AviBackToBlack/container-bin/internal/state"
@@ -26,9 +27,17 @@ var version = "dev"
 // registry I/O. Production always uses registry.Load.
 var loadRegistry = registry.Load
 
+// requireHostFrontend is a test seam around the fail-closed host boundary.
+// Production always uses hostenv.RequireFrontend.
+var requireHostFrontend = hostenv.RequireFrontend
+
 func main() {
 	invoked := invokedName(os.Args[0])
 	if isManagementInvocation(invoked) && handleBootstrapCommand(os.Args[1:]) {
+		return
+	}
+	if err := requireHostFrontend(); err != nil {
+		fatalf("host runtime: %v", err)
 		return
 	}
 
