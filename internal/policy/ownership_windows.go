@@ -8,11 +8,17 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
+	"unsafe"
 )
 
 func verifyOwnership(path string) error {
+	powerShell, err := powerShellExecutable()
+	if err != nil {
+		return err
+	}
 	for _, candidate := range []string{filepath.Dir(path), path} {
-		cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", `$item = Get-Item -LiteralPath $env:CB_POLICY_ACL_PATH -Force; if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'reparse point' }; $acl = Get-Acl -LiteralPath $env:CB_POLICY_ACL_PATH; $owner = $acl.Owner; try { $owner = ([System.Security.Principal.NTAccount]$acl.Owner).Translate([System.Security.Principal.SecurityIdentifier]).Value } catch {}; "OWNER|$owner"; $acl.Access | ForEach-Object { $sid = $_.IdentityReference.Value; try { $sid = $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch {}; "$sid|$($_.AccessControlType)|$($_.FileSystemRights)" }`)
+		cmd := exec.Command(powerShell, "-NoProfile", "-NonInteractive", "-Command", `$item = Get-Item -LiteralPath $env:CB_POLICY_ACL_PATH -Force; if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'reparse point' }; $acl = Get-Acl -LiteralPath $env:CB_POLICY_ACL_PATH; $owner = $acl.Owner; try { $owner = ([System.Security.Principal.NTAccount]$acl.Owner).Translate([System.Security.Principal.SecurityIdentifier]).Value } catch {}; "OWNER|$owner"; $acl.Access | ForEach-Object { $sid = $_.IdentityReference.Value; try { $sid = $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch {}; "$sid|$($_.AccessControlType)|$($_.FileSystemRights)" }`)
 		cmd.Env = append(os.Environ(), "CB_POLICY_ACL_PATH="+candidate)
 		out, err := cmd.Output()
 		if err != nil {
@@ -23,6 +29,35 @@ func verifyOwnership(path string) error {
 		}
 	}
 	return nil
+}
+
+var getWindowsDirectoryW = syscall.NewLazyDLL("kernel32.dll").NewProc("GetWindowsDirectoryW")
+
+func powerShellExecutable() (string, error) {
+	buffer := make([]uint16, 32768)
+	n, _, callErr := getWindowsDirectoryW.Call(uintptr(unsafe.Pointer(&buffer[0])), uintptr(len(buffer)))
+	if n == 0 {
+		return "", fmt.Errorf("resolve Windows directory: %w", callErr)
+	}
+	if n >= uintptr(len(buffer)) {
+		return "", fmt.Errorf("resolve Windows directory: returned path is too long")
+	}
+	return powerShellExecutableAt(syscall.UTF16ToString(buffer[:n]))
+}
+
+func powerShellExecutableAt(windowsDirectory string) (string, error) {
+	if !filepath.IsAbs(windowsDirectory) {
+		return "", fmt.Errorf("resolve PowerShell: Windows directory %q is not absolute", windowsDirectory)
+	}
+	path := filepath.Join(windowsDirectory, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve PowerShell %s: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("resolve PowerShell %s: executable must be a regular file", path)
+	}
+	return path, nil
 }
 
 func secureWindowsACLVerdict(raw string, policyFile bool) error {

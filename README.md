@@ -172,10 +172,15 @@ the image:
 
 ```powershell
 cb add jq-corp --image registry.corp.example/devtools/jq:1.8.1
+# For an intentionally local image, declare that identity explicitly:
+cb add jq-local --image jq-local:dev --local
 ```
 
 If a lockfile exists, it becomes intentionally incomplete until you run
-`cb update jq-corp` or `cb lock`; execution fails closed in the meantime.
+`cb update jq-corp` or `cb lock`; execution fails closed in the meantime. A
+profile added with `--local` must be locked explicitly with
+`cb update --local jq-local` or `cb lock --local jq-local`; the flag never
+infers local identity from Docker metadata.
 State, environment allowlists, path rules, command overrides, and mounts still
 require an explicit reviewed registry edit followed by `cb install`.
 

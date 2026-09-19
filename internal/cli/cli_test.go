@@ -25,6 +25,7 @@ func TestAddRequiresExactShape(t *testing.T) {
 		{"--image", "example/demo:1", "demo"},
 		{"demo", "--provider", "stateless"},
 		{"demo", "--image", "example/demo:1", "extra"},
+		{"demo", "--image", "example/demo:1", "--local", "extra"},
 	} {
 		err := add(registry.Default(), filepath.Join(t.TempDir(), "container-bin.toml"), args, func(registry.Registry) error {
 			t.Fatal("installer called for invalid arguments")
@@ -123,6 +124,33 @@ func TestAddPolicyDenialDoesNotMutateRegistry(t *testing.T) {
 	}
 	if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("policy-denied add mutated registry: %v", statErr)
+	}
+}
+
+func TestAddLocalIntentUsesLocalPolicyAndReportsLocalLockCommand(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "container-bin.toml")
+	p := policy.Policy{SchemaVersion: 1, AllowLocalImages: true, AllowedRepositories: []string{"ghcr.io/acme"}}
+	out, err := captureStdout(func() error {
+		return add(registry.Default(), path, []string{"demo", "--image", "local/demo:dev", "--local"}, func(registry.Registry) error { return nil }, p)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "run `cb lock --local demo`") {
+		t.Fatalf("local add did not report explicit local lock command:\n%s", out)
+	}
+
+	deniedPath := filepath.Join(t.TempDir(), "container-bin.toml")
+	p.AllowLocalImages = false
+	err = add(registry.Default(), deniedPath, []string{"demo", "--image", "ghcr.io/acme/demo:dev", "--local"}, func(registry.Registry) error {
+		t.Fatal("installer called for policy-denied local profile")
+		return nil
+	}, p)
+	if err == nil || !strings.Contains(err.Error(), "[policy.local_image_denied]") {
+		t.Fatalf("local add policy error = %v", err)
+	}
+	if _, statErr := os.Stat(deniedPath); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("policy-denied local add mutated registry: %v", statErr)
 	}
 }
 
@@ -320,6 +348,57 @@ func TestParseLockArgs(t *testing.T) {
 	} {
 		if _, _, err := parseLockArgs(args); err == nil {
 			t.Errorf("parseLockArgs(%v) expected error", args)
+		}
+	}
+}
+
+func TestCheckLockReportsEveryStatusAfterPolicyPreflight(t *testing.T) {
+	reg := registry.Registry{Tools: map[string]registry.Tool{
+		"present": {Image: "ghcr.io/acme/present:1"},
+		"absent":  {Image: "ghcr.io/acme/absent:1"},
+		"denied":  {Image: "ghcr.io/other/denied:1"},
+		"missing": {Image: "ghcr.io/acme/missing:1"},
+	}}
+	digest := "sha256:" + strings.Repeat("a", 64)
+	path := filepath.Join(t.TempDir(), "container-bin.lock")
+	lf := &lockfile.LockFile{Version: 1, Images: map[string]lockfile.LockEntry{
+		"ghcr.io/acme/present:1": {Configured: "ghcr.io/acme/present:1", Resolved: "ghcr.io/acme/present@" + digest, Digest: digest},
+		"ghcr.io/acme/absent:1":  {Configured: "ghcr.io/acme/absent:1", Resolved: "ghcr.io/acme/absent@" + digest, Digest: digest},
+		"ghcr.io/other/denied:1": {Configured: "ghcr.io/other/denied:1", Resolved: "ghcr.io/other/denied@" + digest, Digest: digest},
+	}}
+	if err := lockfile.Write(path, lf); err != nil {
+		t.Fatal(err)
+	}
+	var inspected []string
+	p := policy.Policy{SchemaVersion: 1, AllowedRepositories: []string{"ghcr.io/acme"}}
+	var checkErr error
+	out, captureErr := captureStdout(func() error {
+		checkErr = checkLock(reg, path, p, func(resolved string) error {
+			inspected = append(inspected, resolved)
+			if strings.Contains(resolved, "/absent@") {
+				return errors.New("not present")
+			}
+			return nil
+		})
+		return nil
+	})
+	if captureErr != nil {
+		t.Fatal(captureErr)
+	}
+	if checkErr == nil || !strings.Contains(checkErr.Error(), "3 image(s)") {
+		t.Fatalf("checkLock error = %v, want three failures", checkErr)
+	}
+	for _, want := range []string{"ABSENT   ghcr.io/acme/absent:1", "MISSING  ghcr.io/acme/missing:1", "OK       ghcr.io/acme/present:1", "DENIED   ghcr.io/other/denied:1"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("check output missing %q:\n%s", want, out)
+		}
+	}
+	if len(inspected) != 2 {
+		t.Fatalf("inspected refs = %v, want only two authorized refs", inspected)
+	}
+	for _, ref := range inspected {
+		if strings.Contains(ref, "/denied@") {
+			t.Fatalf("policy-denied ref reached Docker inspection: %s", ref)
 		}
 	}
 }

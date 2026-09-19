@@ -2,7 +2,38 @@
 
 package policy
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestPowerShellExecutableAtRequiresAbsoluteRegularSystemBinary(t *testing.T) {
+	root := t.TempDir()
+	executable := filepath.Join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+	if err := os.MkdirAll(filepath.Dir(executable), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(executable, []byte("fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := powerShellExecutableAt(root)
+	if err != nil || got != executable {
+		t.Fatalf("powerShellExecutableAt(%q) = (%q, %v), want %q", root, got, err, executable)
+	}
+	if _, err := powerShellExecutableAt("relative-windows"); err == nil {
+		t.Fatal("relative Windows directory accepted")
+	}
+	if err := os.Remove(executable); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(executable, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := powerShellExecutableAt(root); err == nil {
+		t.Fatal("non-regular PowerShell executable accepted")
+	}
+}
 
 func TestSecureWindowsACLVerdict(t *testing.T) {
 	secure := "OWNER|S-1-5-32-544\nS-1-5-18|Allow|FullControl\nS-1-5-32-544|Allow|FullControl\nS-1-5-32-545|Allow|ReadAndExecute, Synchronize"

@@ -52,6 +52,22 @@ func TestLoadAtOwnershipFailureIsCoded(t *testing.T) {
 	assertPolicyCode(t, err, "ownership")
 }
 
+func TestLoadAtRejectsNonRegularPolicyBeforeOwnershipOrRead(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "policy.toml")
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	ownershipCalled := false
+	_, err := loadAt(path, func(string) error {
+		ownershipCalled = true
+		return nil
+	}, time.Now())
+	assertPolicyCode(t, err, "ownership")
+	if ownershipCalled {
+		t.Fatal("ownership verifier called for non-regular policy object")
+	}
+}
+
 func TestParseRejectsInvalidPolicies(t *testing.T) {
 	now := time.Date(2029, 1, 1, 0, 0, 0, 0, time.UTC)
 	cases := []struct {

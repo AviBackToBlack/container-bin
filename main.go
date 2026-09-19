@@ -246,7 +246,7 @@ func usage(cfg string) {
 Commands:
   cb setup     initialize/upgrade registry, install shims, then run doctor
   cb install   create/update shims from the tool registry
-  cb add       add a minimal stateless tool profile and install its shim
+  cb add       add a minimal stateless tool profile; --local declares local intent
   cb doctor    validate Docker, PATH, shims, registry, lock and managed volumes
   cb bugreport assemble a paste-ready diagnostic report with best-effort redaction
   cb backup    back up registry + lock; --state adds explicitly named volumes

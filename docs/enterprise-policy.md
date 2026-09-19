@@ -58,6 +58,10 @@ creating the required entry.
 Local image-ID locks have no registry origin and are rejected by default under
 a managed policy. `allow_local_images = true` is the explicit exception. It
 does not make an unlocked local tag acceptable when `require_lock = true`.
+Use `cb add TOOL --image IMAGE --local` when creating a profile for such an
+image, then follow the reported explicit `cb lock --local TOOL` or
+`cb update --local TOOL` command. ContainerBin never guesses local intent from
+the daemon's current image metadata.
 
 Repository rules are canonical namespace boundaries:
 
@@ -67,6 +71,9 @@ Repository rules are canonical namespace boundaries:
 - tags and digests do not affect origin authorization;
 - a host-only rule allows that registry; a longer rule allows that repository
   and descendants;
+- a single-segment rule such as `python` means the Docker Hub namespace
+  `docker.io/python`; it does not match the official image repository
+  `docker.io/library/python`;
 - `ghcr.io/acme` does **not** allow `ghcr.io/acme-tools`.
 
 Authorization occurs before a repository-mode `docker pull`, local-image
@@ -74,6 +81,12 @@ inspection, expose discovery or `docker run`. A managed-policy restore is
 preflighted against the complete archived registry and lock before any state or
 configuration is changed. Switching a runtime default likewise requires every
 target profile to be authorized first.
+
+The compiled-in state backup/restore helper is not a user-selected registry
+profile and is outside `allowed_repositories`. It is an exact Alpine digest,
+is never pulled implicitly, and runs with networking disabled and a read-only
+container root. Docker daemon policy may still reject it, and state operations
+fail if that exact helper image is not already available.
 
 ## Diagnostics and error contract
 

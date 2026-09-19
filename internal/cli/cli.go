@@ -59,8 +59,9 @@ func Add(reg registry.Registry, cfgPath string, args []string, machinePolicy pol
 }
 
 func add(reg registry.Registry, cfgPath string, args []string, install func(registry.Registry) error, machinePolicy policy.Policy) error {
-	if len(args) != 3 || args[1] != "--image" || args[0] == "" || args[2] == "" {
-		return errors.New("usage: cb add TOOL --image IMAGE")
+	local := len(args) == 4 && args[3] == "--local"
+	if (len(args) != 3 && !local) || args[1] != "--image" || args[0] == "" || args[2] == "" {
+		return errors.New("usage: cb add TOOL --image IMAGE [--local]")
 	}
 	name := strings.ToLower(args[0])
 	image := args[2]
@@ -79,7 +80,7 @@ func add(reg registry.Registry, cfgPath string, args []string, install func(regi
 	if strings.HasPrefix(image, "-") {
 		return errors.New("image reference must not start with '-'")
 	}
-	if err := machinePolicy.AuthorizeLockTarget(image, false); err != nil {
+	if err := machinePolicy.AuthorizeLockTarget(image, local); err != nil {
 		return err
 	}
 	lockExists := false
@@ -110,9 +111,17 @@ func add(reg registry.Registry, cfgPath string, args []string, install func(regi
 
 	fmt.Printf("added %s -> %s (stateless)\n", name, image)
 	if lockExists {
-		fmt.Printf("lockfile is now incomplete; run `cb update %s` or `cb lock` before using the shim\n", name)
+		if local {
+			fmt.Printf("lockfile is now incomplete; run `cb update --local %s` or `cb lock --local %s` before using the shim\n", name, name)
+		} else {
+			fmt.Printf("lockfile is now incomplete; run `cb update %s` or `cb lock` before using the shim\n", name)
+		}
 	} else {
-		fmt.Println("run `cb lock` to pin configured images before relying on the shim")
+		if local {
+			fmt.Printf("run `cb lock --local %s` to pin the local image ID before relying on the shim\n", name)
+		} else {
+			fmt.Println("run `cb lock` to pin configured images before relying on the shim")
+		}
 	}
 	return nil
 }
@@ -1254,46 +1263,9 @@ func Lock(reg registry.Registry, cfgPath string, args []string, machinePolicy po
 		return err
 	}
 	if check {
-		lf, err := lockfile.Load(path)
-		if err != nil {
-			return err
-		}
-		if lf == nil {
-			return fmt.Errorf("lockfile missing: %s (run `cb lock`)", path)
-		}
-		images := lockfile.ConfiguredImages(reg)
-		missing := 0
-		for _, image := range images {
-			e, ok := lf.Images[image]
-			if !ok || e.Configured != image {
-				fmt.Printf("MISSING  %s\n", image)
-				missing++
-				continue
-			}
-			if err := machinePolicy.AuthorizeResolvedImage(image, e.Resolved, lockfile.IsLocalResolved(e.Resolved)); err != nil {
-				fmt.Printf("DENIED   %s (%v)\n", image, err)
-				missing++
-				continue
-			}
-		}
-		if missing > 0 {
-			return fmt.Errorf("lock check failed: %d image(s) missing/unlocked/denied", missing)
-		}
-		for _, image := range images {
-			e := lf.Images[image]
-			cmd := exec.Command("docker", "image", "inspect", e.Resolved)
-			if err := cmd.Run(); err != nil {
-				fmt.Printf("ABSENT   %s -> %s\n", image, e.Resolved)
-				missing++
-			} else {
-				fmt.Printf("OK       %s -> %s\n", image, e.Resolved)
-			}
-		}
-		if missing > 0 {
-			return fmt.Errorf("lock check failed: %d image(s) unavailable", missing)
-		}
-		fmt.Printf("lock OK: %s\n", path)
-		return nil
+		return checkLock(reg, path, machinePolicy, func(resolved string) error {
+			return exec.Command("docker", "image", "inspect", resolved).Run()
+		})
 	}
 	localImages := map[string]bool{}
 	for name := range localTools {
@@ -1328,6 +1300,51 @@ func Lock(reg registry.Registry, cfgPath string, args []string, machinePolicy po
 		return err
 	}
 	fmt.Printf("\nlockfile: %s\n", path)
+	return nil
+}
+
+func checkLock(reg registry.Registry, path string, machinePolicy policy.Policy, inspect func(string) error) error {
+	lf, err := lockfile.Load(path)
+	if err != nil {
+		return err
+	}
+	if lf == nil {
+		return fmt.Errorf("lockfile missing: %s (run `cb lock`)", path)
+	}
+	type candidate struct {
+		image string
+		entry lockfile.LockEntry
+	}
+	var candidates []candidate
+	failures := 0
+	for _, image := range lockfile.ConfiguredImages(reg) {
+		e, ok := lf.Images[image]
+		if !ok || e.Configured != image {
+			fmt.Printf("MISSING  %s\n", image)
+			failures++
+			continue
+		}
+		if err := machinePolicy.AuthorizeResolvedImage(image, e.Resolved, lockfile.IsLocalResolved(e.Resolved)); err != nil {
+			fmt.Printf("DENIED   %s (%v)\n", image, err)
+			failures++
+			continue
+		}
+		candidates = append(candidates, candidate{image: image, entry: e})
+	}
+	// Authorization for every configured image is complete before any Docker
+	// inspection. Denied images are never handed to Docker.
+	for _, candidate := range candidates {
+		if err := inspect(candidate.entry.Resolved); err != nil {
+			fmt.Printf("ABSENT   %s -> %s\n", candidate.image, candidate.entry.Resolved)
+			failures++
+		} else {
+			fmt.Printf("OK       %s -> %s\n", candidate.image, candidate.entry.Resolved)
+		}
+	}
+	if failures > 0 {
+		return fmt.Errorf("lock check failed: %d image(s) missing/unlocked/denied/unavailable", failures)
+	}
+	fmt.Printf("lock OK: %s\n", path)
 	return nil
 }
 

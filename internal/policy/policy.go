@@ -69,15 +69,22 @@ func Load() (Policy, error) {
 }
 
 func loadAt(path string, ownership func(string) error, now time.Time) (Policy, error) {
-	b, err := os.ReadFile(path)
+	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return Policy{}, nil
 	}
 	if err != nil {
-		return Policy{}, policyError("unreadable", "read %s: %v", path, err)
+		return Policy{}, policyError("unreadable", "inspect %s: %v", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return Policy{}, policyError("ownership", "%s: policy must be a regular file", path)
 	}
 	if err := ownership(path); err != nil {
 		return Policy{}, policyError("ownership", "%s: %v", path, err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return Policy{}, policyError("unreadable", "read %s: %v", path, err)
 	}
 	p, err := parse(path, b, now)
 	if err != nil {
