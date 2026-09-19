@@ -3,11 +3,11 @@
 **Run CLI tools on Windows through Docker-backed executable shims — without
 installing the runtimes on the host.**
 
-ContainerBin makes commands such as `python`, `pip`, `node`, `npm`, `npx`,
+ContainerBin makes commands such as `python`, `pip`, `pipx`, `node`, `npm`, `npx`,
 `uv`, `uvx`, `go`, `cargo`, `rustc`, `dotnet`, `ruby`, `gem`, `bundle`, `jq`, `yq`, `terraform` and `ffmpeg` look like ordinary
 Windows executables while their real implementations run inside disposable
 Linux containers on Docker Desktop. Your Windows installation stays clean: no
-Python, Node, Go, Rust, uv, .NET SDK or Ruby on the host — just one small Go binary,
+Python, pipx, Node, Go, Rust, uv, .NET SDK or Ruby on the host — just one small Go binary,
 `cb.exe`.
 
 ```powershell
@@ -125,6 +125,7 @@ cb lock
 | `rustc` | `rust:1.98.1-slim-bookworm` | stateless |
 | `cargo` | `rust:1.98.1-slim-bookworm` | stateful (`rust198` state group) |
 | `uv`, `uvx` | `ghcr.io/astral-sh/uv:0.12-python3.13-trixie-slim` | stateful (`uv012-py313` state group) |
+| `pipx` | `ghcr.io/astral-sh/uv:0.12-python3.13-trixie-slim` | stateful (`pipx117-py313` state group; pinned `pipx==1.17.4`) |
 | `dotnet` | `mcr.microsoft.com/dotnet/sdk:10.0` | stateful (`dotnet10` state group) |
 | `ruby`, `gem`, `bundle` | `ruby:4.0-trixie` | stateful (`ruby40` state group) |
 | `jq` | `ghcr.io/jqlang/jq:latest` | stateless |
@@ -405,6 +406,50 @@ Existing installations gain `uv` and `uvx` on `cb install`. An older lockfile
 does not include their image, so run `cb update uv` (or regenerate the lock with
 `cb lock`) before first use in locked mode.
 
+## pipx global application state
+
+`pipx` is the classic-Python global application workflow. It is a separate
+stateful profile: installed application environments live under
+`/cb/pipx/home`, their executables live under `/cb/pipx/bin`, and the pinned
+pipx launcher cache lives under `/cb/pipx/launcher-cache`. These directories
+share one managed state volume so their relative links and cached launcher
+remain portable together. That volume is not the Python provider's project
+`/venv` or pip cache, and it is not shared with uv's tool store.
+
+The locked uv/Python image launches the exact `pipx==1.17.4` release with
+`uvx`. First use therefore needs package-index access to populate the dedicated
+launcher cache; later invocations can use that cache offline. The image lock
+pins the launcher image, while package-index trust and the pipx package download
+remain governed by the profile's narrowly forwarded uv/pip index, TLS and proxy
+settings. Automatic Python downloads are disabled and pipx uses the Python 3.13
+interpreter already in the locked image. After a successful pipx command, a
+fail-closed wrapper changes pipx-owned absolute links to relative links within
+the state volume and copies only the known image interpreter into its launcher
+cache and application venvs; this keeps `cb-pipx117-py313-state` portable
+through selected-volume backup/restore without relaxing archive link validation.
+
+```powershell
+pipx install cowsay==6.1
+cb expose pipx cowsay       # explicit deterministic selection
+cowsay "hello from pipx"
+
+cb expose pipx              # expose every other eligible app in the store
+cb unexpose cowsay
+```
+
+The generated application profiles preserve the pipx image, state group,
+volumes and environment policy. Exposure discovery reads only the managed bin
+directory within the state volume through the selected locked profile; it does
+not search a project venv, the host `PATH`, uv's store, or other container
+directories.
+Plain `pip` remains for project dependencies, so scripts in `/venv/bin` are
+deliberately not eligible for global exposure.
+
+Existing installations gain `pipx` on `cb install`. Because it shares the same
+image reference as uv, a lock that already contains that reference can resolve
+it; otherwise run `cb update pipx` (or regenerate the lock with `cb lock`) before
+first use in locked mode.
+
 ## .NET SDK state
 
 `dotnet` uses Microsoft's .NET 10 LTS SDK image. NuGet packages, user-level
@@ -487,6 +532,10 @@ uv tool install ruff
 cb expose uvx ruff
 ruff --version
 
+pipx install cowsay==6.1
+cb expose pipx cowsay
+cowsay "hello from pipx"
+
 dotnet tool install --global dotnet-ef
 cb expose dotnet dotnet-ef
 dotnet-ef --version
@@ -503,8 +552,9 @@ acme-lint --version
 
 `cb expose` takes a stateful source profile with one supported global binary
 store: the npm prefix (`npm`, `npm22`, ...), Go's shared `/go/bin` (`go`),
-Cargo's install root (`cargo`), uv's tool-bin directory (`uv`, `uvx`), .NET's
-global tool home (`dotnet`), or the RubyGems home (`ruby`, `gem`, `bundle`). It
+Cargo's install root (`cargo`), uv's tool-bin directory (`uv`, `uvx`), pipx's
+managed bin directory (`pipx`), .NET's global tool home (`dotnet`), or the
+RubyGems home (`ruby`, `gem`, `bundle`). It
 adds registry profiles that inherit the source image, `state_group`,
 project-root markers and mode, shared volumes, and environment policy, then
 creates Windows shims — `cowsay.exe`, `stringer.exe`, `just.exe`, `ruff.exe`,
@@ -514,7 +564,8 @@ expose a binary installed under the Node 22 runtime, use
 `cb expose npm22 <binary>`; for `go install` output, use
 `cb expose go <binary>`; for `cargo install`, use
 `cb expose cargo <binary>`; for `uv tool install`, use
-`cb expose uvx <binary>`; for a global .NET tool, use
+`cb expose uvx <binary>`; for a pipx application, use
+`cb expose pipx <binary>`; for a global .NET tool, use
 `cb expose dotnet <binary>`; for a Ruby gem executable, use
 `cb expose ruby <binary>`.
 
@@ -851,10 +902,10 @@ benchmark methodology and the disposable-container tradeoff are in
   executable, e.g. `$env:GOOS="windows"; go build`. `go test` must remain
   native to the container because a Windows test binary cannot run inside it.
 - `cb expose` supports the npm global prefix, Go's shared `/go/bin`, Cargo's
-  managed install root, uv's pipx-style tool bin, .NET's global tool home, and
-  RubyGems executables, plus an explicitly named executable beneath any
-  declared shared volume; direct pip/pipx environments outside uv's managed
-  tool store are not supported.
+  managed install root, uv's tool bin, pipx's managed application bin, .NET's
+  global tool home, and RubyGems executables, plus an explicitly named
+  executable beneath any declared shared volume; plain pip project environments
+  and unmanaged pipx stores are not supported.
 
 ## Roadmap
 

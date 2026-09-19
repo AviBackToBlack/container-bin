@@ -26,11 +26,11 @@ func TestParseDefaultRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(reg.Tools) != 24 {
-		t.Fatalf("expected 24 tools, got %d", len(reg.Tools))
+	if len(reg.Tools) != 25 {
+		t.Fatalf("expected 25 tools, got %d", len(reg.Tools))
 	}
-	if len(reg.ToolNames()) != 27 {
-		t.Fatalf("expected 27 invokable shim names, got %d", len(reg.ToolNames()))
+	if len(reg.ToolNames()) != 28 {
+		t.Fatalf("expected 28 invokable shim names, got %d", len(reg.ToolNames()))
 	}
 	jq := reg.Tools["jq"]
 	if jq.Provider != "stateless" || jq.Image != "ghcr.io/jqlang/jq:latest" {
@@ -206,7 +206,7 @@ func TestDefaultRegistryHasV06Tools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"python", "pip", "jq", "yq", "terraform", "ffmpeg", "node24", "npm24", "npx24", "go", "gofmt", "rustc", "cargo", "uv", "uvx", "dotnet", "ruby", "gem", "bundle"} {
+	for _, name := range []string{"python", "pip", "jq", "yq", "terraform", "ffmpeg", "node24", "npm24", "npx24", "go", "gofmt", "rustc", "cargo", "uv", "uvx", "pipx", "dotnet", "ruby", "gem", "bundle"} {
 		if _, ok := reg.Tools[name]; !ok {
 			t.Fatalf("missing default tool %q", name)
 		}
@@ -223,7 +223,7 @@ func TestDefaultRegistryHasV06Tools(t *testing.T) {
 
 func TestDefaultToolSections(t *testing.T) {
 	sections := DefaultToolSections()
-	for _, name := range []string{"python", "yq", "terraform", "ffmpeg", "node24", "node22", "npm24", "npm22", "npx24", "npx22", "go", "gofmt", "rustc", "cargo", "uv", "uvx", "dotnet", "ruby", "gem", "bundle"} {
+	for _, name := range []string{"python", "yq", "terraform", "ffmpeg", "node24", "node22", "npm24", "npm22", "npx24", "npx22", "go", "gofmt", "rustc", "cargo", "uv", "uvx", "pipx", "dotnet", "ruby", "gem", "bundle"} {
 		if !strings.Contains(sections[name], "[tools."+name+"]") {
 			t.Fatalf("bad section for %s: %q", name, sections[name])
 		}
@@ -671,6 +671,58 @@ func TestUVProfiles(t *testing.T) {
 		if !containsString(uv.EnvSet, entry) {
 			t.Fatalf("uv env_set missing %q: %#v", entry, uv.EnvSet)
 		}
+	}
+}
+
+func TestPipxProfile(t *testing.T) {
+	reg, err := ParseTOML(DefaultTOML)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pipx := reg.Tools["pipx"]
+	if pipx.Image != "ghcr.io/astral-sh/uv:0.12-python3.13-trixie-slim" || pipx.Provider != "stateful" || pipx.StateGroup != "pipx117-py313" {
+		t.Fatalf("bad pipx profile identity: %+v", pipx)
+	}
+	if len(pipx.Command) != 4 || pipx.Command[0] != "sh" || pipx.Command[1] != "-c" || pipx.Command[3] != "cb-pipx" ||
+		!strings.Contains(pipx.Command[2], `uvx --from pipx==1.17.4 pipx "$@"`) ||
+		!strings.Contains(pipx.Command[2], `pipx produced unsupported absolute symlink`) {
+		t.Fatalf("pipx command = %#v", pipx.Command)
+	}
+	wantVolumes := []string{"state:/cb/pipx"}
+	if !reflect.DeepEqual(pipx.SharedVolumes, wantVolumes) {
+		t.Fatalf("pipx shared_volumes = %#v, want %#v", pipx.SharedVolumes, wantVolumes)
+	}
+	for _, entry := range []string{
+		"UV_CACHE_DIR=/cb/pipx/launcher-cache",
+		"UV_LINK_MODE=copy",
+		"UV_PYTHON_DOWNLOADS=never",
+		"PIPX_HOME=/cb/pipx/home",
+		"PIPX_BIN_DIR=/cb/pipx/bin",
+		"PIPX_MAN_DIR=/cb/pipx/home/man",
+		"PIPX_COMPLETION_DIR=/cb/pipx/home/completions",
+		"PIPX_DEFAULT_PYTHON=/usr/local/bin/python3.13",
+		"PATH=/cb/pipx/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin",
+	} {
+		if !containsString(pipx.EnvSet, entry) {
+			t.Fatalf("pipx env_set missing %q: %#v", entry, pipx.EnvSet)
+		}
+	}
+	if !containsString(pipx.EnvPrefixes, "UV_INDEX_") {
+		t.Fatalf("pipx env_prefixes missing UV_INDEX_: %#v", pipx.EnvPrefixes)
+	}
+	for _, envName := range []string{"UV_INDEX", "UV_DEFAULT_INDEX", "UV_OFFLINE", "PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL", "PIP_NO_INDEX", "HTTP_PROXY"} {
+		if !containsString(pipx.EnvNames, envName) {
+			t.Fatalf("pipx env_names missing %q: %#v", envName, pipx.EnvNames)
+		}
+	}
+	for _, pathOrControlVariable := range []string{"UV_CACHE_DIR", "UV_TOOL_DIR", "UV_TOOL_BIN_DIR", "PIPX_HOME", "PIPX_BIN_DIR", "PIPX_MAN_DIR", "PIPX_COMPLETION_DIR", "PIPX_DEFAULT_PYTHON", "PATH"} {
+		if containsString(pipx.EnvNames, pathOrControlVariable) {
+			t.Fatalf("pipx env allowlist must not include controlled variable %q", pathOrControlVariable)
+		}
+	}
+	if len(pipx.ProjectMarkers) != 0 || len(pipx.ProjectVolumes) != 0 || len(pipx.PathNext) != 0 || len(pipx.PathEquals) != 0 || pipx.PathLast {
+		t.Fatalf("pipx must remain store-scoped without project or forced path policy: %+v", pipx)
 	}
 }
 
@@ -1159,7 +1211,7 @@ func TestHostMountDefaultTOMLComment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(reg.Tools) != 24 {
-		t.Fatalf("expected 24 tools, got %d", len(reg.Tools))
+	if len(reg.Tools) != 25 {
+		t.Fatalf("expected 25 tools, got %d", len(reg.Tools))
 	}
 }

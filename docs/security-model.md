@@ -84,10 +84,20 @@ readable, and dangerous to let others edit.
   project (and any explicitly referenced external paths) read-write, plus the
   allowlisted environment variables. `cb lock` gives you *reproducibility* —
   the same digest every time — not *safety* of that digest's contents.
-- **Malicious packages.** `pip install`, `npm install -g`, and `cargo install`
-  execute inside containers, but the packages can read/write the mounted project
-  and persist in state volumes; an exposed global binary runs whenever you
-  invoke its shim.
+- **Malicious packages.** `pip install`, `pipx install`, `npm install -g`, and
+  `cargo install` execute inside containers, but the packages can read/write the
+  mounted project and persist in state volumes; an exposed global binary runs
+  whenever you invoke its shim.
+- **pipx launcher bootstrap.** The pipx profile's image digest is locked, but
+  its exact-version `pipx==1.17.4` launcher is populated from the configured
+  Python package index into a dedicated cache on first use. Index overrides,
+  TLS settings and proxies therefore remain part of that bootstrap's trust
+  boundary; the image lock does not attest package-index artifacts.
+- **Fail-closed pipx link normalization.** After a successful pipx command, the
+  profile makes pipx-owned absolute links relative within its one state volume
+  and copies the exact image interpreter only at known venv/cache locations.
+  Any other absolute link fails the command; archive traversal checks remain
+  unchanged.
 - **Secrets you pass through.** `env_prefixes = ["AWS_"]` exists so Terraform
   can authenticate — which means your AWS credentials enter that container.
   That is the feature working as designed; scope prefixes deliberately.
