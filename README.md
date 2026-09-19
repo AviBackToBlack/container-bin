@@ -735,7 +735,7 @@ change any files, and development builds fail closed because their installed
 version cannot be proved.
 
 Stable selection is the default. Use `--prerelease` to select the highest
-canonical prerelease among the 100 most recent published releases, or
+canonical prerelease among the 30 most recent published releases, or
 `--version vX.Y.Z` to inspect one exact published release; those two selectors
 are mutually exclusive. Selecting a version older
 than the running build is rejected unless `--allow-downgrade` is explicit. The

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"runtime"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -91,7 +92,7 @@ func ParseArgs(args []string) (Options, error) {
 			}
 			opts.Prerelease = true
 		case "--version":
-			if opts.Version != "" || i+1 == len(args) {
+			if opts.Version != "" || i+1 == len(args) || strings.HasPrefix(args[i+1], "-") {
 				return Options{}, errors.New("--version requires one canonical version")
 			}
 			i++
@@ -198,7 +199,7 @@ func (c checker) selectRelease(ctx context.Context, current string, opts Options
 		return selected, "exact", nil
 	case opts.Prerelease:
 		var releases []release
-		if err := c.getJSON(ctx, apiRoot+"/releases?per_page=100", current, &releases); err != nil {
+		if err := c.getJSON(ctx, apiRoot+"/releases?per_page=30", current, &releases); err != nil {
 			return release{}, "", err
 		}
 		var candidates []struct {

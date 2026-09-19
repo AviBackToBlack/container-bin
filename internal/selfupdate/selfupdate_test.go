@@ -29,6 +29,7 @@ func TestParseArgs(t *testing.T) {
 		{name: "mutually exclusive", args: []string{"--check", "--prerelease", "--version", "v1.0.0"}, wantErr: "mutually exclusive"},
 		{name: "bad exact", args: []string{"--check", "--version", "latest"}, wantErr: "canonical"},
 		{name: "missing exact", args: []string{"--check", "--version"}, wantErr: "requires"},
+		{name: "missing exact before flag", args: []string{"--check", "--version", "--prerelease"}, wantErr: "requires"},
 		{name: "unknown", args: []string{"--check", "--apply"}, wantErr: "unknown"},
 		{name: "duplicate check", args: []string{"--check", "--check"}, wantErr: "only once"},
 	}
@@ -141,7 +142,7 @@ func TestPlanPrereleaseSelectsHighestCanonicalPublishedCandidate(t *testing.T) {
 		canonicalRelease("v2.0.0-rc.1", true),
 	}
 	releases[4].Draft = true
-	c := checker{doer: releaseDoer(t, apiRoot+"/releases?per_page=100", releases)}
+	c := checker{doer: releaseDoer(t, apiRoot+"/releases?per_page=30", releases)}
 	plan, err := c.Plan(context.Background(), "v1.1.0", "windows", "amd64", Options{Check: true, Prerelease: true})
 	if err != nil {
 		t.Fatal(err)
