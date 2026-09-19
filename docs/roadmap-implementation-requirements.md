@@ -1,18 +1,24 @@
 # Remaining roadmap implementation requirements
 
-This document turns the unchecked work in
+This document turns the remaining work in
 [roadmap issue #2](https://github.com/AviBackToBlack/container-bin/issues/2)
 into implementation and acceptance requirements. Issue #2 remains the
 authoritative live roadmap: re-read it, current `main`, open pull requests and
-the relevant code before starting any item. This document is a design aid, not
-a second completion checklist.
+the relevant code before starting any item.
 
-Status snapshot: **2026-09-17**, after v1.1.0, PRs #64-#68 and the addition of
-RM-34 to the live roadmap. At that point issue #2 had 17 unchecked entries: one
-recurring maintenance task, eight numbered enhancements and eight
-speculative/future items. A later section
-also specifies [issue #69](https://github.com/AviBackToBlack/container-bin/issues/69),
-which is related work but is not itself an unchecked issue #2 item.
+Maintainer product/security decisions accepted on **2026-09-19** are recorded
+in [roadmap-decisions.md](roadmap-decisions.md). That decision ledger is the
+canonical disposition for design-gated, blocked, dormant and implementation-
+ready items. Requirements below remain useful acceptance detail, but an older
+"decision required" sentence must not be interpreted as reopening an accepted
+decision.
+
+Status snapshot: **2026-09-19**. The earlier 2026-09-17 snapshot counted every
+unchecked roadmap line as unfinished work; that is no longer an accurate model.
+Several items have since shipped, while the maintainer has explicitly accepted
+product/security dispositions for the remaining design gates. Use the readiness
+table below plus [roadmap-decisions.md](roadmap-decisions.md), not checkbox count,
+to decide whether work is actionable.
 
 ## Requirements that apply to every item
 
@@ -54,26 +60,26 @@ The minimum delivery gate for a code change is:
 
 ## Readiness and prerequisite summary
 
-| Item | Status before implementation | Required prerequisite or trigger |
+| Item | Current disposition | Next action / trigger |
 |---|---|---|
-| govulncheck pin | Recurring maintenance | A newer stable upstream release and a deliberate refresh |
-| RM-19 reserved-name migration | Conditional design | A proposal to reserve a name that was legal in a published release |
-| RM-23 8.3 path alias | Speculative prototype | Confirmed user need and a safe Windows-only identity proof |
-| RM-24 Python/uv provider choice | Product decision | Written compatibility and migration decision |
-| RM-26 expose beyond current stores | Implementable in slices | Define direct pip/pipx stores and the generic source contract separately |
-| RM-29 Windows ARM64 | Hardware-gated | Real Windows ARM64 hardware with Docker Desktop |
-| RM-30 Authenticode | External-resource-gated | Code-signing certificate and protected signing mechanism |
-| RM-31 self-update | Design- and trust-gated | Stable release API, attestation verifier and Windows replacement design |
-| RM-34 Cargo expose enhancement | Product-scope gated | Concrete discovery/selection behavior and acceptance cases |
-| Linux/macOS hosts | Demand-gated | Concrete users and maintained qualification hosts |
-| Enterprise policy | Product/security design | Policy authority, precedence and deployment model |
-| Image trust | Ecosystem/security design | Supported signature system and identity policy |
-| Plugin/provider architecture | Demand/security design | At least two concrete external-provider use cases |
-| WSL2 | Model decision | Select exactly one interoperability model first |
-| Per-project overlays | Trust-UX design | Durable trust identity and non-interactive policy |
-| Release SBOM | Conditional | Dependency growth or a compliance/consumer requirement |
-| Snyk | Conditional/external | Dependency growth plus account, token and ownership approval |
-| Issue #69 | Ready now | PR #65 is merged; no remaining dependency |
+| govulncheck pin | **Recurring maintenance** | Deliberately refresh when adopting a newer stable upstream release; never a one-time completion gate |
+| RM-19 reserved-name migration | **Conditionally deferred** | Wake only when a future release proposes reserving a name accepted by a published older release |
+| RM-23 8.3 path alias | **Intentionally deferred** | Keep explicit comma-path rejection; reconsider only on demonstrated user demand |
+| RM-24 Python/uv provider choice | **Decision complete — keep both** | No provider migration; Python provider and uv/uvx remain separate |
+| RM-26 Python global CLI exposure | **Implementation-ready** | Add stateful pipx + `cb expose pipx`; plain pip `/venv/bin` is not globally exposed |
+| RM-29 Windows ARM64 | **Lowest priority / hardware-gated for full support** | Native hosted ARM64 CI may come later; official support requires real Windows-on-Arm + Docker Desktop E2E |
+| RM-30 Authenticode | **Design complete / externally blocked** | Provision real code-signing certificate and protected signing mechanism |
+| RM-31 self-update | **Design complete / implementation-ready** | Implement explicit attestation-verifying transactional update in reviewable slices |
+| RM-34 Cargo expose enhancement | **Intentionally deferred** | Existing expose-all/explicit selection are sufficient; reopen only for concrete unmet use case |
+| Linux/macOS hosts | **Demand-gated** | WSL may factor reusable Linux host code; standalone support needs its own demand and qualification |
+| Enterprise policy | **Design complete / implementation-ready** | Implement machine-owned constraint layer first |
+| Image trust | **Design complete / sequenced** | Implement after enterprise-policy foundation using policy-driven Sigstore/cosign verification |
+| Plugin/provider architecture | **Intentionally deferred** | Reopen only after at least two real integrations cannot fit the declarative model |
+| WSL2 | **Design complete / implementation-ready** | Native WSL frontend using Docker Desktop WSL integration |
+| Per-project overlays | **Design complete / sequenced** | Implement add-only digest-bound trust model after enterprise-policy foundation |
+| Release SBOM | **Conditionally deferred** | Trigger on shipped third-party/runtime dependencies or concrete compliance/consumer demand |
+| Snyk | **Conditionally deferred** | Trigger only for a real coverage gap plus owner/account/token and triage/outage policy |
+| Issue #69 | **Completed** | Superseded by merged implementation; no remaining roadmap dependency |
 
 ## Recurring govulncheck pin maintenance
 
@@ -708,15 +714,19 @@ that scanner behavior—not the supported TOML language—changed.
 
 ## Recommended implementation order
 
-1. Implement #69 as a small independent correctness PR.
-2. Split RM-26 into direct Python discovery and generic shared-volume expose.
-3. Scope RM-34's concrete Cargo discovery/selection behavior, and resolve
-   product/security decisions for RM-24, enterprise policy, image trust, WSL2
-   and overlays before code.
-4. Implement RM-29 and RM-30 only when hardware/certificate prerequisites are
-   available; design RM-31 against their final artifact contracts.
-5. Keep RM-19, RM-23, new hosts, plugins, SBOM and Snyk dormant until their
-   stated triggers occur.
+1. RM-26 pipx support.
+2. Enterprise-policy foundation.
+3. Per-project overlay trust foundation.
+4. Signed-registry enterprise policy.
+5. Image trust at lock time.
+6. RM-31 transactional self-update.
+7. WSL2 native frontend.
+8. RM-30 Authenticode only after certificate/protected-signing prerequisites exist.
+9. RM-29 Windows ARM64 last; do not delay higher-value work for it.
 
-This ordering is advisory. The live issue, merged state and open PR coverage
-must be checked again before every implementation unit.
+RM-19, RM-23, RM-34, standalone Linux/macOS, plugins, SBOM and Snyk are dormant
+until their documented triggers occur. The govulncheck pin is recurring
+maintenance.
+
+This ordering is advisory. Re-read the live issue, decision ledger, merged state
+and open PR coverage before every implementation unit.
