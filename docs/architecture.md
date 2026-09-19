@@ -214,7 +214,8 @@ the tier below it; see the exact edges further down for that):
 
 ```
 main            argv[0] dispatch, subcommand switch, version, usage,
-                exit codes + fatalf/osExit, withMutationLock's signal wrapper
+                exit codes + fatalf/osExit, bootstrap self-update selection,
+                withMutationLock's signal wrapper
   ↓
 internal/cli    setup, install, add, expose, unexpose, uninstall, inspect,
                 trace, env, backup, restore, lock, update
@@ -239,21 +240,23 @@ internal/registry    Tool/Registry, TOML parser, defaults, registry file
 internal/toml        the shared TOML subset lexer                    (leaf)
 internal/atomicio    crash-safe write + .bak recovery                (leaf)
 internal/mutationlock  the registry mutation lock primitive          (leaf)
+internal/selfupdate    canonical release selection and read-only plan (leaf)
 ```
 
 The exact import edges, from `go list -f '{{.ImportPath}} {{.Imports}}' ./...`,
 project-internal imports only:
 
 ```
-main         -> cli, diag, dockerrun, mutationlock, registry, state
-cli          -> atomicio, diag, dockerrun, lockfile, pathmap, registry, toml
+main         -> cli, diag, dockerrun, mutationlock, registry, selfupdate, state
+cli          -> atomicio, diag, dockerrun, lockfile, pathmap, registry, statearchive, toml
 diag         -> dockerrun, dockervol, lockfile, pathmap, registry
 dockerrun    -> dockervol, lockfile, pathmap, registry
 state        -> dockervol, pathmap, registry
+statearchive -> dockervol, pathmap
 lockfile     -> atomicio, registry, toml
 pathmap      -> registry
 registry     -> atomicio, toml
-atomicio, dockervol, mutationlock, toml -> (leaves)
+atomicio, dockervol, mutationlock, selfupdate, toml -> (leaves)
 ```
 
 Notably: `lockfile` and `pathmap` both depend on `registry` directly, not on
@@ -278,3 +281,10 @@ Two boundaries are load-bearing rather than cosmetic:
 release workflow inject it with `-ldflags "-X main.version=..."`, so that symbol
 path is part of the release contract. Packages that need it take it as a
 parameter.
+
+`cb self-update --check` is dispatched before registry loading, like the
+bootstrap help/version path. Release selection therefore remains available
+when the registry is missing or invalid. `internal/selfupdate` has no project
+imports and performs only bounded metadata queries and plan output; downloading,
+attestation verification and installed-file replacement remain separate later
+phases.

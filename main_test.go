@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -70,6 +72,37 @@ func TestBootstrapCommandsDoNotLoadRegistry(t *testing.T) {
 				t.Fatalf("output %q does not contain %q", out, tt.want)
 			}
 		})
+	}
+}
+
+func TestSelfUpdateCheckDoesNotLoadRegistry(t *testing.T) {
+	oldArgs := os.Args
+	oldLoadRegistry := loadRegistry
+	oldRunSelfUpdateCheck := runSelfUpdateCheck
+	defer func() {
+		os.Args = oldArgs
+		loadRegistry = oldLoadRegistry
+		runSelfUpdateCheck = oldRunSelfUpdateCheck
+	}()
+
+	loadRegistry = func() (registry.Registry, string, error) {
+		panic("self-update check attempted to load the registry")
+	}
+	runSelfUpdateCheck = func(_ context.Context, current string, args []string, out io.Writer) error {
+		if current != "dev" {
+			t.Fatalf("current version = %q, want dev", current)
+		}
+		if strings.Join(args, " ") != "--check --version v1.1.0" {
+			t.Fatalf("self-update args = %q", args)
+		}
+		_, err := io.WriteString(out, "self-update seam reached\n")
+		return err
+	}
+	os.Args = []string{"cb.exe", "self-update", "--check", "--version", "v1.1.0"}
+
+	out := captureMainStdout(t, main)
+	if !strings.Contains(out, "self-update seam reached") {
+		t.Fatalf("output %q does not contain self-update marker", out)
 	}
 }
 

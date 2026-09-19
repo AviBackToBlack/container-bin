@@ -706,6 +706,7 @@ cb env
 cb list
 cb default
 cb default set node 22
+cb self-update --check             # read-only stable-release selection; no download or file changes
 ```
 
 `cb bugreport` assembles `cb version`, the Windows and PowerShell versions
@@ -723,6 +724,22 @@ runs every check and reports all of them, instead of stopping at the first
 failure. The Node 22 checks run when the `node22` profile is registered. An
 older registry without that newer default gets an actionable skip rather than
 a false failure; run `cb setup` to append the current default profiles.
+
+### Self-update release selection
+
+`cb self-update --check` is the first, read-only phase of transactional
+self-update support. It compares a release-qualified Windows/amd64 build with
+the latest stable release and reports the exact binary, archive, checksum and
+provenance policy that later phases must verify. It does not download assets or
+change any files, and development builds fail closed because their installed
+version cannot be proved.
+
+Stable selection is the default. Use `--prerelease` to select the highest
+canonical prerelease among the 100 most recent published releases, or
+`--version vX.Y.Z` to inspect one exact published release; those two selectors
+are mutually exclusive. Selecting a version older
+than the running build is rejected unless `--allow-downgrade` is explicit. The
+current slice supports only Windows/amd64, matching the release artifacts.
 
 ### `cb self-test --json` report format
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/signal"
@@ -12,6 +13,7 @@ import (
 	"github.com/AviBackToBlack/container-bin/internal/dockerrun"
 	"github.com/AviBackToBlack/container-bin/internal/mutationlock"
 	"github.com/AviBackToBlack/container-bin/internal/registry"
+	"github.com/AviBackToBlack/container-bin/internal/selfupdate"
 	"github.com/AviBackToBlack/container-bin/internal/state"
 )
 
@@ -26,9 +28,19 @@ var version = "dev"
 // registry I/O. Production always uses registry.Load.
 var loadRegistry = registry.Load
 
+// runSelfUpdateCheck is a test seam for proving self-update selection remains
+// available before registry I/O. Production always uses selfupdate.Check.
+var runSelfUpdateCheck = selfupdate.Check
+
 func main() {
 	invoked := invokedName(os.Args[0])
 	if isManagementInvocation(invoked) && handleBootstrapCommand(os.Args[1:]) {
+		return
+	}
+	if isManagementInvocation(invoked) && len(os.Args) > 1 && os.Args[1] == "self-update" {
+		if err := runSelfUpdateCheck(context.Background(), version, os.Args[2:], os.Stdout); err != nil {
+			fatalf("self-update: %v", err)
+		}
 		return
 	}
 
@@ -246,6 +258,8 @@ Commands:
   cb backup    back up registry + lock; --state adds explicitly named volumes
   cb restore   validate/restore a backup (dry-run unless --apply; state is opt-in)
   cb self-test [--json] [--release] run offline end-to-end compatibility checks
+  cb self-update --check [--prerelease | --version VERSION] [--allow-downgrade]
+                report a release update plan without downloading or changing files
   cb list      list configured tool profiles
   cb default   list defaults; "cb default set FAMILY VERSION" switches a family
   cb trace     show raw/normalized/mapped argv for a tool without running it
