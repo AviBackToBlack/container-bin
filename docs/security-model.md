@@ -77,6 +77,13 @@ readable, and dangerous to let others edit.
   Tar extraction occurs only inside the named Docker volume through an immutable,
   network-disabled helper with a read-only container root; no archive member is
   turned into a Windows host path.
+- **Fail-closed self-update selection.** `cb self-update --check` accepts only a
+  release-qualified Windows/amd64 build, queries the canonical GitHub repository
+  over HTTPS with a bounded response, and requires exact canonical release and
+  asset URLs, names and sizes. Downgrades and prereleases require explicit
+  flags. This phase performs no asset download and changes no installed files;
+  later phases must require both checksums and GitHub provenance without a
+  fallback before replacement is possible.
 
 ## What ContainerBin does NOT protect against
 
