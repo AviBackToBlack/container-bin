@@ -79,7 +79,7 @@ engine exposed by a WSL distro are not supported WSL execution models.
 
 Windows and WSL installations have separate config, lockfiles, shim layouts,
 project identities and ContainerBin state namespaces. ContainerBin does not
-infer identity equivalence between `C:\\x`, `/mnt/c/x` or `\\\\wsl$\\...`.
+infer identity equivalence between `C:\x`, `/mnt/c/x` or `\\wsl$\...`.
 Native Linux path, permission, symlink, case, TTY and signal semantics apply.
 
 ### Enterprise policy — machine constraint layer
@@ -90,7 +90,7 @@ administrator policy then authorizes or rejects that request.
 
 Initial host locations:
 
-- Windows: `C:\\ProgramData\\ContainerBin\\policy.toml`
+- Windows: `C:\ProgramData\ContainerBin\policy.toml`
 - native Linux/WSL: `/etc/container-bin/policy.toml`
 
 A missing policy means unmanaged operation. A present but unreadable, invalid,
