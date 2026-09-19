@@ -861,8 +861,11 @@ benchmark methodology and the disposable-container tradeoff are in
 Larger ideas (more package-manager integrations, self-update, signing) are
 tracked in the
 [roadmap issue](https://github.com/AviBackToBlack/container-bin/issues/2).
+Accepted product/security dispositions and the current implementation queue are
+recorded in
+[docs/roadmap-decisions.md](docs/roadmap-decisions.md).
 Detailed entry gates, implementation requirements and acceptance evidence for
-its remaining items are in
+the remaining actionable items are in
 [docs/roadmap-implementation-requirements.md](docs/roadmap-implementation-requirements.md).
 The `main.go` decomposition listed here previously is done; see
 [docs/architecture.md](docs/architecture.md) for the resulting package layout.
