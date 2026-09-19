@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AviBackToBlack/container-bin/internal/policy"
 	"github.com/AviBackToBlack/container-bin/internal/registry"
 )
 
@@ -36,13 +37,18 @@ func TestInvokedNameIsCaseInsensitive(t *testing.T) {
 func TestBootstrapCommandsDoNotLoadRegistry(t *testing.T) {
 	oldArgs := os.Args
 	oldLoadRegistry := loadRegistry
+	oldLoadPolicy := loadPolicy
 	defer func() {
 		os.Args = oldArgs
 		loadRegistry = oldLoadRegistry
+		loadPolicy = oldLoadPolicy
 	}()
 
 	loadRegistry = func() (registry.Registry, string, error) {
 		panic("bootstrap command attempted to load the registry")
+	}
+	loadPolicy = func() (policy.Policy, error) {
+		panic("bootstrap command attempted to load machine policy")
 	}
 
 	tests := []struct {

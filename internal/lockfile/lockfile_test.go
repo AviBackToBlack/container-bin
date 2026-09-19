@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AviBackToBlack/container-bin/internal/policy"
 	"github.com/AviBackToBlack/container-bin/internal/registry"
 )
 
@@ -77,6 +78,27 @@ digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 	}
 	if _, err := Load(path); err == nil {
 		t.Fatal("expected wrong entry id rejection")
+	}
+}
+
+func TestLockFileRejectsMutableOrForeignRepositoryResolution(t *testing.T) {
+	configured := "ghcr.io/acme/tool:1"
+	id := entryID(configured)
+	cases := []string{
+		"ghcr.io/acme/tool:latest",
+		"evil.example/tool@sha256:" + strings.Repeat("a", 64),
+		"ghcr.io/acme/tool@sha256:short",
+	}
+	for _, resolved := range cases {
+		digest := "sha256:" + strings.Repeat("a", 64)
+		contents := fmt.Sprintf("lock_version = 1\n[images.%s]\nconfigured = %q\nresolved = %q\ndigest = %q\n", id, configured, resolved, digest)
+		path := filepath.Join(t.TempDir(), "container-bin.lock")
+		if err := os.WriteFile(path, []byte(contents), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(path); err == nil {
+			t.Errorf("Load accepted unsafe resolved reference %q", resolved)
+		}
 	}
 }
 
@@ -274,6 +296,16 @@ func TestRepositoryLockEntryDoesNotTreatForeignDigestAsLocal(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "no RepoDigest for repository") {
 		t.Fatalf("repositoryLockEntry error = %v, want repository mismatch", err)
+	}
+}
+
+func TestResolveImagePolicyDenialHappensBeforeDocker(t *testing.T) {
+	p := policy.Policy{SchemaVersion: 1, AllowedRepositories: []string{"ghcr.io/acme"}}
+	if _, err := ResolveRepositoryImage("ghcr.io/other/tool:1", p); err == nil || !strings.Contains(err.Error(), "[policy.repository_denied]") {
+		t.Fatalf("repository resolution error = %v", err)
+	}
+	if _, err := ResolveLocalImage("local/tool:dev", p); err == nil || !strings.Contains(err.Error(), "[policy.local_image_denied]") {
+		t.Fatalf("local resolution error = %v", err)
 	}
 }
 

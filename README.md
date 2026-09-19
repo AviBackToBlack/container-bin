@@ -614,6 +614,20 @@ An image-ID lock is deliberately host-local: it makes execution immutable on
 that Docker daemon, but it does not make the image portable or pullable. Keep
 the Dockerfile/build inputs or export the image separately for recovery.
 
+## Enterprise machine policy
+
+Administrators can constrain resolved user configuration through a fixed,
+machine-owned policy at `C:\ProgramData\ContainerBin\policy.toml` (Windows) or
+`/etc/container-bin/policy.toml` (native Linux/WSL). A missing policy preserves
+unmanaged behavior. A present but unreadable, invalid, expired, unsupported or
+insufficiently protected policy fails closed before non-bootstrap work.
+
+Schema 1 can require an exact image lock, reject local image-ID locks unless
+explicitly allowed, and allowlist canonical registry/repository boundaries.
+Lower-precedence registry or command-line choices cannot weaken it. See
+[enterprise machine policy](docs/enterprise-policy.md) for the schema,
+ownership rules, normalization behavior and stable diagnostic codes.
+
 ## State inspection and garbage collection
 
 ```powershell
