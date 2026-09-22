@@ -55,12 +55,13 @@ type Registry struct {
 // startup is not subsequently reported as unsupported by cb doctor.
 const MaxSchemaVersion = 2
 
-const pipxCommand = `uvx --from pipx==1.17.4 pipx "$@"
+const pipxCommand = `/usr/local/bin/uvx --from pipx==1.17.4 pipx "$@"
 status=$?
 if [ "$status" -eq 0 ]; then
   /usr/local/bin/python3 -c '
 import os
 import pathlib
+import secrets
 import shutil
 
 root = pathlib.Path("/cb/pipx").resolve()
@@ -77,22 +78,27 @@ for link in pathlib.Path("/cb/pipx").rglob("*"):
         target.relative_to(root)
     except ValueError:
         parts = link.relative_to(root).parts
-        venv_python = len(parts) == 5 and parts[:2] == ("home", "venvs") and parts[-2:] == ("bin", "python")
+        venv_python = len(parts) == 5 and parts[:2] == ("home", "venvs") and parts[-2] == "bin" and parts[-1] in ("python", allowed_python.name)
+        shared_python = len(parts) == 4 and parts[:2] == ("home", "shared") and parts[-2:] == ("bin", allowed_python.name)
         launcher_python = len(parts) == 5 and parts[:2] == ("launcher-cache", "archive-v0") and parts[-2:] == ("bin", "python")
-        if target != allowed_python or not (venv_python or launcher_python):
+        if target != allowed_python or not (venv_python or shared_python or launcher_python):
             raise RuntimeError(f"pipx produced unsupported absolute symlink: {link} -> {raw_target}")
-        temporary = link.with_name(link.name + ".cb-copy")
-        if temporary.exists() or temporary.is_symlink():
-            temporary.unlink()
-        shutil.copy2(target, temporary)
-        os.replace(temporary, link)
+        temporary = link.with_name(f".{link.name}.cb-{os.getpid()}-{secrets.token_hex(8)}")
+        try:
+            shutil.copy2(target, temporary)
+            os.replace(temporary, link)
+        finally:
+            if temporary.exists() or temporary.is_symlink():
+                temporary.unlink()
         continue
     relative = os.path.relpath(target, start=link.parent)
-    temporary = link.with_name(link.name + ".cb-link")
-    if temporary.exists() or temporary.is_symlink():
-        temporary.unlink()
-    temporary.symlink_to(relative)
-    os.replace(temporary, link)
+    temporary = link.with_name(f".{link.name}.cb-{os.getpid()}-{secrets.token_hex(8)}")
+    try:
+        temporary.symlink_to(relative)
+        os.replace(temporary, link)
+    finally:
+        if temporary.exists() or temporary.is_symlink():
+            temporary.unlink()
 ' || exit $?
 fi
 exit "$status"`
@@ -333,10 +339,10 @@ path_equals = ["--project", "--directory", "--config-file", "--cache-dir"]
 [tools.pipx]
 image = "ghcr.io/astral-sh/uv:0.12-python3.13-trixie-slim"
 provider = "stateful"
-command = ` + toml.Array([]string{"sh", "-c", pipxCommand, "cb-pipx"}) + `
+command = ` + toml.Array([]string{"/bin/sh", "-c", pipxCommand, "cb-pipx"}) + `
 state_group = "pipx117-py313"
 shared_volumes = ["state:/cb/pipx"]
-env_set = ["UV_CACHE_DIR=/cb/pipx/launcher-cache", "UV_LINK_MODE=copy", "UV_PYTHON_DOWNLOADS=never", "PIPX_HOME=/cb/pipx/home", "PIPX_BIN_DIR=/cb/pipx/bin", "PIPX_MAN_DIR=/cb/pipx/home/man", "PIPX_COMPLETION_DIR=/cb/pipx/home/completions", "PIPX_DEFAULT_PYTHON=/usr/local/bin/python3.13", "PATH=/cb/pipx/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"]
+env_set = ["UV_CACHE_DIR=/cb/pipx/launcher-cache", "UV_LINK_MODE=copy", "UV_PYTHON_DOWNLOADS=never", "PIPX_HOME=/cb/pipx/home", "PIPX_BIN_DIR=/cb/pipx/bin", "PIPX_MAN_DIR=/cb/pipx/home/man", "PIPX_COMPLETION_DIR=/cb/pipx/home/completions", "PIPX_DEFAULT_PYTHON=/usr/local/bin/python3.13", "PATH=/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin:/cb/pipx/bin"]
 env_prefixes = ["UV_INDEX_"]
 env_names = ["UV_INDEX", "UV_DEFAULT_INDEX", "UV_EXTRA_INDEX_URL", "UV_NO_INDEX", "UV_NATIVE_TLS", "UV_OFFLINE", "UV_NO_PROGRESS", "UV_COLOR", "UV_HTTP_TIMEOUT", "UV_HTTP_RETRIES", "UV_INSECURE_HOST", "UV_KEYRING_PROVIDER", "PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL", "PIP_NO_INDEX", "PIP_TRUSTED_HOST", "PIP_DISABLE_PIP_VERSION_CHECK", "PIP_TIMEOUT", "PIP_RETRIES", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"]
 # pipx accepts package specs, URLs and child-command arguments. Do not force

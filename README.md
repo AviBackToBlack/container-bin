@@ -425,7 +425,10 @@ settings. Automatic Python downloads are disabled and pipx uses the Python 3.13
 interpreter already in the locked image. After a successful pipx command, a
 fail-closed wrapper changes pipx-owned absolute links to relative links within
 the state volume and copies only the known image interpreter into its launcher
-cache and application venvs; this keeps `cb-pipx117-py313-state` portable
+cache, application venvs, and the pip backend's shared-libraries venv. This
+includes explicit `--backend pip` installs and pipx's forced pip backend for
+the `pip` package while still rejecting any other external link target. This
+keeps `cb-pipx117-py313-state` portable
 through selected-volume backup/restore without relaxing archive link validation.
 `pipx run` environments remain ephemeral because `PIPX_CACHE_DIR` is not placed
 on the managed volume; each `pipx run` may resolve and download its application

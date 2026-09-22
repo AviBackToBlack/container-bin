@@ -684,8 +684,8 @@ func TestPipxProfile(t *testing.T) {
 	if pipx.Image != "ghcr.io/astral-sh/uv:0.12-python3.13-trixie-slim" || pipx.Provider != "stateful" || pipx.StateGroup != "pipx117-py313" {
 		t.Fatalf("bad pipx profile identity: %+v", pipx)
 	}
-	if len(pipx.Command) != 4 || pipx.Command[0] != "sh" || pipx.Command[1] != "-c" || pipx.Command[3] != "cb-pipx" ||
-		!strings.Contains(pipx.Command[2], `uvx --from pipx==1.17.4 pipx "$@"`) ||
+	if len(pipx.Command) != 4 || pipx.Command[0] != "/bin/sh" || pipx.Command[1] != "-c" || pipx.Command[3] != "cb-pipx" ||
+		!strings.Contains(pipx.Command[2], `/usr/local/bin/uvx --from pipx==1.17.4 pipx "$@"`) ||
 		!strings.Contains(pipx.Command[2], `pipx produced unsupported absolute symlink`) {
 		t.Fatalf("pipx command = %#v", pipx.Command)
 	}
@@ -694,6 +694,9 @@ func TestPipxProfile(t *testing.T) {
 		`raw_target = os.readlink(link)`,
 		`except OSError as exc:`,
 		`raise RuntimeError(f"pipx produced unsupported absolute symlink: {link} -> {raw_target}") from exc`,
+		`parts[:2] == ("home", "shared")`,
+		`parts[-1] in ("python", allowed_python.name)`,
+		`secrets.token_hex(8)`,
 	} {
 		if !strings.Contains(pipx.Command[2], fragment) {
 			t.Fatalf("pipx command missing %q: %q", fragment, pipx.Command[2])
@@ -715,7 +718,7 @@ func TestPipxProfile(t *testing.T) {
 		"PIPX_MAN_DIR=/cb/pipx/home/man",
 		"PIPX_COMPLETION_DIR=/cb/pipx/home/completions",
 		"PIPX_DEFAULT_PYTHON=/usr/local/bin/python3.13",
-		"PATH=/cb/pipx/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin",
+		"PATH=/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin:/cb/pipx/bin",
 	} {
 		if !containsString(pipx.EnvSet, entry) {
 			t.Fatalf("pipx env_set missing %q: %#v", entry, pipx.EnvSet)
