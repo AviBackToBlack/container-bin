@@ -14,13 +14,17 @@ fail closed on every host except native Windows.
 
 - Native Windows is the currently supported frontend.
 - A Windows process with `WSL_INTEROP` or `WSL_DISTRO_NAME` is classified as
-  Windows-through-WSL interoperability and rejected.
+  Windows-through-WSL interoperability and rejected. The diagnostic names the
+  inherited marker so a stray variable in an otherwise native Windows process
+  can be found and removed.
 - A native Linux process is classified as WSL2 only when
   `/proc/sys/kernel/osrelease` contains both the Microsoft and WSL2 markers.
   `WSL_DISTRO_NAME` is then required so later state identity cannot silently
   collapse multiple distributions together.
-- A Microsoft WSL kernel without the WSL2 marker is classified as WSL1 and
-  rejected. Other Linux kernels are standalone Linux and rejected.
+- A Microsoft kernel without the WSL2 marker is rejected. Classic Microsoft
+  kernels are classified as WSL1; `microsoft-standard` kernels are reported as
+  ambiguous because early WSL2 releases used that form before the WSL2 suffix
+  became consistent. Other Linux kernels are standalone Linux and rejected.
 - `cb version`, `cb help` and `cb config` remain bootstrap-safe for diagnosis;
   they perform no Docker or registry mutation and return before host enforcement.
 

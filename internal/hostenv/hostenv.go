@@ -20,15 +20,17 @@ const (
 	WindowsWSLInterop Kind = "windows-wsl-interop"
 	WSL2Native        Kind = "wsl2-native"
 	WSL1Native        Kind = "wsl1-native"
+	WSLUnrecognized   Kind = "wsl-microsoft-unrecognized"
 	LinuxNative       Kind = "linux-native"
 	Unsupported       Kind = "unsupported"
 )
 
 type Runtime struct {
-	Kind          Kind
-	GOOS          string
-	KernelRelease string
-	Distro        string
+	Kind           Kind
+	GOOS           string
+	KernelRelease  string
+	Distro         string
+	InteropMarkers []string
 }
 
 // Current returns a conservative classification of the current process. WSL2
@@ -62,7 +64,11 @@ func requireFrontend(info Runtime, probeErr error) error {
 	case WindowsNative:
 		return nil
 	case WindowsWSLInterop:
-		return errors.New("Windows cb.exe launched through WSL interoperability is unsupported; run cb from Windows, or use the native WSL frontend after it is released")
+		markers := strings.Join(info.InteropMarkers, ", ")
+		if markers == "" {
+			markers = "WSL_INTEROP or WSL_DISTRO_NAME"
+		}
+		return fmt.Errorf("Windows ContainerBin process inherited WSL interoperability marker(s) %s; this invocation is unsupported; run cb from a native Windows process, or use the native WSL frontend after it is released", markers)
 	case WSL2Native:
 		if info.Distro == "" {
 			return errors.New("native WSL2 was detected but WSL_DISTRO_NAME is unavailable, so distribution identity cannot be proven")
@@ -70,6 +76,8 @@ func requireFrontend(info Runtime, probeErr error) error {
 		return fmt.Errorf("native WSL2 distribution %q was detected, but the WSL frontend is not enabled in this release", info.Distro)
 	case WSL1Native:
 		return errors.New("WSL1 is unsupported; the planned native frontend requires WSL2 and Docker Desktop WSL integration")
+	case WSLUnrecognized:
+		return fmt.Errorf("Microsoft WSL kernel %q lacks an explicit WSL2 marker, so its generation cannot be proven; this host is unsupported", info.KernelRelease)
 	case LinuxNative:
 		return errors.New("standalone Linux hosts are unsupported; Linux execution is limited to the planned native WSL2 frontend")
 	default:
@@ -83,9 +91,16 @@ func classify(goos, kernelRelease, distro, interop string) Runtime {
 		KernelRelease: strings.TrimSpace(kernelRelease),
 		Distro:        strings.TrimSpace(distro),
 	}
+	interop = strings.TrimSpace(interop)
 	switch info.GOOS {
 	case "windows":
-		if strings.TrimSpace(interop) != "" || info.Distro != "" {
+		if interop != "" {
+			info.InteropMarkers = append(info.InteropMarkers, "WSL_INTEROP")
+		}
+		if info.Distro != "" {
+			info.InteropMarkers = append(info.InteropMarkers, "WSL_DISTRO_NAME")
+		}
+		if len(info.InteropMarkers) != 0 {
 			info.Kind = WindowsWSLInterop
 		} else {
 			info.Kind = WindowsNative
@@ -95,6 +110,8 @@ func classify(goos, kernelRelease, distro, interop string) Runtime {
 		switch {
 		case strings.Contains(kernel, "microsoft") && strings.Contains(kernel, "wsl2"):
 			info.Kind = WSL2Native
+		case strings.Contains(kernel, "microsoft-standard"):
+			info.Kind = WSLUnrecognized
 		case strings.Contains(kernel, "microsoft"):
 			info.Kind = WSL1Native
 		default:

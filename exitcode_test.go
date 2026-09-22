@@ -63,6 +63,7 @@ func TestSubprocessExitCodes(t *testing.T) {
 		if err := os.MkdirAll(unsupportedDir, 0755); err != nil {
 			t.Fatalf("mkdir workdir: %v", err)
 		}
+		runExitTest(t, cbPath, []string{"version"}, 0, unsupportedDir)
 		runExitTest(t, cbPath, []string{"doctor"}, exitCbFailure, unsupportedDir)
 		return
 	}
