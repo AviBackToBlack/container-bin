@@ -31,16 +31,16 @@ func verifyOwnership(path string) error {
 	return nil
 }
 
-var getWindowsDirectoryW = syscall.NewLazyDLL("kernel32.dll").NewProc("GetWindowsDirectoryW")
+var getSystemWindowsDirectoryW = syscall.NewLazyDLL("kernel32.dll").NewProc("GetSystemWindowsDirectoryW")
 
 func powerShellExecutable() (string, error) {
 	buffer := make([]uint16, 32768)
-	n, _, callErr := getWindowsDirectoryW.Call(uintptr(unsafe.Pointer(&buffer[0])), uintptr(len(buffer)))
+	n, _, callErr := getSystemWindowsDirectoryW.Call(uintptr(unsafe.Pointer(&buffer[0])), uintptr(len(buffer)))
 	if n == 0 {
-		return "", fmt.Errorf("resolve Windows directory: %w", callErr)
+		return "", fmt.Errorf("resolve system Windows directory: %w", callErr)
 	}
 	if n >= uintptr(len(buffer)) {
-		return "", fmt.Errorf("resolve Windows directory: returned path is too long")
+		return "", fmt.Errorf("resolve system Windows directory: returned path is too long")
 	}
 	return powerShellExecutableAt(syscall.UTF16ToString(buffer[:n]))
 }

@@ -37,11 +37,7 @@ with the machine's normal administrator configuration-management mechanism.
 policy_version = 1
 require_lock = true
 allow_local_images = false
-allowed_repositories = [
-  "docker.io/library",
-  "ghcr.io/acme/developer-tools",
-  "registry.example.com:5443/platform"
-]
+allowed_repositories = ["docker.io/library", "ghcr.io/acme/developer-tools", "registry.example.com:5443/platform"]
 expires_at = "2027-01-01T00:00:00Z"
 ```
 

@@ -204,10 +204,7 @@ and `stateful` profiles alike.
 [tools.token-meter]
 image = "example/token-meter:latest"
 provider = "stateless"
-host_mounts = [
-  "%USERPROFILE%\\.claude:/root/.claude:ro",
-  "%USERPROFILE%\\.codex:/root/.codex:ro",
-]
+host_mounts = ["%USERPROFILE%\\.claude:/root/.claude:ro", "%USERPROFILE%\\.codex:/root/.codex:ro"]
 ```
 
 Entries follow the `SOURCE:/CONTAINER_PATH:MODE` shape used by
