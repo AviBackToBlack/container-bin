@@ -93,8 +93,9 @@ with lock_path.open("a+b") as state_lock:
             target.relative_to(root)
         except ValueError:
             parts = link.relative_to(root).parts
-            venv_python = len(parts) == 5 and parts[:2] == ("home", "venvs") and parts[-2] == "bin" and parts[-1] in ("python", allowed_python.name)
-            shared_python = len(parts) == 4 and parts[:2] == ("home", "shared") and parts[-2:] == ("bin", allowed_python.name)
+            interpreter_aliases = ("python", "python3", allowed_python.name)
+            venv_python = len(parts) == 5 and parts[:2] == ("home", "venvs") and parts[-2] == "bin" and parts[-1] in interpreter_aliases
+            shared_python = len(parts) == 4 and parts[:2] == ("home", "shared") and parts[-2] == "bin" and parts[-1] in interpreter_aliases
             launcher_python = len(parts) == 5 and parts[:2] == ("launcher-cache", "archive-v0") and parts[-2:] == ("bin", "python")
             if target != allowed_python or not (venv_python or shared_python or launcher_python):
                 raise RuntimeError(f"pipx produced unsupported symlink: {link} -> {raw_target}")

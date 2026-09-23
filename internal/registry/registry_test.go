@@ -697,7 +697,8 @@ func TestPipxProfile(t *testing.T) {
 		`except OSError as exc:`,
 		`raise RuntimeError(f"pipx produced unsupported symlink: {link} -> {raw_target}") from exc`,
 		`parts[:2] == ("home", "shared")`,
-		`parts[-1] in ("python", allowed_python.name)`,
+		`interpreter_aliases = ("python", "python3", allowed_python.name)`,
+		`parts[-1] in interpreter_aliases`,
 		`secrets.token_hex(8)`,
 		`raise SystemExit(status)`,
 	} {
