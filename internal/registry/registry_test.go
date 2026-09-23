@@ -684,9 +684,12 @@ func TestPipxProfile(t *testing.T) {
 	if pipx.Image != "ghcr.io/astral-sh/uv:0.12-python3.13-trixie-slim" || pipx.Provider != "stateful" || pipx.StateGroup != "pipx117-py313" {
 		t.Fatalf("bad pipx profile identity: %+v", pipx)
 	}
-	if len(pipx.Command) != 3 || pipx.Command[0] != "/usr/local/bin/python3" || pipx.Command[1] != "-c" ||
-		!strings.Contains(pipx.Command[2], `["/usr/local/bin/uvx", "--from", "pipx==1.17.4", "pipx", *argv]`) ||
-		!strings.Contains(pipx.Command[2], `pipx produced unsupported symlink`) {
+	if len(pipx.Command) != 3 || pipx.Command[0] != "/usr/local/bin/python3" || pipx.Command[1] != "-c" {
+		t.Fatalf("pipx command = %#v", pipx.Command)
+	}
+	command := strings.ReplaceAll(pipx.Command[2], "\r\n", "\n")
+	if !strings.Contains(command, `["/usr/local/bin/uvx", "--from", "pipx==1.17.4", "pipx", *argv]`) ||
+		!strings.Contains(command, `pipx produced unsupported symlink`) {
 		t.Fatalf("pipx command = %#v", pipx.Command)
 	}
 	for _, fragment := range []string{
@@ -706,12 +709,12 @@ func TestPipxProfile(t *testing.T) {
 		`return 128 - status`,
 		`raise SystemExit(`,
 	} {
-		if !strings.Contains(pipx.Command[2], fragment) {
-			t.Fatalf("pipx command missing %q: %q", fragment, pipx.Command[2])
+		if !strings.Contains(command, fragment) {
+			t.Fatalf("pipx command missing %q: %q", fragment, command)
 		}
 	}
-	if strings.Contains(pipx.Command[2], "os.path.isabs") {
-		t.Fatalf("pipx command must validate relative symlinks too: %q", pipx.Command[2])
+	if strings.Contains(command, "os.path.isabs") {
+		t.Fatalf("pipx command must validate relative symlinks too: %q", command)
 	}
 	wantVolumes := []string{"state:/cb/pipx"}
 	if !reflect.DeepEqual(pipx.SharedVolumes, wantVolumes) {
