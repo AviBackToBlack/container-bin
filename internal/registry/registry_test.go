@@ -685,22 +685,26 @@ func TestPipxProfile(t *testing.T) {
 		t.Fatalf("bad pipx profile identity: %+v", pipx)
 	}
 	if len(pipx.Command) != 3 || pipx.Command[0] != "/usr/local/bin/python3" || pipx.Command[1] != "-c" ||
-		!strings.Contains(pipx.Command[2], `["/usr/local/bin/uvx", "--from", "pipx==1.17.4", "pipx", *sys.argv[1:]]`) ||
+		!strings.Contains(pipx.Command[2], `["/usr/local/bin/uvx", "--from", "pipx==1.17.4", "pipx", *argv]`) ||
 		!strings.Contains(pipx.Command[2], `pipx produced unsupported symlink`) {
 		t.Fatalf("pipx command = %#v", pipx.Command)
 	}
 	for _, fragment := range []string{
 		`fcntl.flock(state_lock, fcntl.LOCK_EX)`,
-		`status = subprocess.run(`,
+		`status = runner(`,
+		`except KeyboardInterrupt:`,
+		"finally:\n            normalize_state(root, allowed_python)",
 		`raw_target = os.readlink(link)`,
 		`except FileNotFoundError:`,
 		`except OSError as exc:`,
-		`raise RuntimeError(f"pipx produced unsupported symlink: {link} -> {raw_target}") from exc`,
+		`f"pipx produced unsupported symlink: {link} -> {raw_target}"`,
+		`) from exc`,
 		`parts[:2] == ("home", "shared")`,
 		`interpreter_aliases = ("python", "python3", allowed_python.name)`,
 		`parts[-1] in interpreter_aliases`,
 		`secrets.token_hex(8)`,
-		`raise SystemExit(status)`,
+		`return 128 - status`,
+		`raise SystemExit(`,
 	} {
 		if !strings.Contains(pipx.Command[2], fragment) {
 			t.Fatalf("pipx command missing %q: %q", fragment, pipx.Command[2])

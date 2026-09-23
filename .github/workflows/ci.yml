@@ -38,6 +38,8 @@ jobs:
         run: go vet ./...
       - name: go test (race)
         run: go test -race ./...
+      - name: Test embedded pipx wrapper
+        run: python3 -m unittest -v internal/registry/pipx_wrapper_test.py
       - name: Verify release-style version injection
         run: |
           # The binary MUST be named cb: argv[0] dispatch treats any other
