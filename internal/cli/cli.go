@@ -282,6 +282,7 @@ type exposeStore struct {
 	binDirectory     string
 	installHint      string
 	validateTargets  bool
+	requireLabels    bool
 	companionTargets []string
 	companionMounts  []exposeMount
 }
@@ -307,7 +308,7 @@ func exposeStoreForMountTarget(dst string) (exposeStore, bool) {
 	case "/cb/uv-bin":
 		return exposeStore{kind: "uv tool", mountTarget: dst, binDirectory: dst, installHint: "uv tool install <package>", companionTargets: []string{"/cb/uv-tools"}}, true
 	case "/cb/pipx":
-		return exposeStore{kind: "pipx", mountTarget: dst, binDirectory: dst + "/bin", installHint: "pipx install <package>", validateTargets: true}, true
+		return exposeStore{kind: "pipx", mountTarget: dst, binDirectory: dst + "/bin", installHint: "pipx install <package>", validateTargets: true, requireLabels: true}, true
 	case "/root/.dotnet":
 		return exposeStore{kind: ".NET tool", mountTarget: dst, binDirectory: dst + "/tools", installHint: "dotnet tool install --global <package>"}, true
 	case "/cb/ruby-gems":
@@ -458,10 +459,31 @@ func ensureExposeStoreVolumes(t registry.Tool, store exposeStore) error {
 		if err != nil {
 			return fmt.Errorf("verify %s global store: %w", store.kind, err)
 		}
-		for key, want := range labels {
-			if actual[key] != want {
-				return fmt.Errorf("%s global store volume %s has incompatible label %s=%q (want %q)", store.kind, volumeName, key, actual[key], want)
-			}
+		if err := validateExposeStoreLabels(store, volumeName, labels, actual); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateExposeStoreLabels(store exposeStore, volumeName string, want, actual map[string]string) error {
+	// Runtime versions predating managed-volume labels already created stores
+	// for the established ecosystems. Docker cannot add labels to an existing
+	// volume, so preserve those legacy stores instead of silently breaking an
+	// existing expose workflow. Pipx has no pre-label installed base: its new
+	// reserved volume name must either carry the exact ownership labels or fail.
+	if actual["cb.managed"] == "" && !store.requireLabels {
+		return nil
+	}
+	keys := make([]string, 0, len(want))
+	for key := range want {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		value := want[key]
+		if actual[key] != value {
+			return fmt.Errorf("%s global store volume %s has incompatible label %s=%q (want %q)", store.kind, volumeName, key, actual[key], value)
 		}
 	}
 	return nil

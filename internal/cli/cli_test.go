@@ -508,6 +508,20 @@ func TestPipxExposeDiscoveryMountsStateReadOnly(t *testing.T) {
 	}
 }
 
+func TestExposeStoreLabelValidationPreservesLegacyStoresButRequiresPipxOwnership(t *testing.T) {
+	want := map[string]string{"cb.managed": "true", "cb.kind": "shared", "cb.owner": "demo/tools"}
+	if err := validateExposeStoreLabels(exposeStore{kind: "npm"}, "cb-demo-tools", want, nil); err != nil {
+		t.Fatalf("legacy established store rejected: %v", err)
+	}
+	pipx := exposeStore{kind: "pipx", requireLabels: true}
+	if err := validateExposeStoreLabels(pipx, "cb-pipx117-py313-state", want, nil); err == nil || !strings.Contains(err.Error(), "incompatible label") {
+		t.Fatalf("unlabeled pipx store error = %v", err)
+	}
+	if err := validateExposeStoreLabels(pipx, "cb-pipx117-py313-state", want, want); err != nil {
+		t.Fatalf("correctly labeled pipx store rejected: %v", err)
+	}
+}
+
 func TestExposeStoreRejectsAmbiguousProfile(t *testing.T) {
 	reg, err := registry.ParseTOML(`[tools.demo]
 image = "example/demo:1"
