@@ -20,6 +20,10 @@
 *.out
 /dist/
 
+# Python wrapper-test artifacts
+__pycache__/
+*.pyc
+
 # Editor / OS noise
 .vscode/
 .idea/

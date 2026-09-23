@@ -18,6 +18,7 @@ import (
 	"github.com/AviBackToBlack/container-bin/internal/dockervol"
 	"github.com/AviBackToBlack/container-bin/internal/lockfile"
 	"github.com/AviBackToBlack/container-bin/internal/pathmap"
+	"github.com/AviBackToBlack/container-bin/internal/policy"
 	"github.com/AviBackToBlack/container-bin/internal/registry"
 )
 
@@ -49,7 +50,7 @@ func interactiveTerminal() bool {
 	return err == nil && out.Mode()&os.ModeCharDevice != 0
 }
 
-func RunTool(t registry.Tool, userArgs []string) (int, error) {
+func RunTool(t registry.Tool, userArgs []string, machinePolicy policy.Policy) (int, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return 1, err
@@ -64,7 +65,7 @@ func RunTool(t registry.Tool, userArgs []string) (int, error) {
 		return 1, err
 	}
 
-	imageRef, err := lockfile.RuntimeImageForTool(t)
+	imageRef, err := lockfile.RuntimeImageForTool(t, machinePolicy)
 	if err != nil {
 		return 1, err
 	}
@@ -475,8 +476,8 @@ func buildHostMountArgs(hostMounts []string) ([]string, error) {
 	return args, nil
 }
 
-func EnsureImageLocalForTool(t registry.Tool) error {
-	ref, err := lockfile.RuntimeImageForTool(t)
+func EnsureImageLocalForTool(t registry.Tool, machinePolicy policy.Policy) error {
+	ref, err := lockfile.RuntimeImageForTool(t, machinePolicy)
 	if err != nil {
 		return err
 	}

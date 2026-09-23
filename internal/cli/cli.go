@@ -7,6 +7,7 @@ package cli
 import (
 	"archive/zip"
 	"bytes"
+	_ "embed"
 	"errors"
 	"fmt"
 	"io"
@@ -21,14 +22,16 @@ import (
 	"github.com/AviBackToBlack/container-bin/internal/atomicio"
 	"github.com/AviBackToBlack/container-bin/internal/diag"
 	"github.com/AviBackToBlack/container-bin/internal/dockerrun"
+	"github.com/AviBackToBlack/container-bin/internal/dockervol"
 	"github.com/AviBackToBlack/container-bin/internal/lockfile"
 	"github.com/AviBackToBlack/container-bin/internal/pathmap"
+	"github.com/AviBackToBlack/container-bin/internal/policy"
 	"github.com/AviBackToBlack/container-bin/internal/registry"
 	"github.com/AviBackToBlack/container-bin/internal/statearchive"
 	"github.com/AviBackToBlack/container-bin/internal/toml"
 )
 
-func Setup(cfgPath, version string) error {
+func Setup(cfgPath, version string, machinePolicy policy.Policy) error {
 	if err := registry.EnsureFile(cfgPath); err != nil {
 		return err
 	}
@@ -43,7 +46,7 @@ func Setup(cfgPath, version string) error {
 		return err
 	}
 	fmt.Println("\nRunning doctor after setup...")
-	return diag.Doctor(reg, cfgPath)
+	return diag.Doctor(reg, cfgPath, machinePolicy)
 }
 
 func renderAddedToolSection(name, image string) string {
@@ -53,13 +56,14 @@ func renderAddedToolSection(name, image string) string {
 // Add appends the smallest useful profile: a stateless tool that runs its
 // image entrypoint. More privileged behavior (environment, state, mounts and
 // path rules) remains an explicit registry edit rather than inferred defaults.
-func Add(reg registry.Registry, cfgPath string, args []string) error {
-	return add(reg, cfgPath, args, registry.InstallShims)
+func Add(reg registry.Registry, cfgPath string, args []string, machinePolicy policy.Policy) error {
+	return add(reg, cfgPath, args, registry.InstallShims, machinePolicy)
 }
 
-func add(reg registry.Registry, cfgPath string, args []string, install func(registry.Registry) error) error {
-	if len(args) != 3 || args[1] != "--image" || args[0] == "" || args[2] == "" {
-		return errors.New("usage: cb add TOOL --image IMAGE")
+func add(reg registry.Registry, cfgPath string, args []string, install func(registry.Registry) error, machinePolicy policy.Policy) error {
+	local := len(args) == 4 && args[3] == "--local"
+	if (len(args) != 3 && !local) || args[1] != "--image" || args[0] == "" || args[2] == "" {
+		return errors.New("usage: cb add TOOL --image IMAGE [--local]")
 	}
 	name := strings.ToLower(args[0])
 	image := args[2]
@@ -77,6 +81,9 @@ func add(reg registry.Registry, cfgPath string, args []string, install func(regi
 	}
 	if strings.HasPrefix(image, "-") {
 		return errors.New("image reference must not start with '-'")
+	}
+	if err := machinePolicy.AuthorizeLockTarget(image, local); err != nil {
+		return err
 	}
 	lockExists := false
 	if _, err := os.Stat(lockfile.PathFor(cfgPath)); err == nil {
@@ -106,14 +113,22 @@ func add(reg registry.Registry, cfgPath string, args []string, install func(regi
 
 	fmt.Printf("added %s -> %s (stateless)\n", name, image)
 	if lockExists {
-		fmt.Printf("lockfile is now incomplete; run `cb update %s` or `cb lock` before using the shim\n", name)
+		if local {
+			fmt.Printf("lockfile is now incomplete; run `cb update --local %s` or `cb lock --local %s` before using the shim\n", name, name)
+		} else {
+			fmt.Printf("lockfile is now incomplete; run `cb update %s` or `cb lock` before using the shim\n", name)
+		}
 	} else {
-		fmt.Println("run `cb lock` to pin configured images before relying on the shim")
+		if local {
+			fmt.Printf("run `cb lock --local %s` to pin the local image ID before relying on the shim\n", name)
+		} else {
+			fmt.Println("run `cb lock` to pin configured images before relying on the shim")
+		}
 	}
 	return nil
 }
 
-func Trace(reg registry.Registry, args []string) error {
+func Trace(reg registry.Registry, args []string, machinePolicy policy.Policy) error {
 	if len(args) == 0 {
 		return errors.New("usage: cb trace TOOL [ARGS...]")
 	}
@@ -158,6 +173,12 @@ func Trace(reg registry.Registry, args []string) error {
 	}
 	fmt.Printf("image:      %s\n", t.Image)
 	fmt.Printf("provider:   %s\n", t.Provider)
+	fmt.Printf("policy:     %s\n", machinePolicy.Summary())
+	if image, err := lockfile.RuntimeImageForTool(t, machinePolicy); err != nil {
+		fmt.Printf("authorization: WOULD FAIL (%v)\n", err)
+	} else {
+		fmt.Printf("authorization: ALLOWED (%s)\n", image)
+	}
 	fmt.Printf("cwd:        %s\n", cwd)
 	if t.CwdMode == "isolated" {
 		fmt.Printf("cwd_mode:   isolated\n")
@@ -243,7 +264,7 @@ func Env(reg registry.Registry) error {
 	return nil
 }
 
-func Default(reg registry.Registry, cfgPath string, args []string) error {
+func Default(reg registry.Registry, cfgPath string, args []string, machinePolicy policy.Policy) error {
 	if reg.SchemaVersion < 2 {
 		return errors.New("runtime defaults require registry schema 2; run `cb install` to upgrade")
 	}
@@ -266,6 +287,15 @@ func Default(reg registry.Registry, cfgPath string, args []string) error {
 		return errors.New("usage: cb default | cb default set FAMILY VERSION")
 	}
 	family, version := strings.ToLower(args[1]), strings.ToLower(args[2])
+	if machinePolicy.Managed() {
+		for _, candidate := range reg.Tools {
+			if candidate.DefaultFamily == family && candidate.DefaultVersion == version {
+				if _, err := lockfile.RuntimeImageForTool(candidate, machinePolicy); err != nil {
+					return fmt.Errorf("default target %s is not authorized: %w", candidate.Name, err)
+				}
+			}
+		}
+	}
 	if err := registry.SetDefaultVersion(cfgPath, family, version); err != nil {
 		return err
 	}
@@ -280,6 +310,9 @@ type exposeStore struct {
 	mountTarget      string
 	binDirectory     string
 	installHint      string
+	validateTargets  bool
+	requireLabels    bool
+	discoveryLock    string
 	companionTargets []string
 	companionMounts  []exposeMount
 }
@@ -304,6 +337,8 @@ func exposeStoreForMountTarget(dst string) (exposeStore, bool) {
 		return exposeStore{kind: "Cargo", mountTarget: dst, binDirectory: dst + "/bin", installHint: "cargo install <crate>"}, true
 	case "/cb/uv-bin":
 		return exposeStore{kind: "uv tool", mountTarget: dst, binDirectory: dst, installHint: "uv tool install <package>", companionTargets: []string{"/cb/uv-tools"}}, true
+	case "/cb/pipx":
+		return exposeStore{kind: "pipx", mountTarget: dst, binDirectory: dst + "/bin", installHint: "pipx install <package>", validateTargets: true, requireLabels: true, discoveryLock: dst + "/.cb-pipx.lock"}, true
 	case "/root/.dotnet":
 		return exposeStore{kind: ".NET tool", mountTarget: dst, binDirectory: dst + "/tools", installHint: "dotnet tool install --global <package>"}, true
 	case "/cb/ruby-gems":
@@ -335,7 +370,7 @@ func exposeStoreFor(t registry.Tool) (exposeStore, error) {
 		found = &candidate
 	}
 	if found == nil {
-		return exposeStore{}, fmt.Errorf("tool %q has no supported global binary store (/cb/npm-global, /go/bin, /cb/cargo-global, /cb/uv-bin, /root/.dotnet or /cb/ruby-gems)", t.Name)
+		return exposeStore{}, fmt.Errorf("tool %q has no supported global binary store (/cb/npm-global, /go/bin, /cb/cargo-global, /cb/uv-bin, /cb/pipx, /root/.dotnet or /cb/ruby-gems)", t.Name)
 	}
 	for _, target := range found.companionTargets {
 		volumeName, ok := volumesByTarget[target]
@@ -416,15 +451,21 @@ func exposeSharedFileFor(t registry.Tool, logicalName, command string) (exposeSt
 	return *store, exposedBin{name: name, command: command}, nil
 }
 
-func discoverGlobalBins(t registry.Tool, store exposeStore) ([]exposedBin, error) {
-	image, err := lockfile.RuntimeImageForTool(t)
+func discoverGlobalBins(t registry.Tool, store exposeStore, machinePolicy policy.Policy) ([]exposedBin, error) {
+	image, err := lockfile.RuntimeImageForTool(t, machinePolicy)
 	if err != nil {
 		return nil, err
 	}
 	if err := inspectExposeImage(t.Name, image); err != nil {
 		return nil, err
 	}
+	if err := ensureExposeStoreVolumes(t, store); err != nil {
+		return nil, err
+	}
 	script := `if [ -d "$1" ]; then for f in "$1"/*; do [ -f "$f" ] && [ -x "$f" ] || continue; printf '%s\000' "${f##*/}"; done; fi`
+	if store.discoveryLock != "" {
+		script = pipxDiscoveryScript
+	}
 	dockerArgs, err := exposeDiscoveryArgs(store, image, script)
 	if err != nil {
 		return nil, err
@@ -435,6 +476,80 @@ func discoverGlobalBins(t registry.Tool, store exposeStore) ([]exposedBin, error
 		return nil, exposeDiscoveryError(store.kind, out, err)
 	}
 	return parseExposedBins(out, store)
+}
+
+//go:embed pipx_discovery.py
+var pipxDiscoveryScript string
+
+func ensureExposeStoreVolumes(t registry.Tool, store exposeStore) error {
+	volumes, err := exposeStoreManagedVolumes(t, store)
+	if err != nil {
+		return err
+	}
+	for volumeName, labels := range volumes {
+		if err := dockervol.EnsureManaged(volumeName, labels); err != nil {
+			return fmt.Errorf("prepare %s global store: %w", store.kind, err)
+		}
+		actual, err := dockervol.Labels(volumeName)
+		if err != nil {
+			return fmt.Errorf("verify %s global store: %w", store.kind, err)
+		}
+		if err := validateExposeStoreLabels(store, volumeName, labels, actual); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateExposeStoreLabels(store exposeStore, volumeName string, want, actual map[string]string) error {
+	// Runtime versions predating managed-volume labels already created stores
+	// for the established ecosystems. Docker cannot add labels to an existing
+	// volume, so preserve those legacy stores instead of silently breaking an
+	// existing expose workflow. Pipx has no pre-label installed base: its new
+	// reserved volume name must either carry the exact ownership labels or fail.
+	if actual["cb.managed"] == "" && !store.requireLabels {
+		return nil
+	}
+	keys := make([]string, 0, len(want))
+	for key := range want {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		value := want[key]
+		if actual[key] != value {
+			return fmt.Errorf("%s global store volume %s has incompatible label %s=%q (want %q)", store.kind, volumeName, key, actual[key], value)
+		}
+	}
+	return nil
+}
+
+func exposeStoreManagedVolumes(t registry.Tool, store exposeStore) (map[string]map[string]string, error) {
+	needed := map[string]bool{store.volumeName: true}
+	for _, companion := range store.companionMounts {
+		needed[companion.volumeName] = true
+	}
+	volumes := map[string]map[string]string{}
+	for _, spec := range t.SharedVolumes {
+		logical, _, err := registry.ParseVolumeBinding(spec)
+		if err != nil {
+			return nil, err
+		}
+		volumeName := pathmap.StatefulSharedVolumeID(t.StateGroup, logical)
+		if !needed[volumeName] {
+			continue
+		}
+		volumes[volumeName] = map[string]string{
+			"cb.managed": "true",
+			"cb.kind":    "shared",
+			"cb.owner":   t.StateGroup + "/" + logical,
+		}
+		delete(needed, volumeName)
+	}
+	if len(needed) != 0 {
+		return nil, fmt.Errorf("tool %q global store has no matching shared-volume declaration", t.Name)
+	}
+	return volumes, nil
 }
 
 func exposeDiscoveryError(kind string, out []byte, err error) error {
@@ -455,7 +570,14 @@ func exposeDiscoveryArgs(store exposeStore, image, script string) ([]string, err
 		}
 		dockerArgs = append(dockerArgs, "--mount", mount)
 	}
-	dockerArgs = append(dockerArgs, "--entrypoint", "sh", image, "-c", script, "cb-expose", store.binDirectory)
+	if store.discoveryLock != "" {
+		dockerArgs = append(dockerArgs,
+			"--entrypoint", "/usr/local/bin/python3", image, "-c", script,
+			"discover", store.binDirectory, store.mountTarget, store.discoveryLock,
+		)
+	} else {
+		dockerArgs = append(dockerArgs, "--entrypoint", "sh", image, "-c", script, "cb-expose", store.binDirectory)
+	}
 	return dockerArgs, nil
 }
 
@@ -486,8 +608,8 @@ func inspectExposeImage(sourceName, image string) error {
 
 const sharedFileInspectScript = `if [ -L "$1" ]; then printf 'is a symbolic link'; exit 1; fi; if ! cd -P "$2" 2>/dev/null; then printf 'declared volume mount does not exist'; exit 1; fi; resolved_mount=$(pwd -P) || { printf 'cannot resolve declared volume mount'; exit 1; }; parent=${1%/*}; if [ "$parent" = "$1" ]; then parent=/; fi; if ! cd -P "$parent" 2>/dev/null; then printf 'parent directory does not exist'; exit 1; fi; resolved_parent=$(pwd -P) || { printf 'cannot resolve parent directory'; exit 1; }; case "$resolved_parent" in "$resolved_mount"|"$resolved_mount"/*) ;; *) printf 'parent directory resolves outside the declared volume'; exit 1;; esac; if [ ! -e "$1" ]; then printf 'does not exist'; elif [ ! -f "$1" ]; then printf 'is not a regular file'; elif [ ! -x "$1" ]; then printf 'is not executable'; else exit 0; fi; exit 1`
 
-func inspectSharedVolumeFile(t registry.Tool, store exposeStore, command string) error {
-	image, err := lockfile.RuntimeImageForTool(t)
+func inspectSharedVolumeFile(t registry.Tool, store exposeStore, command string, machinePolicy policy.Policy) error {
+	image, err := lockfile.RuntimeImageForTool(t, machinePolicy)
 	if err != nil {
 		return err
 	}
@@ -517,15 +639,34 @@ func inspectSharedVolumeFile(t registry.Tool, store exposeStore, command string)
 }
 
 func parseExposedBins(out []byte, store exposeStore) ([]exposedBin, error) {
+	fields := bytes.Split(out, []byte{0})
+	if len(fields) > 0 && len(fields[len(fields)-1]) == 0 {
+		fields = fields[:len(fields)-1]
+	}
+	stride := 1
+	if store.validateTargets {
+		stride = 2
+		if len(fields)%stride != 0 {
+			return nil, fmt.Errorf("inspect %s global bin: malformed resolved-target output", store.kind)
+		}
+	}
 	seen := map[string]string{}
 	var bins []exposedBin
-	for _, raw := range bytes.Split(out, []byte{0}) {
-		binary := string(raw)
+	for i := 0; i < len(fields); i += stride {
+		binary := string(fields[i])
 		name := strings.ToLower(binary)
 		// Untrusted names discovered inside the container: skip anything that
 		// is not a safe shim name or that would shadow cb / Windows devices.
 		if name == "" || strings.HasPrefix(name, "-") || !registry.ValidToolName(name) || registry.ReservedToolName(name) {
 			continue
+		}
+		if store.validateTargets {
+			resolved := string(fields[i+1])
+			root := path.Clean(store.mountTarget)
+			target := path.Clean(resolved)
+			if !path.IsAbs(resolved) || (target != root && !strings.HasPrefix(target, root+"/")) {
+				return nil, fmt.Errorf("%s global binary %q resolves outside managed store %s: %s", store.kind, binary, root, resolved)
+			}
 		}
 		if previous, ok := seen[name]; ok {
 			if previous != binary {
@@ -589,7 +730,7 @@ func renderExposedToolSectionWithComment(comment string, source registry.Tool, n
 	)
 }
 
-func exposeSharedVolumeFile(reg registry.Registry, cfgPath string, args []string) error {
+func exposeSharedVolumeFile(reg registry.Registry, cfgPath string, args []string, machinePolicy policy.Policy) error {
 	if len(args) != 3 {
 		return errors.New("usage: cb expose --shared-file TOOL VOLUME /absolute/container/file")
 	}
@@ -609,7 +750,7 @@ func exposeSharedVolumeFile(reg registry.Registry, cfgPath string, args []string
 	if _, _, exists := reg.Resolve(bin.name); exists {
 		return fmt.Errorf("tool %q already exists; unexpose/uninstall it or choose a file with a different basename", bin.name)
 	}
-	if err := inspectSharedVolumeFile(source, store, bin.command); err != nil {
+	if err := inspectSharedVolumeFile(source, store, bin.command, machinePolicy); err != nil {
 		return err
 	}
 	data, err := os.ReadFile(cfgPath)
@@ -635,10 +776,10 @@ func exposeSharedVolumeFile(reg registry.Registry, cfgPath string, args []string
 	return nil
 }
 
-func Expose(reg registry.Registry, cfgPath string, args []string) error {
+func Expose(reg registry.Registry, cfgPath string, args []string, machinePolicy policy.Policy) error {
 	const usage = "usage: cb expose TOOL [BINARY ...] | cb expose --shared-file TOOL VOLUME /absolute/container/file"
 	if len(args) > 0 && args[0] == "--shared-file" {
-		return exposeSharedVolumeFile(reg, cfgPath, args[1:])
+		return exposeSharedVolumeFile(reg, cfgPath, args[1:], machinePolicy)
 	}
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
 		return errors.New(usage)
@@ -660,7 +801,7 @@ func Expose(reg registry.Registry, cfgPath string, args []string) error {
 	if err != nil {
 		return err
 	}
-	bins, err := discoverGlobalBins(source, store)
+	bins, err := discoverGlobalBins(source, store, machinePolicy)
 	if err != nil {
 		return err
 	}
@@ -751,7 +892,7 @@ func isManagedExposedTool(name string, t registry.Tool) bool {
 	return false
 }
 
-func Inspect(reg registry.Registry, args []string) error {
+func Inspect(reg registry.Registry, args []string, machinePolicy policy.Policy) error {
 	if len(args) != 1 {
 		return errors.New("usage: cb inspect TOOL")
 	}
@@ -788,6 +929,7 @@ func Inspect(reg registry.Registry, args []string) error {
 		fmt.Printf("resolved:   %s\n", resolved)
 	}
 	fmt.Printf("image:      %s\nprovider:   %s\n", t.Image, t.Provider)
+	fmt.Printf("policy:     %s\n", machinePolicy.Summary())
 	lock, lockPath, lerr := lockfile.LoadForRegistry()
 	if lerr != nil {
 		fmt.Printf("lock:       ERROR (%v)\n", lerr)
@@ -797,6 +939,11 @@ func Inspect(reg registry.Registry, args []string) error {
 		fmt.Printf("locked:     %s\nstatus:     LOCKED\n", e.Resolved)
 	} else {
 		fmt.Printf("lock:       STALE/UNLOCKED (no matching entry for configured image)\n")
+	}
+	if _, err := lockfile.RuntimeImageForTool(t, machinePolicy); err != nil {
+		fmt.Printf("authorization: REJECTED (%v)\n", err)
+	} else {
+		fmt.Printf("authorization: ALLOWED\n")
 	}
 	if t.Role != "" {
 		fmt.Printf("role:       %s\n", t.Role)
@@ -1053,7 +1200,7 @@ func parseBackupArgs(args []string) (path string, state []string, err error) {
 	return path, state, nil
 }
 
-func Restore(cfgPath string, args []string) error {
+func Restore(cfgPath string, args []string, machinePolicy policy.Policy) error {
 	backupPath, apply, restoreState, err := parseRestoreArgs(args)
 	if err != nil {
 		return err
@@ -1086,9 +1233,11 @@ func Restore(cfgPath string, args []string) error {
 	if !ok {
 		return errors.New("backup does not contain container-bin.toml")
 	}
-	if _, err := registry.ParseTOML(string(cfg)); err != nil {
+	restoredRegistry, err := registry.ParseTOML(string(cfg))
+	if err != nil {
 		return fmt.Errorf("backup registry invalid: %w", err)
 	}
+	var restoredLock *lockfile.LockFile
 	if lock, ok := files["container-bin.lock"]; ok {
 		tmp, err := os.CreateTemp("", "cb-lock-*.tmp")
 		if err != nil {
@@ -1100,9 +1249,13 @@ func Restore(cfgPath string, args []string) error {
 		if err := os.WriteFile(name, lock, 0600); err != nil {
 			return err
 		}
-		if _, err := lockfile.Load(name); err != nil {
+		restoredLock, err = lockfile.Load(name)
+		if err != nil {
 			return fmt.Errorf("backup lock invalid: %w", err)
 		}
+	}
+	if err := authorizeRegistrySnapshot(restoredRegistry, restoredLock, machinePolicy); err != nil {
+		return fmt.Errorf("backup violates machine policy: %w", err)
 	}
 	var stateBackup *statearchive.Archive
 	var statePlan []statearchive.Plan
@@ -1165,6 +1318,33 @@ func Restore(cfgPath string, args []string) error {
 	return nil
 }
 
+func authorizeRegistrySnapshot(reg registry.Registry, lf *lockfile.LockFile, machinePolicy policy.Policy) error {
+	if !machinePolicy.Managed() {
+		return nil
+	}
+	for _, image := range lockfile.ConfiguredImages(reg) {
+		locked, local := false, false
+		resolved := ""
+		if lf != nil {
+			if entry, ok := lf.Images[image]; ok && entry.Configured == image {
+				locked = true
+				local = lockfile.IsLocalResolved(entry.Resolved)
+				resolved = entry.Resolved
+			}
+		}
+		var err error
+		if locked {
+			err = machinePolicy.AuthorizeResolvedImage(image, resolved, local)
+		} else {
+			err = machinePolicy.AuthorizeImage(image, false, false)
+		}
+		if err != nil {
+			return fmt.Errorf("image %q: %w", image, err)
+		}
+	}
+	return nil
+}
+
 func parseRestoreArgs(args []string) (path string, apply, state bool, err error) {
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
 		return "", false, false, errors.New("usage: cb restore BACKUP.zip [--state] [--apply]")
@@ -1189,41 +1369,16 @@ func parseRestoreArgs(args []string) (path string, apply, state bool, err error)
 	return path, apply, state, nil
 }
 
-func Lock(reg registry.Registry, cfgPath string, args []string) error {
+func Lock(reg registry.Registry, cfgPath string, args []string, machinePolicy policy.Policy) error {
 	path := lockfile.PathFor(cfgPath)
 	check, localTools, err := parseLockArgs(args)
 	if err != nil {
 		return err
 	}
 	if check {
-		lf, err := lockfile.Load(path)
-		if err != nil {
-			return err
-		}
-		if lf == nil {
-			return fmt.Errorf("lockfile missing: %s (run `cb lock`)", path)
-		}
-		missing := 0
-		for _, image := range lockfile.ConfiguredImages(reg) {
-			e, ok := lf.Images[image]
-			if !ok || e.Configured != image {
-				fmt.Printf("MISSING  %s\n", image)
-				missing++
-				continue
-			}
-			cmd := exec.Command("docker", "image", "inspect", e.Resolved)
-			if err := cmd.Run(); err != nil {
-				fmt.Printf("ABSENT   %s -> %s\n", image, e.Resolved)
-				missing++
-			} else {
-				fmt.Printf("OK       %s -> %s\n", image, e.Resolved)
-			}
-		}
-		if missing > 0 {
-			return fmt.Errorf("lock check failed: %d image(s) missing/unlocked", missing)
-		}
-		fmt.Printf("lock OK: %s\n", path)
-		return nil
+		return checkLock(reg, path, machinePolicy, func(resolved string) error {
+			return exec.Command("docker", "image", "inspect", resolved).Run()
+		})
 	}
 	localImages := map[string]bool{}
 	for name := range localTools {
@@ -1233,14 +1388,20 @@ func Lock(reg registry.Registry, cfgPath string, args []string) error {
 		}
 		localImages[t.Image] = true
 	}
+	images := lockfile.ConfiguredImages(reg)
+	for _, image := range images {
+		if err := machinePolicy.AuthorizeLockTarget(image, localImages[image]); err != nil {
+			return err
+		}
+	}
 	lf := &lockfile.LockFile{Version: 1, Images: map[string]lockfile.LockEntry{}}
-	for _, image := range lockfile.ConfiguredImages(reg) {
+	for _, image := range images {
 		fmt.Printf("locking  %s\n", image)
 		var e lockfile.LockEntry
 		if localImages[image] {
-			e, err = lockfile.ResolveLocalImage(image)
+			e, err = lockfile.ResolveLocalImage(image, machinePolicy)
 		} else {
-			e, err = lockfile.ResolveRepositoryImage(image)
+			e, err = lockfile.ResolveRepositoryImage(image, machinePolicy)
 		}
 		if err != nil {
 			return err
@@ -1252,6 +1413,51 @@ func Lock(reg registry.Registry, cfgPath string, args []string) error {
 		return err
 	}
 	fmt.Printf("\nlockfile: %s\n", path)
+	return nil
+}
+
+func checkLock(reg registry.Registry, path string, machinePolicy policy.Policy, inspect func(string) error) error {
+	lf, err := lockfile.Load(path)
+	if err != nil {
+		return err
+	}
+	if lf == nil {
+		return fmt.Errorf("lockfile missing: %s (run `cb lock`)", path)
+	}
+	type candidate struct {
+		image string
+		entry lockfile.LockEntry
+	}
+	var candidates []candidate
+	failures := 0
+	for _, image := range lockfile.ConfiguredImages(reg) {
+		e, ok := lf.Images[image]
+		if !ok || e.Configured != image {
+			fmt.Printf("MISSING  %s\n", image)
+			failures++
+			continue
+		}
+		if err := machinePolicy.AuthorizeResolvedImage(image, e.Resolved, lockfile.IsLocalResolved(e.Resolved)); err != nil {
+			fmt.Printf("DENIED   %s (%v)\n", image, err)
+			failures++
+			continue
+		}
+		candidates = append(candidates, candidate{image: image, entry: e})
+	}
+	// Authorization for every configured image is complete before any Docker
+	// inspection. Denied images are never handed to Docker.
+	for _, candidate := range candidates {
+		if err := inspect(candidate.entry.Resolved); err != nil {
+			fmt.Printf("ABSENT   %s -> %s\n", candidate.image, candidate.entry.Resolved)
+			failures++
+		} else {
+			fmt.Printf("OK       %s -> %s\n", candidate.image, candidate.entry.Resolved)
+		}
+	}
+	if failures > 0 {
+		return fmt.Errorf("lock check failed: %d image(s) missing/unlocked/denied/unavailable", failures)
+	}
+	fmt.Printf("lock OK: %s\n", path)
 	return nil
 }
 
@@ -1275,7 +1481,7 @@ func parseLockArgs(args []string) (bool, map[string]bool, error) {
 	return false, localTools, nil
 }
 
-func Update(reg registry.Registry, cfgPath string, args []string) error {
+func Update(reg registry.Registry, cfgPath string, args []string, machinePolicy policy.Policy) error {
 	target, mode, err := parseUpdateArgs(args)
 	if err != nil {
 		return err
@@ -1300,18 +1506,28 @@ func Update(reg registry.Registry, cfgPath string, args []string) error {
 		images = []string{t.Image}
 	}
 	seen := map[string]bool{}
+	uniqueImages := make([]string, 0, len(images))
 	for _, image := range images {
-		if seen[image] {
-			continue
+		if !seen[image] {
+			seen[image] = true
+			uniqueImages = append(uniqueImages, image)
 		}
-		seen[image] = true
+	}
+	for _, image := range uniqueImages {
+		old := lf.Images[image]
+		local := mode == "local" || (mode == "" && lockfile.IsLocalResolved(old.Resolved))
+		if err := machinePolicy.AuthorizeLockTarget(image, local); err != nil {
+			return err
+		}
+	}
+	for _, image := range uniqueImages {
 		old := lf.Images[image]
 		fmt.Printf("updating %s\n", image)
 		var e lockfile.LockEntry
 		if mode == "local" || (mode == "" && lockfile.IsLocalResolved(old.Resolved)) {
-			e, err = lockfile.ResolveLocalImage(image)
+			e, err = lockfile.ResolveLocalImage(image, machinePolicy)
 		} else {
-			e, err = lockfile.ResolveRepositoryImage(image)
+			e, err = lockfile.ResolveRepositoryImage(image, machinePolicy)
 		}
 		if err != nil {
 			return err

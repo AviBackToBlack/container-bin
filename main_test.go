@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AviBackToBlack/container-bin/internal/policy"
 	"github.com/AviBackToBlack/container-bin/internal/registry"
 )
 
@@ -38,13 +39,18 @@ func TestInvokedNameIsCaseInsensitive(t *testing.T) {
 func TestBootstrapCommandsDoNotLoadRegistry(t *testing.T) {
 	oldArgs := os.Args
 	oldLoadRegistry := loadRegistry
+	oldLoadPolicy := loadPolicy
 	defer func() {
 		os.Args = oldArgs
 		loadRegistry = oldLoadRegistry
+		loadPolicy = oldLoadPolicy
 	}()
 
 	loadRegistry = func() (registry.Registry, string, error) {
 		panic("bootstrap command attempted to load the registry")
+	}
+	loadPolicy = func() (policy.Policy, error) {
+		panic("bootstrap command attempted to load machine policy")
 	}
 
 	tests := []struct {
@@ -75,18 +81,23 @@ func TestBootstrapCommandsDoNotLoadRegistry(t *testing.T) {
 	}
 }
 
-func TestSelfUpdateCheckDoesNotLoadRegistry(t *testing.T) {
+func TestSelfUpdateCheckDoesNotLoadPolicyOrRegistry(t *testing.T) {
 	oldArgs := os.Args
 	oldLoadRegistry := loadRegistry
+	oldLoadPolicy := loadPolicy
 	oldRunSelfUpdateCheck := runSelfUpdateCheck
 	defer func() {
 		os.Args = oldArgs
 		loadRegistry = oldLoadRegistry
+		loadPolicy = oldLoadPolicy
 		runSelfUpdateCheck = oldRunSelfUpdateCheck
 	}()
 
 	loadRegistry = func() (registry.Registry, string, error) {
 		panic("self-update check attempted to load the registry")
+	}
+	loadPolicy = func() (policy.Policy, error) {
+		panic("self-update check attempted to load machine policy")
 	}
 	runSelfUpdateCheck = func(_ context.Context, current string, args []string, out io.Writer) error {
 		if current != "dev" {

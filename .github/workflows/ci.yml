@@ -38,6 +38,8 @@ jobs:
         run: go vet ./...
       - name: go test (race)
         run: go test -race ./...
+      - name: Test embedded pipx wrapper
+        run: python3 -m unittest -v internal/registry/pipx_wrapper_test.py internal/cli/pipx_discovery_test.py
       - name: Verify release-style version injection
         run: |
           # The binary MUST be named cb: argv[0] dispatch treats any other
@@ -75,6 +77,84 @@ jobs:
           Write-Host $v
           if ($v -notmatch '^container-bin \S+') { exit 1 }
         shell: pwsh
+
+  test-windows-arm64:
+    name: Test and build (Windows ARM64)
+    runs-on: windows-11-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: Verify native ARM64 runner
+        shell: pwsh
+        run: |
+          $runtimeArch = [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString()
+          $goArch = (go env GOARCH).Trim()
+          $goHostArch = (go env GOHOSTARCH).Trim()
+          Write-Host "runtime architecture: $runtimeArch"
+          Write-Host "Go architecture: $goArch"
+          Write-Host "Go host architecture: $goHostArch"
+          if ($runtimeArch -ne 'Arm64' -or $goArch -ne 'arm64' -or $goHostArch -ne 'arm64') {
+            throw "expected native Windows ARM64, got runtime=$runtimeArch go=$goArch gohost=$goHostArch"
+          }
+      - name: go test
+        run: go test -v ./...
+      - name: Build release-style cb.exe
+        run: go build -trimpath -buildvcs=false -ldflags "-s -w -X main.version=v0.0.0-arm64-citest" -o cb.exe .
+      - name: Smoke-test native management and shim dispatch
+        shell: pwsh
+        run: |
+          $versionOutput = .\cb.exe version
+          Write-Host $versionOutput
+          if ($versionOutput -ne 'container-bin v0.0.0-arm64-citest') {
+            throw "release-style version injection failed: $versionOutput"
+          }
+
+          Copy-Item -LiteralPath .\cb.exe -Destination .\jq.exe
+          $stubDir = Join-Path $env:RUNNER_TEMP 'container-bin-docker-stub'
+          $stubLog = Join-Path $stubDir 'argv.txt'
+          New-Item -ItemType Directory -Path $stubDir -Force | Out-Null
+          $stubSource = Join-Path $stubDir 'main.go'
+          @'
+          package main
+
+          import (
+              "os"
+              "strings"
+          )
+
+          func main() {
+              line := strings.Join(os.Args[1:], " ") + "\n"
+              if err := os.WriteFile(os.Getenv("CB_DOCKER_STUB_LOG"), []byte(line), 0o600); err != nil {
+                  panic(err)
+              }
+              os.Exit(42)
+          }
+          '@ | Set-Content -LiteralPath $stubSource -Encoding Utf8
+          go build -trimpath -buildvcs=false -o (Join-Path $stubDir 'docker.exe') $stubSource
+          $env:CB_DOCKER_STUB_LOG = $stubLog
+          $env:PATH = "$stubDir;$env:PATH"
+
+          & .\jq.exe --version
+          $shimExit = $LASTEXITCODE
+          $dockerArgs = Get-Content -LiteralPath $stubLog -Raw
+          Write-Host "docker stub argv: $dockerArgs"
+          if ($shimExit -ne 42) {
+            throw "shim did not preserve docker exit 42: got $shimExit"
+          }
+          if ($dockerArgs -notmatch '^run --rm -i ' -or
+              $dockerArgs -notmatch [regex]::Escape('ghcr.io/jqlang/jq:latest') -or
+              $dockerArgs -notmatch ' --version\s*$') {
+            throw "shim did not dispatch the expected jq docker command: $dockerArgs"
+          }
+          # The expected shim exit was 42. Clear the native-command status only
+          # after asserting it so pwsh reports this validation step as passed.
+          exit 0
 
   govulncheck:
     name: govulncheck

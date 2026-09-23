@@ -105,6 +105,11 @@ mode:
    - `pip install requests`
    - `terraform -chdir=.\tf validate`
 
+   When qualifying a release that changes managed application exposure, also
+   exercise the pipx path end to end: install a disposable app, run both
+   `cb expose pipx APP` and store-wide `cb expose pipx`, invoke the generated
+   shim, then remove it with `cb unexpose APP`.
+
    `cb self-test` alone does not fully replace this, because it uses its own
    temp project volumes and already-local locked images rather than a first-run
    user project.
@@ -114,20 +119,26 @@ Record the results in a release-qualification issue using
 
 ## What CI already covers vs. what only this matrix proves
 
-The `test-windows` job in `.github/workflows/ci.yml` is:
+The x64 `test-windows` job in `.github/workflows/ci.yml` is:
 
 ```yaml
   test-windows:
     name: Test and build (Windows)
     runs-on: windows-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           check-latest: true
       - name: go test
-        run: go test ./...
+        run: go test -v ./...
+      - name: Test benchmark comparison (Windows PowerShell 5.1)
+        run: powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-compare-startup-benchmarks.ps1
+        shell: pwsh
       - name: Build cb.exe
         run: go build -trimpath -o cb.exe .
       - name: Smoke-test version output
@@ -143,9 +154,10 @@ That proves the following, and no more:
 - It runs on `windows-latest`. GitHub's own `actions/runner-images`
   documentation describes `windows-latest` as a Windows Server runner image,
   not a Windows 11 client install.
-- The only shell-dependent step uses `pwsh` (PowerShell 7.x / PowerShell Core).
-  It does not exercise **Windows PowerShell 5.1** (`powershell.exe`) or
-  **`cmd.exe`**.
+- The management smoke test uses `pwsh` (PowerShell 7.x / PowerShell Core). A
+  dedicated benchmark-comparison fixture is also executed by Windows PowerShell
+  5.1 (`powershell.exe`), but CI does not invoke ContainerBin tools through that
+  shell and does not exercise **`cmd.exe`**.
 - It has **no Docker Desktop** and makes **no `docker run` call**. `go test ./...`
   on Windows exercises pure logic and any `runtime.GOOS == "windows"`-gated
   unit tests — `docs/windows-paths.md` notes that its Windows-gated tests are
@@ -154,6 +166,16 @@ That proves the following, and no more:
   dispatches `cb version`; it never reaches `runTool` or `docker run`.
 - It does not vary Docker Desktop version, the Linux-versus-Windows-containers
   mode switch, or real bind-mount/volume behavior.
+
+The separate `test-windows-arm64` job runs on GitHub's native
+`windows-11-arm` runner. It asserts both the process and Go toolchain report
+ARM64, runs the full unit suite, builds a release-style `cb.exe`, and dispatches
+a copied `jq.exe` shim to a controlled, compiled `docker.exe` stub. That proves native
+management execution, argv[0] shim dispatch and tool exit-code propagation on
+ARM64 hardware. It still has no Docker Desktop engine, publishes no ARM64
+release artifact and does not qualify bind mounts, volumes, providers, release
+attestations or self-update. Windows ARM64 support remains gated on the RM-29
+release work and real Windows ARM64 + Docker Desktop E2E evidence.
 
 So CI validates compilation and pure/unit logic on a GitHub-hosted Windows
 runner. The matrix is what validates the `docs/shell-contract.md` semantics on a

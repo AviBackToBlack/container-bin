@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/AviBackToBlack/container-bin/internal/atomicio"
+	"github.com/AviBackToBlack/container-bin/internal/policy"
 	"github.com/AviBackToBlack/container-bin/internal/registry"
 	"github.com/AviBackToBlack/container-bin/internal/toml"
 )
@@ -87,6 +88,17 @@ func Load(path string) (*LockFile, error) {
 			}
 			if cur.Digest != cur.Resolved {
 				return fmt.Errorf("lock entry %q local image digest must match resolved ID", curKey)
+			}
+		} else {
+			_, resolvedDigest, ok := splitImmutableRepositoryDigest(cur.Resolved)
+			if !ok {
+				return fmt.Errorf("lock entry %q has invalid immutable repository digest %q", curKey, cur.Resolved)
+			}
+			if cur.Digest != resolvedDigest {
+				return fmt.Errorf("lock entry %q digest does not match resolved repository digest", curKey)
+			}
+			if matched, ok := matchRepoDigest(cur.Configured, []string{cur.Resolved}); !ok || matched != cur.Resolved {
+				return fmt.Errorf("lock entry %q resolved repository does not match configured image %q", curKey, cur.Configured)
 			}
 		}
 		lf.Images[cur.Configured] = *cur
@@ -228,15 +240,33 @@ func canonicalRepository(repo string) string {
 func matchRepoDigest(configured string, repoDigests []string) (string, bool) {
 	want := canonicalRepository(imageRepository(configured))
 	for _, rd := range repoDigests {
-		i := strings.LastIndex(rd, "@")
-		if i < 0 || !strings.HasPrefix(rd[i+1:], "sha256:") {
+		repo, _, ok := splitImmutableRepositoryDigest(rd)
+		if !ok {
 			continue
 		}
-		if canonicalRepository(rd[:i]) == want {
+		if canonicalRepository(repo) == want {
 			return rd, true
 		}
 	}
 	return "", false
+}
+
+func splitImmutableRepositoryDigest(ref string) (string, string, bool) {
+	if strings.Count(ref, "@") != 1 {
+		return "", "", false
+	}
+	repo, digest, _ := strings.Cut(ref, "@")
+	if repo == "" || !validImageID(digest) {
+		return "", "", false
+	}
+	lastSlash := strings.LastIndexByte(repo, '/')
+	if strings.LastIndexByte(repo, ':') > lastSlash {
+		return "", "", false
+	}
+	if _, err := policy.CanonicalRepository(repo); err != nil {
+		return "", "", false
+	}
+	return repo, digest, true
 }
 
 type imageInspection struct {
@@ -282,8 +312,11 @@ func repositoryLockEntry(configured string, inspected imageInspection) (LockEntr
 		// configured reference never had.
 		return LockEntry{}, fmt.Errorf("image %s has no RepoDigest for repository %q (locally tagged image?); pull it from its registry before locking", configured, imageRepository(configured))
 	}
-	i := strings.LastIndex(resolved, "@")
-	return LockEntry{Configured: configured, Resolved: resolved, Digest: resolved[i+1:]}, nil
+	_, digest, ok := splitImmutableRepositoryDigest(resolved)
+	if !ok {
+		return LockEntry{}, fmt.Errorf("image %s returned malformed RepoDigest %q", configured, resolved)
+	}
+	return LockEntry{Configured: configured, Resolved: resolved, Digest: digest}, nil
 }
 
 func localLockEntry(configured string, inspected imageInspection) (LockEntry, error) {
@@ -296,7 +329,10 @@ func localLockEntry(configured string, inspected imageInspection) (LockEntry, er
 // ResolveRepositoryImage refreshes a registry-backed lock entry. Repository
 // and local identity are deliberately selected by the CLI, never inferred
 // from Docker metadata: current engines can report RepoDigests for both.
-func ResolveRepositoryImage(configured string) (LockEntry, error) {
+func ResolveRepositoryImage(configured string, machinePolicy policy.Policy) (LockEntry, error) {
+	if err := machinePolicy.AuthorizeLockTarget(configured, false); err != nil {
+		return LockEntry{}, err
+	}
 	cmd := exec.Command("docker", "pull", configured)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -312,7 +348,10 @@ func ResolveRepositoryImage(configured string) (LockEntry, error) {
 // ResolveLocalImage refreshes a local-image lock by inspecting the configured
 // tag only. It never pulls or silently switches an existing local lock to a
 // repository identity.
-func ResolveLocalImage(configured string) (LockEntry, error) {
+func ResolveLocalImage(configured string, machinePolicy policy.Policy) (LockEntry, error) {
+	if err := machinePolicy.AuthorizeLockTarget(configured, true); err != nil {
+		return LockEntry{}, err
+	}
 	inspected, err := inspectImage(configured)
 	if err != nil {
 		return LockEntry{}, fmt.Errorf("local image %s is not available (build or load it before locking): %w", configured, err)
@@ -320,17 +359,30 @@ func ResolveLocalImage(configured string) (LockEntry, error) {
 	return localLockEntry(configured, inspected)
 }
 
-func RuntimeImageForTool(t registry.Tool) (string, error) {
+func RuntimeImageForTool(t registry.Tool, machinePolicy policy.Policy) (string, error) {
 	lf, path, err := LoadForRegistry()
 	if err != nil {
 		return "", fmt.Errorf("lockfile: %w", err)
 	}
+	return runtimeImageForTool(t, machinePolicy, lf, path)
+}
+
+func runtimeImageForTool(t registry.Tool, machinePolicy policy.Policy, lf *LockFile, path string) (string, error) {
 	if lf == nil {
+		if err := machinePolicy.AuthorizeImage(t.Image, false, false); err != nil {
+			return "", err
+		}
 		return t.Image, nil
 	}
 	e, ok := lf.Images[t.Image]
 	if !ok || e.Configured != t.Image {
+		if err := machinePolicy.AuthorizeImage(t.Image, false, false); err != nil {
+			return "", err
+		}
 		return "", fmt.Errorf("image %q is not locked in %s; run `cb update %s` or `cb lock`", t.Image, path, t.Name)
+	}
+	if err := machinePolicy.AuthorizeResolvedImage(t.Image, e.Resolved, IsLocalResolved(e.Resolved)); err != nil {
+		return "", err
 	}
 	return e.Resolved, nil
 }

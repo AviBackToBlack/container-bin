@@ -27,10 +27,7 @@ For an explicit ContainerBin profile, prefer an allowlist such as:
 image = "registry.corp.example/devtools/terraform:1.13.3"
 provider = "stateless"
 path_equals = ["-chdir"]
-env_names = [
-  "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
-  "http_proxy", "https_proxy", "no_proxy",
-]
+env_names = ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"]
 ```
 
 The profile passes only variables already present in the host environment. Do
