@@ -450,7 +450,8 @@ The generated application profiles preserve the pipx image, state group,
 volumes and environment policy. Exposure discovery reads only the managed bin
 directory within the state volume through the selected locked profile; it does
 not search a project venv, the host `PATH`, uv's store, or other container
-directories.
+directories. Each discovered executable must also resolve inside the managed
+pipx state volume, so an external link left by a failed install is rejected.
 Plain `pip` remains for project dependencies, so scripts in `/venv/bin` are
 deliberately not eligible for global exposure.
 

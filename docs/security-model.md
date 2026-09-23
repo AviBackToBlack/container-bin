@@ -93,7 +93,8 @@ readable, and dangerous to let others edit.
   Python package index into a dedicated cache on first use. Index overrides,
   TLS settings and proxies therefore remain part of that bootstrap's trust
   boundary; the image lock does not attest package-index artifacts.
-- **Fail-closed pipx link normalization.** After a successful pipx command, the
+- **Fail-closed pipx link normalization.** After every pipx command, including
+  failed commands and interrupts, the
   profile makes pipx-owned absolute links relative within its one state volume
   and copies the exact image interpreter only at known venv/cache locations.
   Any other absolute link fails the command; archive traversal checks remain

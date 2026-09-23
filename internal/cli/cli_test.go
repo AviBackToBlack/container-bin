@@ -489,7 +489,7 @@ func TestPipxExposeDiscoveryMountsStateReadOnly(t *testing.T) {
 	want := []string{
 		"run", "--rm", "--pull", "never", "--network", "none", "--read-only",
 		"--mount", "type=volume,src=cb-pipx117-py313-state,dst=/cb/pipx,readonly",
-		"--entrypoint", "sh", "example/pipx:1", "-c", "discover-script", "cb-expose", "/cb/pipx/bin",
+		"--entrypoint", "sh", "example/pipx:1", "-c", "discover-script", "cb-expose", "/cb/pipx/bin", "/cb/pipx",
 	}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("discovery args = %#v, want %#v", args, want)
@@ -682,6 +682,22 @@ func TestParseExposedBinsRejectsCaseCollision(t *testing.T) {
 	store := exposeStore{binDirectory: "/go/bin"}
 	if _, err := parseExposedBins([]byte("Stringer\x00stringer\x00"), store); err == nil || !strings.Contains(err.Error(), "differ only by case") {
 		t.Fatalf("case-collision error = %v", err)
+	}
+}
+
+func TestParseExposedBinsRejectsResolvedTargetOutsideManagedStore(t *testing.T) {
+	store := exposeStore{kind: "pipx", mountTarget: "/cb/pipx", binDirectory: "/cb/pipx/bin", validateTargets: true}
+	if _, err := parseExposedBins([]byte("cowsay\x00/usr/local/bin/cowsay\x00"), store); err == nil || !strings.Contains(err.Error(), "resolves outside managed store /cb/pipx") {
+		t.Fatalf("external target error = %v", err)
+	}
+
+	bins, err := parseExposedBins([]byte("cowsay\x00/cb/pipx/home/cowsay/venv/bin/cowsay\x00"), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []exposedBin{{name: "cowsay", command: "/cb/pipx/bin/cowsay"}}
+	if !reflect.DeepEqual(bins, want) {
+		t.Fatalf("bins = %#v, want %#v", bins, want)
 	}
 }
 

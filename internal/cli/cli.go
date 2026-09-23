@@ -281,6 +281,7 @@ type exposeStore struct {
 	mountTarget      string
 	binDirectory     string
 	installHint      string
+	validateTargets  bool
 	companionTargets []string
 	companionMounts  []exposeMount
 }
@@ -306,7 +307,7 @@ func exposeStoreForMountTarget(dst string) (exposeStore, bool) {
 	case "/cb/uv-bin":
 		return exposeStore{kind: "uv tool", mountTarget: dst, binDirectory: dst, installHint: "uv tool install <package>", companionTargets: []string{"/cb/uv-tools"}}, true
 	case "/cb/pipx":
-		return exposeStore{kind: "pipx", mountTarget: dst, binDirectory: dst + "/bin", installHint: "pipx install <package>"}, true
+		return exposeStore{kind: "pipx", mountTarget: dst, binDirectory: dst + "/bin", installHint: "pipx install <package>", validateTargets: true}, true
 	case "/root/.dotnet":
 		return exposeStore{kind: ".NET tool", mountTarget: dst, binDirectory: dst + "/tools", installHint: "dotnet tool install --global <package>"}, true
 	case "/cb/ruby-gems":
@@ -430,7 +431,8 @@ func discoverGlobalBins(t registry.Tool, store exposeStore) ([]exposedBin, error
 	if err := ensureExposeStoreVolumes(t, store); err != nil {
 		return nil, err
 	}
-	script := `if [ -d "$1" ]; then for f in "$1"/*; do [ -f "$f" ] && [ -x "$f" ] || continue; printf '%s\000' "${f##*/}"; done; fi`
+	script := `if [ -d "$1" ]; then for f in "$1"/*; do [ -f "$f" ] && [ -x "$f" ] || continue; if [ -n "${2-}" ]; then newline='
+'; marked=$(readlink -f "$f"; status=$?; printf x; exit "$status") || { printf 'cannot resolve %s\n' "$f" >&2; exit 1; }; resolved=${marked%x}; resolved=${resolved%"$newline"}; printf '%s\000%s\000' "${f##*/}" "$resolved"; else printf '%s\000' "${f##*/}"; fi; done; fi`
 	dockerArgs, err := exposeDiscoveryArgs(store, image, script)
 	if err != nil {
 		return nil, err
@@ -512,6 +514,9 @@ func exposeDiscoveryArgs(store exposeStore, image, script string) ([]string, err
 		dockerArgs = append(dockerArgs, "--mount", mount)
 	}
 	dockerArgs = append(dockerArgs, "--entrypoint", "sh", image, "-c", script, "cb-expose", store.binDirectory)
+	if store.validateTargets {
+		dockerArgs = append(dockerArgs, store.mountTarget)
+	}
 	return dockerArgs, nil
 }
 
@@ -573,15 +578,34 @@ func inspectSharedVolumeFile(t registry.Tool, store exposeStore, command string)
 }
 
 func parseExposedBins(out []byte, store exposeStore) ([]exposedBin, error) {
+	fields := bytes.Split(out, []byte{0})
+	if len(fields) > 0 && len(fields[len(fields)-1]) == 0 {
+		fields = fields[:len(fields)-1]
+	}
+	stride := 1
+	if store.validateTargets {
+		stride = 2
+		if len(fields)%stride != 0 {
+			return nil, fmt.Errorf("inspect %s global bin: malformed resolved-target output", store.kind)
+		}
+	}
 	seen := map[string]string{}
 	var bins []exposedBin
-	for _, raw := range bytes.Split(out, []byte{0}) {
-		binary := string(raw)
+	for i := 0; i < len(fields); i += stride {
+		binary := string(fields[i])
 		name := strings.ToLower(binary)
 		// Untrusted names discovered inside the container: skip anything that
 		// is not a safe shim name or that would shadow cb / Windows devices.
 		if name == "" || strings.HasPrefix(name, "-") || !registry.ValidToolName(name) || registry.ReservedToolName(name) {
 			continue
+		}
+		if store.validateTargets {
+			resolved := string(fields[i+1])
+			root := path.Clean(store.mountTarget)
+			target := path.Clean(resolved)
+			if !path.IsAbs(resolved) || (target != root && !strings.HasPrefix(target, root+"/")) {
+				return nil, fmt.Errorf("%s global binary %q resolves outside managed store %s: %s", store.kind, binary, root, resolved)
+			}
 		}
 		if previous, ok := seen[name]; ok {
 			if previous != binary {
