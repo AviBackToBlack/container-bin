@@ -9,12 +9,14 @@ is configuration (`container-bin.toml`), a generated lockfile
 ```
 NAME.exe (hardlink to cb.exe)
   → argv[0] dispatch            main() inspects its own invocation name
+  → machine policy load         fixed admin path, ownership/version validated
   → registry profile lookup     container-bin.toml, schema-validated, fail-closed
   → argv normalization          repair PowerShell-split "-opt=" "value" pairs
   → path mapping                conservative Windows→container translation
   → host_mounts resolution      explicit registry-declared bind mounts, provider-agnostic
   → provider assembly           stateless | python | stateful volume/env setup
   → image lock resolution       container-bin.lock digest, fail-closed
+  → policy authorization        lock/local-origin/repository constraints
   → docker run --rm ...         stdio passthrough, exit code preserved
 ```
 
@@ -166,6 +168,21 @@ a fresh matching RepoDigest, while local locks only re-inspect the configured
 tag and record its current image ID. A missing local tag is an error, not an
 implicit switch to a registry image. `cb update --local TOOL` and
 `cb update --registry TOOL` are the explicit mode-switch operations.
+Repository entries are accepted only as an immutable, valid SHA-256 RepoDigest
+whose repository matches the configured reference after Docker Hub alias
+normalization; a mutable tag or foreign repository in a hand-edited lockfile is
+invalid.
+
+## Enterprise policy
+
+`internal/policy` is deliberately independent of registry parsing. `main`
+loads it from the fixed machine path before the user registry, then passes the
+immutable result to request resolution and diagnostics. The zero value means
+unmanaged operation. Managed policy authorizes the final configured image plus
+its lock identity; repository-mode lock creation is authorized before pull.
+This preserves the precedence boundary: user/project/CLI layers may choose a
+request, but only the machine layer can authorize it. Full schema and ownership
+rules are in [enterprise-policy.md](enterprise-policy.md).
 
 ## Atomic writes
 
@@ -229,6 +246,7 @@ internal/state       cb state, cb gc
   ↓
 internal/dockervol   docker volume primitives                        (leaf)
 internal/lockfile    container-bin.lock, digest resolution
+internal/policy      fixed machine policy, ownership and authorization
   ↓
 internal/pathmap     Windows path classification and mapping, project roots,
                      volume naming
@@ -245,14 +263,16 @@ The exact import edges, from `go list -f '{{.ImportPath}} {{.Imports}}' ./...`,
 project-internal imports only:
 
 ```
-main         -> cli, diag, dockerrun, mutationlock, registry, state
-cli          -> atomicio, diag, dockerrun, lockfile, pathmap, registry, toml
-diag         -> dockerrun, dockervol, lockfile, pathmap, registry
-dockerrun    -> dockervol, lockfile, pathmap, registry
+main         -> cli, diag, dockerrun, mutationlock, policy, registry, state
+cli          -> atomicio, diag, dockerrun, lockfile, pathmap, policy, registry, statearchive, toml
+diag         -> dockerrun, dockervol, lockfile, pathmap, policy, registry
+dockerrun    -> dockervol, lockfile, pathmap, policy, registry
 state        -> dockervol, pathmap, registry
-lockfile     -> atomicio, registry, toml
+statearchive -> dockervol, pathmap
+lockfile     -> atomicio, policy, registry, toml
 pathmap      -> registry
 registry     -> atomicio, toml
+policy       -> toml
 atomicio, dockervol, mutationlock, toml -> (leaves)
 ```
 

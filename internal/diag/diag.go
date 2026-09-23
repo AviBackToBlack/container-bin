@@ -20,6 +20,7 @@ import (
 	"github.com/AviBackToBlack/container-bin/internal/dockervol"
 	"github.com/AviBackToBlack/container-bin/internal/lockfile"
 	"github.com/AviBackToBlack/container-bin/internal/pathmap"
+	"github.com/AviBackToBlack/container-bin/internal/policy"
 	"github.com/AviBackToBlack/container-bin/internal/registry"
 )
 
@@ -168,12 +169,13 @@ func registrySchemaVerdict(version int) (status, message string) {
 	return "ok", fmt.Sprintf("registry schema %d", version)
 }
 
-func Doctor(reg registry.Registry, cfgPath string) error {
+func Doctor(reg registry.Registry, cfgPath string, machinePolicy policy.Policy) error {
 	failures := 0
 	warnings := 0
 	ok := func(format string, args ...any) { fmt.Printf("OK       "+format+"\n", args...) }
 	warn := func(format string, args ...any) { warnings++; fmt.Printf("WARN     "+format+"\n", args...) }
 	fail := func(format string, args ...any) { failures++; fmt.Printf("FAIL     "+format+"\n", args...) }
+	ok("machine policy: %s", machinePolicy.Summary())
 
 	dockerPath, err := exec.LookPath("docker")
 	if err != nil {
@@ -214,12 +216,30 @@ func Doctor(reg registry.Registry, cfgPath string) error {
 	if err != nil {
 		fail("lockfile invalid: %v", err)
 	} else if lf == nil {
-		warn("lockfile missing: %s (runtime is UNLOCKED)", lockPath)
+		if machinePolicy.RequireLock {
+			fail("lockfile missing: %s ([policy.lock_required] runtime is not authorized)", lockPath)
+		} else {
+			denied := 0
+			for _, image := range lockfile.ConfiguredImages(reg) {
+				if err := machinePolicy.AuthorizeImage(image, false, false); err != nil {
+					fail("image %s is denied: %v", image, err)
+					denied++
+				}
+			}
+			if denied == 0 {
+				warn("lockfile missing: %s (runtime is UNLOCKED)", lockPath)
+			}
+		}
 	} else {
 		missing := 0
 		for _, image := range lockfile.ConfiguredImages(reg) {
 			e, found := lf.Images[image]
 			if !found {
+				missing++
+				continue
+			}
+			if err := machinePolicy.AuthorizeResolvedImage(image, e.Resolved, lockfile.IsLocalResolved(e.Resolved)); err != nil {
+				fmt.Printf("FAIL     image %s is denied: %v\n", image, err)
 				missing++
 				continue
 			}
@@ -492,7 +512,7 @@ func redactSecrets(text string) string {
 // when the report is successfully assembled and printed, even if Doctor()
 // found failures — that signal is in the captured text itself. Only genuine
 // capture or assembly errors are returned as Bugreport's own error.
-func Bugreport(reg registry.Registry, cfgPath, version string) error {
+func Bugreport(reg registry.Registry, cfgPath, version string, machinePolicy policy.Policy) error {
 	var b strings.Builder
 	b.WriteString("container-bin bugreport\n")
 	b.WriteString(fmt.Sprintf("generated: %s\n", time.Now().UTC().Format(time.RFC3339)))
@@ -528,7 +548,7 @@ func Bugreport(reg registry.Registry, cfgPath, version string) error {
 	b.WriteString("\nRegistry:\n")
 	b.WriteString(registryText)
 
-	doctorText, err := captureStdout(func() error { return Doctor(reg, cfgPath) })
+	doctorText, err := captureStdout(func() error { return Doctor(reg, cfgPath, machinePolicy) })
 	if err != nil {
 		return fmt.Errorf("capture doctor: %w", err)
 	}
@@ -865,7 +885,7 @@ func buildEnvironmentChecks(dockerCheck selfTestCheck, cwd string) []selfTestChe
 	return env
 }
 
-func SelfTest(reg registry.Registry, jsonOut, release bool, version string) error {
+func SelfTest(reg registry.Registry, jsonOut, release bool, version string, machinePolicy policy.Policy) error {
 	tmp, err := os.MkdirTemp("", "cb-selftest-")
 	if err != nil {
 		return err
@@ -894,7 +914,7 @@ func SelfTest(reg registry.Registry, jsonOut, release bool, version string) erro
 		return err
 	}
 
-	report, err := runSelfTestChecksAndCleanup(reg, project, external, jsonOut, release, old, version)
+	report, err := runSelfTestChecksAndCleanup(reg, project, external, jsonOut, release, old, version, machinePolicy)
 	if err != nil {
 		return err
 	}
@@ -934,7 +954,7 @@ func SelfTest(reg registry.Registry, jsonOut, release bool, version string) erro
 	return nil
 }
 
-func runSelfTestChecksAndCleanup(reg registry.Registry, project, external string, jsonOut, release bool, cwd, version string) (selfTestReport, error) {
+func runSelfTestChecksAndCleanup(reg registry.Registry, project, external string, jsonOut, release bool, cwd, version string, machinePolicy policy.Policy) (selfTestReport, error) {
 	// Redirect process-level stdout/stderr around the check-and-cleanup phase so
 	// that tools whose containers write to stdout (jq, terraform) and the
 	// docker volume rm cleanup output cannot corrupt a --json report. cb runs
@@ -960,7 +980,7 @@ func runSelfTestChecksAndCleanup(reg registry.Registry, project, external string
 		defer dockervol.RemoveQuiet(volumeID)
 	}
 
-	return runSelfTestChecks(reg, project, external, release, cwd, version)
+	return runSelfTestChecks(reg, project, external, release, cwd, version, machinePolicy)
 }
 
 func selfTestProjectVolumeIDs(reg registry.Registry, root string) []string {
@@ -986,7 +1006,7 @@ func selfTestProjectVolumeIDs(reg registry.Registry, root string) []string {
 	return ids
 }
 
-func runSelfTestChecks(reg registry.Registry, project, external string, release bool, cwd, version string) (selfTestReport, error) {
+func runSelfTestChecks(reg registry.Registry, project, external string, release bool, cwd, version string, machinePolicy policy.Policy) (selfTestReport, error) {
 	dockerCheck := selfTestCheck{ID: "docker"}
 	dockerAvailable := false
 	out, err := exec.Command("docker", "version", "--format", "{{.Server.Version}}").Output()
@@ -1003,7 +1023,7 @@ func runSelfTestChecks(reg registry.Registry, project, external string, release 
 	if dockerAvailable {
 		for _, name := range []string{"python", "node", "node22", "jq", "terraform"} {
 			if t, _, ok := reg.Resolve(name); ok {
-				toolOutcomes[name] = runSelfTestTool(t, name, project, external)
+				toolOutcomes[name] = runSelfTestTool(t, name, project, external, machinePolicy)
 			}
 		}
 	}
@@ -1016,51 +1036,51 @@ func runSelfTestChecks(reg registry.Registry, project, external string, release 
 	return buildSelfTestReport(version, time.Now(), dockerCheck, toolOutcomes, env), nil
 }
 
-func runSelfTestTool(t registry.Tool, name, project, external string) toolSelfTestOutcome {
+func runSelfTestTool(t registry.Tool, name, project, external string, machinePolicy policy.Policy) toolSelfTestOutcome {
 	o := toolSelfTestOutcome{}
-	if err := dockerrun.EnsureImageLocalForTool(t); err != nil {
+	if err := dockerrun.EnsureImageLocalForTool(t, machinePolicy); err != nil {
 		s := err.Error()
 		o.ImageLocalErr = &s
 		return o
 	}
 	switch name {
 	case "python":
-		code, err := dockerrun.RunTool(t, []string{"-c", "open('/venv/.cb-selftest','w').write('ok')"})
+		code, err := dockerrun.RunTool(t, []string{"-c", "open('/venv/.cb-selftest','w').write('ok')"}, machinePolicy)
 		if err != nil || code != 0 {
 			s := selfTestRunError(name, err, code)
 			o.PersistWriteErr = &s
 		} else {
-			code, err = dockerrun.RunTool(t, []string{"-c", "assert open('/venv/.cb-selftest').read()=='ok'"})
+			code, err = dockerrun.RunTool(t, []string{"-c", "assert open('/venv/.cb-selftest').read()=='ok'"}, machinePolicy)
 			if err != nil || code != 0 {
 				s := selfTestRunError(name, err, code)
 				o.PersistReadErr = &s
 			}
 		}
-		code, err = dockerrun.RunTool(t, []string{filepath.Join(external, "outside.py")})
+		code, err = dockerrun.RunTool(t, []string{filepath.Join(external, "outside.py")}, machinePolicy)
 		if err != nil || code != 0 {
 			s := selfTestRunError(name, err, code)
 			o.ExternalPathErr = &s
 		}
 	case "node", "node22":
-		code, err := dockerrun.RunTool(t, []string{"-e", "require('fs').mkdirSync('node_modules',{recursive:true}); require('fs').writeFileSync('node_modules/.cb-selftest','ok')"})
+		code, err := dockerrun.RunTool(t, []string{"-e", "require('fs').mkdirSync('node_modules',{recursive:true}); require('fs').writeFileSync('node_modules/.cb-selftest','ok')"}, machinePolicy)
 		if err != nil || code != 0 {
 			s := selfTestRunError(name, err, code)
 			o.ModulesWriteErr = &s
 		} else {
-			code, err = dockerrun.RunTool(t, []string{"-e", "if(require('fs').readFileSync('node_modules/.cb-selftest','utf8')!=='ok')process.exit(9)"})
+			code, err = dockerrun.RunTool(t, []string{"-e", "if(require('fs').readFileSync('node_modules/.cb-selftest','utf8')!=='ok')process.exit(9)"}, machinePolicy)
 			if err != nil || code != 0 {
 				s := selfTestRunError(name, err, code)
 				o.ModulesReadErr = &s
 			}
 		}
 	case "jq":
-		code, err := dockerrun.RunTool(t, []string{".", `.\data.json`})
+		code, err := dockerrun.RunTool(t, []string{".", `.\data.json`}, machinePolicy)
 		if err != nil || code != 0 {
 			s := selfTestRunError(name, err, code)
 			o.RelativePathErr = &s
 		}
 	case "terraform":
-		code, err := dockerrun.RunTool(t, []string{`-chdir=.\tf`, "validate"})
+		code, err := dockerrun.RunTool(t, []string{`-chdir=.\tf`, "validate"}, machinePolicy)
 		if err != nil || code != 0 {
 			s := selfTestRunError(name, err, code)
 			o.ChdirErr = &s
