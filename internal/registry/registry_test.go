@@ -684,26 +684,29 @@ func TestPipxProfile(t *testing.T) {
 	if pipx.Image != "ghcr.io/astral-sh/uv:0.12-python3.13-trixie-slim" || pipx.Provider != "stateful" || pipx.StateGroup != "pipx117-py313" {
 		t.Fatalf("bad pipx profile identity: %+v", pipx)
 	}
-	if len(pipx.Command) != 4 || pipx.Command[0] != "/bin/sh" || pipx.Command[1] != "-c" || pipx.Command[3] != "cb-pipx" ||
-		!strings.Contains(pipx.Command[2], `/usr/local/bin/uvx --from pipx==1.17.4 pipx "$@"`) ||
-		!strings.Contains(pipx.Command[2], `pipx produced unsupported absolute symlink`) {
+	if len(pipx.Command) != 3 || pipx.Command[0] != "/usr/local/bin/python3" || pipx.Command[1] != "-c" ||
+		!strings.Contains(pipx.Command[2], `["/usr/local/bin/uvx", "--from", "pipx==1.17.4", "pipx", *sys.argv[1:]]`) ||
+		!strings.Contains(pipx.Command[2], `pipx produced unsupported symlink`) {
 		t.Fatalf("pipx command = %#v", pipx.Command)
 	}
 	for _, fragment := range []string{
-		`/usr/local/bin/python3 -c '`,
+		`fcntl.flock(state_lock, fcntl.LOCK_EX)`,
+		`status = subprocess.run(`,
 		`raw_target = os.readlink(link)`,
+		`except FileNotFoundError:`,
 		`except OSError as exc:`,
-		`raise RuntimeError(f"pipx produced unsupported absolute symlink: {link} -> {raw_target}") from exc`,
+		`raise RuntimeError(f"pipx produced unsupported symlink: {link} -> {raw_target}") from exc`,
 		`parts[:2] == ("home", "shared")`,
 		`parts[-1] in ("python", allowed_python.name)`,
 		`secrets.token_hex(8)`,
+		`raise SystemExit(status)`,
 	} {
 		if !strings.Contains(pipx.Command[2], fragment) {
 			t.Fatalf("pipx command missing %q: %q", fragment, pipx.Command[2])
 		}
 	}
-	if strings.Contains(pipx.Command[2], "\n  python3 -c '") {
-		t.Fatalf("pipx command must invoke the image interpreter by absolute path: %q", pipx.Command[2])
+	if strings.Contains(pipx.Command[2], "os.path.isabs") {
+		t.Fatalf("pipx command must validate relative symlinks too: %q", pipx.Command[2])
 	}
 	wantVolumes := []string{"state:/cb/pipx"}
 	if !reflect.DeepEqual(pipx.SharedVolumes, wantVolumes) {
@@ -732,7 +735,7 @@ func TestPipxProfile(t *testing.T) {
 			t.Fatalf("pipx env_names missing %q: %#v", envName, pipx.EnvNames)
 		}
 	}
-	for _, pathOrControlVariable := range []string{"UV_CACHE_DIR", "UV_TOOL_DIR", "UV_TOOL_BIN_DIR", "PIPX_HOME", "PIPX_BIN_DIR", "PIPX_MAN_DIR", "PIPX_COMPLETION_DIR", "PIPX_DEFAULT_PYTHON", "PATH"} {
+	for _, pathOrControlVariable := range []string{"UV_CACHE_DIR", "UV_TOOL_DIR", "UV_TOOL_BIN_DIR", "PIPX_HOME", "PIPX_BIN_DIR", "PIPX_MAN_DIR", "PIPX_COMPLETION_DIR", "PIPX_DEFAULT_PYTHON", "PIPX_VENV_CACHEDIR", "PATH"} {
 		if containsString(pipx.EnvNames, pathOrControlVariable) {
 			t.Fatalf("pipx env allowlist must not include controlled variable %q", pathOrControlVariable)
 		}

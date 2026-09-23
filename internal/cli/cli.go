@@ -21,6 +21,7 @@ import (
 	"github.com/AviBackToBlack/container-bin/internal/atomicio"
 	"github.com/AviBackToBlack/container-bin/internal/diag"
 	"github.com/AviBackToBlack/container-bin/internal/dockerrun"
+	"github.com/AviBackToBlack/container-bin/internal/dockervol"
 	"github.com/AviBackToBlack/container-bin/internal/lockfile"
 	"github.com/AviBackToBlack/container-bin/internal/pathmap"
 	"github.com/AviBackToBlack/container-bin/internal/registry"
@@ -426,6 +427,9 @@ func discoverGlobalBins(t registry.Tool, store exposeStore) ([]exposedBin, error
 	if err := inspectExposeImage(t.Name, image); err != nil {
 		return nil, err
 	}
+	if err := ensureExposeStoreVolumes(t, store); err != nil {
+		return nil, err
+	}
 	script := `if [ -d "$1" ]; then for f in "$1"/*; do [ -f "$f" ] && [ -x "$f" ] || continue; printf '%s\000' "${f##*/}"; done; fi`
 	dockerArgs, err := exposeDiscoveryArgs(store, image, script)
 	if err != nil {
@@ -437,6 +441,56 @@ func discoverGlobalBins(t registry.Tool, store exposeStore) ([]exposedBin, error
 		return nil, exposeDiscoveryError(store.kind, out, err)
 	}
 	return parseExposedBins(out, store)
+}
+
+func ensureExposeStoreVolumes(t registry.Tool, store exposeStore) error {
+	volumes, err := exposeStoreManagedVolumes(t, store)
+	if err != nil {
+		return err
+	}
+	for volumeName, labels := range volumes {
+		if err := dockervol.EnsureManaged(volumeName, labels); err != nil {
+			return fmt.Errorf("prepare %s global store: %w", store.kind, err)
+		}
+		actual, err := dockervol.Labels(volumeName)
+		if err != nil {
+			return fmt.Errorf("verify %s global store: %w", store.kind, err)
+		}
+		for key, want := range labels {
+			if actual[key] != want {
+				return fmt.Errorf("%s global store volume %s has incompatible label %s=%q (want %q)", store.kind, volumeName, key, actual[key], want)
+			}
+		}
+	}
+	return nil
+}
+
+func exposeStoreManagedVolumes(t registry.Tool, store exposeStore) (map[string]map[string]string, error) {
+	needed := map[string]bool{store.volumeName: true}
+	for _, companion := range store.companionMounts {
+		needed[companion.volumeName] = true
+	}
+	volumes := map[string]map[string]string{}
+	for _, spec := range t.SharedVolumes {
+		logical, _, err := registry.ParseVolumeBinding(spec)
+		if err != nil {
+			return nil, err
+		}
+		volumeName := pathmap.StatefulSharedVolumeID(t.StateGroup, logical)
+		if !needed[volumeName] {
+			continue
+		}
+		volumes[volumeName] = map[string]string{
+			"cb.managed": "true",
+			"cb.kind":    "shared",
+			"cb.owner":   t.StateGroup + "/" + logical,
+		}
+		delete(needed, volumeName)
+	}
+	if len(needed) != 0 {
+		return nil, fmt.Errorf("tool %q global store has no matching shared-volume declaration", t.Name)
+	}
+	return volumes, nil
 }
 
 func exposeDiscoveryError(kind string, out []byte, err error) error {

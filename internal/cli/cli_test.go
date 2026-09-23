@@ -494,6 +494,18 @@ func TestPipxExposeDiscoveryMountsStateReadOnly(t *testing.T) {
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("discovery args = %#v, want %#v", args, want)
 	}
+	volumes, err := exposeStoreManagedVolumes(reg.Tools["pipx"], store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantLabels := map[string]string{
+		"cb.managed": "true",
+		"cb.kind":    "shared",
+		"cb.owner":   "pipx117-py313/state",
+	}
+	if !reflect.DeepEqual(volumes["cb-pipx117-py313-state"], wantLabels) {
+		t.Fatalf("pipx expose volume labels = %#v, want %#v", volumes, wantLabels)
+	}
 }
 
 func TestExposeStoreRejectsAmbiguousProfile(t *testing.T) {

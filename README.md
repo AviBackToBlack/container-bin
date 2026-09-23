@@ -422,17 +422,20 @@ launcher cache; later invocations can use that cache offline. The image lock
 pins the launcher image, while package-index trust and the pipx package download
 remain governed by the profile's narrowly forwarded uv/pip index, TLS and proxy
 settings. Automatic Python downloads are disabled and pipx uses the Python 3.13
-interpreter already in the locked image. After a successful pipx command, a
-fail-closed wrapper changes pipx-owned absolute links to relative links within
-the state volume and copies only the known image interpreter into its launcher
-cache, application venvs, and the pip backend's shared-libraries venv. This
+interpreter already in the locked image. A volume-local lock serializes pipx
+commands that share this state. After every command, including failed commands,
+a fail-closed wrapper validates every pipx-owned symlink, changes links that
+resolve within the state volume to relative links, and copies only the known
+image interpreter into its launcher cache, application venvs, and the pip
+backend's shared-libraries venv. This
 includes explicit `--backend pip` installs and pipx's forced pip backend for
 the `pip` package while still rejecting any other external link target. This
 keeps `cb-pipx117-py313-state` portable
 through selected-volume backup/restore without relaxing archive link validation.
-`pipx run` environments remain ephemeral because `PIPX_CACHE_DIR` is not placed
-on the managed volume; each `pipx run` may resolve and download its application
-again and therefore requires the configured package index to be reachable.
+`pipx run` environments remain ephemeral because `PIPX_VENV_CACHEDIR` is not
+placed on the managed volume; each `pipx run` may resolve and download its
+application again and therefore requires the configured package index to be
+reachable.
 
 ```powershell
 pipx install cowsay==6.1
