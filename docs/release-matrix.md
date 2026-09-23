@@ -120,14 +120,20 @@ The x64 `test-windows` job in `.github/workflows/ci.yml` is:
   test-windows:
     name: Test and build (Windows)
     runs-on: windows-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           check-latest: true
       - name: go test
-        run: go test ./...
+        run: go test -v ./...
+      - name: Test benchmark comparison (Windows PowerShell 5.1)
+        run: powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-compare-startup-benchmarks.ps1
+        shell: pwsh
       - name: Build cb.exe
         run: go build -trimpath -o cb.exe .
       - name: Smoke-test version output
@@ -143,9 +149,10 @@ That proves the following, and no more:
 - It runs on `windows-latest`. GitHub's own `actions/runner-images`
   documentation describes `windows-latest` as a Windows Server runner image,
   not a Windows 11 client install.
-- The only shell-dependent step uses `pwsh` (PowerShell 7.x / PowerShell Core).
-  It does not exercise **Windows PowerShell 5.1** (`powershell.exe`) or
-  **`cmd.exe`**.
+- The management smoke test uses `pwsh` (PowerShell 7.x / PowerShell Core). A
+  dedicated benchmark-comparison fixture is also executed by Windows PowerShell
+  5.1 (`powershell.exe`), but CI does not invoke ContainerBin tools through that
+  shell and does not exercise **`cmd.exe`**.
 - It has **no Docker Desktop** and makes **no `docker run` call**. `go test ./...`
   on Windows exercises pure logic and any `runtime.GOOS == "windows"`-gated
   unit tests — `docs/windows-paths.md` notes that its Windows-gated tests are

@@ -91,7 +91,7 @@ jobs:
       - name: Verify native ARM64 runner
         shell: pwsh
         run: |
-          $runtimeArch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+          $runtimeArch = [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString()
           $goArch = (go env GOARCH).Trim()
           Write-Host "runtime architecture: $runtimeArch"
           Write-Host "Go architecture: $goArch"
