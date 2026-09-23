@@ -62,10 +62,17 @@ readable, and dangerous to let others edit.
 - **Read-only exposure discovery.** `cb expose` requires the locked source image
   to exist locally, disables pulls and networking, uses a read-only container
   root and volume mounts, and overrides the image entrypoint with the discovery
-  shell. The source image must provide a POSIX-compatible `sh`; distroless
-  images without one cannot use automatic discovery. Explicit shared-file
+  shell or pipx's embedded Python scanner. Non-pipx source images must provide a
+  POSIX-compatible `sh`; distroless images without one cannot use automatic
+  discovery. Explicit shared-file
   discovery also rejects a final symlink or a parent directory that resolves
   outside the selected volume mount.
+- **Serialized pipx exposure.** Pipx commands create and hold the volume-local
+  lock exclusively before mutating state. Discovery mounts the state read-only,
+  reports no applications when the lock does not exist yet, and otherwise holds
+  it shared while scanning. This prevents exposure from observing partially
+  updated application state without granting the discovery container write
+  access.
 - **Validated atomic writes.** Registry/lock mutations parse the complete
   resulting file before atomically replacing the original; backups are
   restored the same way and only with `--apply`.
@@ -84,10 +91,21 @@ readable, and dangerous to let others edit.
   project (and any explicitly referenced external paths) read-write, plus the
   allowlisted environment variables. `cb lock` gives you *reproducibility* —
   the same digest every time — not *safety* of that digest's contents.
-- **Malicious packages.** `pip install`, `npm install -g`, and `cargo install`
-  execute inside containers, but the packages can read/write the mounted project
-  and persist in state volumes; an exposed global binary runs whenever you
-  invoke its shim.
+- **Malicious packages.** `pip install`, `pipx install`, `npm install -g`, and
+  `cargo install` execute inside containers, but the packages can read/write the
+  mounted project and persist in state volumes; an exposed global binary runs
+  whenever you invoke its shim.
+- **pipx launcher bootstrap.** The pipx profile's image digest is locked, but
+  its exact-version `pipx==1.17.4` launcher is populated from the configured
+  Python package index into a dedicated cache on first use. Index overrides,
+  TLS settings and proxies therefore remain part of that bootstrap's trust
+  boundary; the image lock does not attest package-index artifacts.
+- **Fail-closed pipx link normalization.** After every pipx command, including
+  failed commands and interrupts, the
+  profile makes pipx-owned absolute links relative within its one state volume
+  and copies the exact image interpreter only at known venv/cache locations.
+  Any other absolute link fails the command; archive traversal checks remain
+  unchanged.
 - **Secrets you pass through.** `env_prefixes = ["AWS_"]` exists so Terraform
   can authenticate — which means your AWS credentials enter that container.
   That is the feature working as designed; scope prefixes deliberately.

@@ -7,6 +7,7 @@ package cli
 import (
 	"archive/zip"
 	"bytes"
+	_ "embed"
 	"errors"
 	"fmt"
 	"io"
@@ -21,6 +22,7 @@ import (
 	"github.com/AviBackToBlack/container-bin/internal/atomicio"
 	"github.com/AviBackToBlack/container-bin/internal/diag"
 	"github.com/AviBackToBlack/container-bin/internal/dockerrun"
+	"github.com/AviBackToBlack/container-bin/internal/dockervol"
 	"github.com/AviBackToBlack/container-bin/internal/lockfile"
 	"github.com/AviBackToBlack/container-bin/internal/pathmap"
 	"github.com/AviBackToBlack/container-bin/internal/registry"
@@ -280,6 +282,9 @@ type exposeStore struct {
 	mountTarget      string
 	binDirectory     string
 	installHint      string
+	validateTargets  bool
+	requireLabels    bool
+	discoveryLock    string
 	companionTargets []string
 	companionMounts  []exposeMount
 }
@@ -304,6 +309,8 @@ func exposeStoreForMountTarget(dst string) (exposeStore, bool) {
 		return exposeStore{kind: "Cargo", mountTarget: dst, binDirectory: dst + "/bin", installHint: "cargo install <crate>"}, true
 	case "/cb/uv-bin":
 		return exposeStore{kind: "uv tool", mountTarget: dst, binDirectory: dst, installHint: "uv tool install <package>", companionTargets: []string{"/cb/uv-tools"}}, true
+	case "/cb/pipx":
+		return exposeStore{kind: "pipx", mountTarget: dst, binDirectory: dst + "/bin", installHint: "pipx install <package>", validateTargets: true, requireLabels: true, discoveryLock: dst + "/.cb-pipx.lock"}, true
 	case "/root/.dotnet":
 		return exposeStore{kind: ".NET tool", mountTarget: dst, binDirectory: dst + "/tools", installHint: "dotnet tool install --global <package>"}, true
 	case "/cb/ruby-gems":
@@ -335,7 +342,7 @@ func exposeStoreFor(t registry.Tool) (exposeStore, error) {
 		found = &candidate
 	}
 	if found == nil {
-		return exposeStore{}, fmt.Errorf("tool %q has no supported global binary store (/cb/npm-global, /go/bin, /cb/cargo-global, /cb/uv-bin, /root/.dotnet or /cb/ruby-gems)", t.Name)
+		return exposeStore{}, fmt.Errorf("tool %q has no supported global binary store (/cb/npm-global, /go/bin, /cb/cargo-global, /cb/uv-bin, /cb/pipx, /root/.dotnet or /cb/ruby-gems)", t.Name)
 	}
 	for _, target := range found.companionTargets {
 		volumeName, ok := volumesByTarget[target]
@@ -424,7 +431,13 @@ func discoverGlobalBins(t registry.Tool, store exposeStore) ([]exposedBin, error
 	if err := inspectExposeImage(t.Name, image); err != nil {
 		return nil, err
 	}
+	if err := ensureExposeStoreVolumes(t, store); err != nil {
+		return nil, err
+	}
 	script := `if [ -d "$1" ]; then for f in "$1"/*; do [ -f "$f" ] && [ -x "$f" ] || continue; printf '%s\000' "${f##*/}"; done; fi`
+	if store.discoveryLock != "" {
+		script = pipxDiscoveryScript
+	}
 	dockerArgs, err := exposeDiscoveryArgs(store, image, script)
 	if err != nil {
 		return nil, err
@@ -435,6 +448,80 @@ func discoverGlobalBins(t registry.Tool, store exposeStore) ([]exposedBin, error
 		return nil, exposeDiscoveryError(store.kind, out, err)
 	}
 	return parseExposedBins(out, store)
+}
+
+//go:embed pipx_discovery.py
+var pipxDiscoveryScript string
+
+func ensureExposeStoreVolumes(t registry.Tool, store exposeStore) error {
+	volumes, err := exposeStoreManagedVolumes(t, store)
+	if err != nil {
+		return err
+	}
+	for volumeName, labels := range volumes {
+		if err := dockervol.EnsureManaged(volumeName, labels); err != nil {
+			return fmt.Errorf("prepare %s global store: %w", store.kind, err)
+		}
+		actual, err := dockervol.Labels(volumeName)
+		if err != nil {
+			return fmt.Errorf("verify %s global store: %w", store.kind, err)
+		}
+		if err := validateExposeStoreLabels(store, volumeName, labels, actual); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateExposeStoreLabels(store exposeStore, volumeName string, want, actual map[string]string) error {
+	// Runtime versions predating managed-volume labels already created stores
+	// for the established ecosystems. Docker cannot add labels to an existing
+	// volume, so preserve those legacy stores instead of silently breaking an
+	// existing expose workflow. Pipx has no pre-label installed base: its new
+	// reserved volume name must either carry the exact ownership labels or fail.
+	if actual["cb.managed"] == "" && !store.requireLabels {
+		return nil
+	}
+	keys := make([]string, 0, len(want))
+	for key := range want {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		value := want[key]
+		if actual[key] != value {
+			return fmt.Errorf("%s global store volume %s has incompatible label %s=%q (want %q)", store.kind, volumeName, key, actual[key], value)
+		}
+	}
+	return nil
+}
+
+func exposeStoreManagedVolumes(t registry.Tool, store exposeStore) (map[string]map[string]string, error) {
+	needed := map[string]bool{store.volumeName: true}
+	for _, companion := range store.companionMounts {
+		needed[companion.volumeName] = true
+	}
+	volumes := map[string]map[string]string{}
+	for _, spec := range t.SharedVolumes {
+		logical, _, err := registry.ParseVolumeBinding(spec)
+		if err != nil {
+			return nil, err
+		}
+		volumeName := pathmap.StatefulSharedVolumeID(t.StateGroup, logical)
+		if !needed[volumeName] {
+			continue
+		}
+		volumes[volumeName] = map[string]string{
+			"cb.managed": "true",
+			"cb.kind":    "shared",
+			"cb.owner":   t.StateGroup + "/" + logical,
+		}
+		delete(needed, volumeName)
+	}
+	if len(needed) != 0 {
+		return nil, fmt.Errorf("tool %q global store has no matching shared-volume declaration", t.Name)
+	}
+	return volumes, nil
 }
 
 func exposeDiscoveryError(kind string, out []byte, err error) error {
@@ -455,7 +542,14 @@ func exposeDiscoveryArgs(store exposeStore, image, script string) ([]string, err
 		}
 		dockerArgs = append(dockerArgs, "--mount", mount)
 	}
-	dockerArgs = append(dockerArgs, "--entrypoint", "sh", image, "-c", script, "cb-expose", store.binDirectory)
+	if store.discoveryLock != "" {
+		dockerArgs = append(dockerArgs,
+			"--entrypoint", "/usr/local/bin/python3", image, "-c", script,
+			"discover", store.binDirectory, store.mountTarget, store.discoveryLock,
+		)
+	} else {
+		dockerArgs = append(dockerArgs, "--entrypoint", "sh", image, "-c", script, "cb-expose", store.binDirectory)
+	}
 	return dockerArgs, nil
 }
 
@@ -517,15 +611,34 @@ func inspectSharedVolumeFile(t registry.Tool, store exposeStore, command string)
 }
 
 func parseExposedBins(out []byte, store exposeStore) ([]exposedBin, error) {
+	fields := bytes.Split(out, []byte{0})
+	if len(fields) > 0 && len(fields[len(fields)-1]) == 0 {
+		fields = fields[:len(fields)-1]
+	}
+	stride := 1
+	if store.validateTargets {
+		stride = 2
+		if len(fields)%stride != 0 {
+			return nil, fmt.Errorf("inspect %s global bin: malformed resolved-target output", store.kind)
+		}
+	}
 	seen := map[string]string{}
 	var bins []exposedBin
-	for _, raw := range bytes.Split(out, []byte{0}) {
-		binary := string(raw)
+	for i := 0; i < len(fields); i += stride {
+		binary := string(fields[i])
 		name := strings.ToLower(binary)
 		// Untrusted names discovered inside the container: skip anything that
 		// is not a safe shim name or that would shadow cb / Windows devices.
 		if name == "" || strings.HasPrefix(name, "-") || !registry.ValidToolName(name) || registry.ReservedToolName(name) {
 			continue
+		}
+		if store.validateTargets {
+			resolved := string(fields[i+1])
+			root := path.Clean(store.mountTarget)
+			target := path.Clean(resolved)
+			if !path.IsAbs(resolved) || (target != root && !strings.HasPrefix(target, root+"/")) {
+				return nil, fmt.Errorf("%s global binary %q resolves outside managed store %s: %s", store.kind, binary, root, resolved)
+			}
 		}
 		if previous, ok := seen[name]; ok {
 			if previous != binary {
