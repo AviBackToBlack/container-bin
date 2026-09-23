@@ -37,7 +37,11 @@ with the machine's normal administrator configuration-management mechanism.
 policy_version = 1
 require_lock = true
 allow_local_images = false
-allowed_repositories = ["docker.io/library", "ghcr.io/acme/developer-tools", "registry.example.com:5443/platform"]
+allowed_repositories = [
+  "docker.io/library",
+  "ghcr.io/acme/developer-tools",
+  "registry.example.com:5443/platform",
+]
 expires_at = "2027-01-01T00:00:00Z"
 ```
 
@@ -70,6 +74,8 @@ Repository rules are canonical namespace boundaries:
 - a single-segment rule such as `python` means the Docker Hub namespace
   `docker.io/python`; it does not match the official image repository
   `docker.io/library/python`;
+- an unqualified multi-segment rule such as `astral-sh/uv` means
+  `docker.io/astral-sh/uv`;
 - `ghcr.io/acme` does **not** allow `ghcr.io/acme-tools`.
 
 Authorization occurs before a repository-mode `docker pull`, local-image

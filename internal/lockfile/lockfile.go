@@ -343,6 +343,10 @@ func RuntimeImageForTool(t registry.Tool, machinePolicy policy.Policy) (string, 
 	if err != nil {
 		return "", fmt.Errorf("lockfile: %w", err)
 	}
+	return runtimeImageForTool(t, machinePolicy, lf, path)
+}
+
+func runtimeImageForTool(t registry.Tool, machinePolicy policy.Policy, lf *LockFile, path string) (string, error) {
 	if lf == nil {
 		if err := machinePolicy.AuthorizeImage(t.Image, false, false); err != nil {
 			return "", err
@@ -351,6 +355,9 @@ func RuntimeImageForTool(t registry.Tool, machinePolicy policy.Policy) (string, 
 	}
 	e, ok := lf.Images[t.Image]
 	if !ok || e.Configured != t.Image {
+		if err := machinePolicy.AuthorizeImage(t.Image, false, false); err != nil {
+			return "", err
+		}
 		return "", fmt.Errorf("image %q is not locked in %s; run `cb update %s` or `cb lock`", t.Image, path, t.Name)
 	}
 	if err := machinePolicy.AuthorizeResolvedImage(t.Image, e.Resolved, IsLocalResolved(e.Resolved)); err != nil {

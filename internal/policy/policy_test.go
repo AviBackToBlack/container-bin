@@ -43,6 +43,28 @@ func TestLoadAtStrictAndCanonical(t *testing.T) {
 	}
 }
 
+func TestLoadAtAcceptsMultilineAllowedRepositories(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "policy.toml")
+	contents := `policy_version = 1
+allowed_repositories = [
+  "docker.io/library", # official images
+  "astral-sh/uv",
+  "ghcr.io/acme/developer-tools",
+]
+`
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := loadAt(path, func(string) error { return nil }, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"docker.io/astral-sh/uv", "docker.io/library", "ghcr.io/acme/developer-tools"}
+	if strings.Join(p.AllowedRepositories, ",") != strings.Join(want, ",") {
+		t.Fatalf("allowed repositories = %v, want %v", p.AllowedRepositories, want)
+	}
+}
+
 func TestLoadAtOwnershipFailureIsCoded(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "policy.toml")
 	if err := os.WriteFile(path, []byte("policy_version = 1\nrequire_lock = true\n"), 0600); err != nil {
@@ -81,6 +103,7 @@ func TestParseRejectsInvalidPolicies(t *testing.T) {
 		{"no controls", "policy_version = 1\nallow_local_images = true\n", "syntax"},
 		{"expired", "policy_version = 1\nrequire_lock = true\nexpires_at = \"2028-01-01T00:00:00Z\"\n", "expired"},
 		{"bad rule", "policy_version = 1\nallowed_repositories = [\"ghcr.io//team\"]\n", "syntax"},
+		{"unterminated array", "policy_version = 1\nallowed_repositories = [\n  \"ghcr.io/team\",\n", "syntax"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -97,7 +97,9 @@ func parse(path string, b []byte, now time.Time) (Policy, error) {
 	p := Policy{Path: path}
 	seen := map[string]bool{}
 	sc := bufio.NewScanner(strings.NewReader(string(b)))
-	for lineNo := 1; sc.Scan(); lineNo++ {
+	lineNo := 0
+	for sc.Scan() {
+		lineNo++
 		line := strings.TrimSpace(toml.StripComment(sc.Text()))
 		if line == "" {
 			continue
@@ -136,9 +138,20 @@ func parse(path string, b []byte, now time.Time) (Policy, error) {
 			}
 			p.AllowLocalImages = v
 		case "allowed_repositories":
+			startLine := lineNo
+			for strings.HasPrefix(strings.TrimSpace(raw), "[") && !arrayValueComplete(raw) {
+				if !sc.Scan() {
+					if err := sc.Err(); err != nil {
+						return Policy{}, policyError("unreadable", "scan %s: %v", path, err)
+					}
+					return Policy{}, policyError("syntax", "line %d allowed_repositories: unterminated array", startLine)
+				}
+				lineNo++
+				raw += "\n" + strings.TrimSpace(toml.StripComment(sc.Text()))
+			}
 			values, err := toml.ParseStringArray(raw)
 			if err != nil {
-				return Policy{}, policyError("syntax", "line %d allowed_repositories: %v", lineNo, err)
+				return Policy{}, policyError("syntax", "line %d allowed_repositories: %v", startLine, err)
 			}
 			p.AllowedRepositories = values
 		case "expires_at":
@@ -185,6 +198,29 @@ func parse(path string, b []byte, now time.Time) (Policy, error) {
 	sum := sha256.Sum256(b)
 	p.Fingerprint = hex.EncodeToString(sum[:])
 	return p, nil
+}
+
+func arrayValueComplete(raw string) bool {
+	inQuote := false
+	escaped := false
+	for _, r := range raw {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if r == '\\' && inQuote {
+			escaped = true
+			continue
+		}
+		if r == '"' {
+			inQuote = !inQuote
+			continue
+		}
+		if r == ']' && !inQuote {
+			return true
+		}
+	}
+	return false
 }
 
 func (p Policy) AuthorizeImage(configured string, locked, local bool) error {
@@ -331,8 +367,8 @@ func canonicalRule(rule string) (string, error) {
 	case "index.docker.io", "registry-1.docker.io":
 		parts[0] = "docker.io"
 	}
-	if len(parts) == 1 && !strings.Contains(parts[0], ".") && !strings.Contains(parts[0], ":") && parts[0] != "localhost" {
-		parts = []string{"docker.io", parts[0]}
+	if !strings.Contains(parts[0], ".") && !strings.Contains(parts[0], ":") && parts[0] != "localhost" {
+		parts = append([]string{"docker.io"}, parts...)
 	}
 	return strings.Join(parts, "/"), nil
 }

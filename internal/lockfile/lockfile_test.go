@@ -309,6 +309,26 @@ func TestResolveImagePolicyDenialHappensBeforeDocker(t *testing.T) {
 	}
 }
 
+func TestRuntimeImageForToolReportsPolicyBeforeStaleLock(t *testing.T) {
+	tool := registry.Tool{Name: "python", Image: "python:3.13"}
+	stale := &LockFile{Version: 1, Images: map[string]LockEntry{}}
+
+	requireLock := policy.Policy{SchemaVersion: 1, RequireLock: true}
+	if _, err := runtimeImageForTool(tool, requireLock, stale, "container-bin.lock"); err == nil || !strings.Contains(err.Error(), "[policy.lock_required]") {
+		t.Fatalf("require-lock stale entry error = %v", err)
+	}
+
+	denyRepository := policy.Policy{SchemaVersion: 1, AllowedRepositories: []string{"ghcr.io/acme"}}
+	if _, err := runtimeImageForTool(tool, denyRepository, stale, "container-bin.lock"); err == nil || !strings.Contains(err.Error(), "[policy.repository_denied]") {
+		t.Fatalf("repository-denied stale entry error = %v", err)
+	}
+
+	allowRepository := policy.Policy{SchemaVersion: 1, AllowedRepositories: []string{"docker.io/library"}}
+	if _, err := runtimeImageForTool(tool, allowRepository, stale, "container-bin.lock"); err == nil || !strings.Contains(err.Error(), "is not locked") {
+		t.Fatalf("authorized stale entry error = %v, want generic stale-lock error", err)
+	}
+}
+
 func TestLoadLockFile_RecoversFromBackup(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "container-bin.lock")
