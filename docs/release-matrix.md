@@ -165,7 +165,7 @@ That proves the following, and no more:
 The separate `test-windows-arm64` job runs on GitHub's native
 `windows-11-arm` runner. It asserts both the process and Go toolchain report
 ARM64, runs the full unit suite, builds a release-style `cb.exe`, and dispatches
-a copied `jq.exe` shim to a controlled `docker.cmd` stub. That proves native
+a copied `jq.exe` shim to a controlled, compiled `docker.exe` stub. That proves native
 management execution, argv[0] shim dispatch and tool exit-code propagation on
 ARM64 hardware. It still has no Docker Desktop engine, publishes no ARM64
 release artifact and does not qualify bind mounts, volumes, providers, release

@@ -93,10 +93,12 @@ jobs:
         run: |
           $runtimeArch = [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString()
           $goArch = (go env GOARCH).Trim()
+          $goHostArch = (go env GOHOSTARCH).Trim()
           Write-Host "runtime architecture: $runtimeArch"
           Write-Host "Go architecture: $goArch"
-          if ($runtimeArch -ne 'Arm64' -or $goArch -ne 'arm64') {
-            throw "expected native Windows ARM64, got runtime=$runtimeArch go=$goArch"
+          Write-Host "Go host architecture: $goHostArch"
+          if ($runtimeArch -ne 'Arm64' -or $goArch -ne 'arm64' -or $goHostArch -ne 'arm64') {
+            throw "expected native Windows ARM64, got runtime=$runtimeArch go=$goArch gohost=$goHostArch"
           }
       - name: go test
         run: go test -v ./...
@@ -115,11 +117,24 @@ jobs:
           $stubDir = Join-Path $env:RUNNER_TEMP 'container-bin-docker-stub'
           $stubLog = Join-Path $stubDir 'argv.txt'
           New-Item -ItemType Directory -Path $stubDir -Force | Out-Null
+          $stubSource = Join-Path $stubDir 'main.go'
           @'
-          @echo off
-          > "%CB_DOCKER_STUB_LOG%" echo %*
-          exit /b 42
-          '@ | Set-Content -LiteralPath (Join-Path $stubDir 'docker.cmd') -Encoding Ascii
+          package main
+
+          import (
+              "os"
+              "strings"
+          )
+
+          func main() {
+              line := strings.Join(os.Args[1:], " ") + "\n"
+              if err := os.WriteFile(os.Getenv("CB_DOCKER_STUB_LOG"), []byte(line), 0o600); err != nil {
+                  panic(err)
+              }
+              os.Exit(42)
+          }
+          '@ | Set-Content -LiteralPath $stubSource -Encoding Utf8
+          go build -trimpath -buildvcs=false -o (Join-Path $stubDir 'docker.exe') $stubSource
           $env:CB_DOCKER_STUB_LOG = $stubLog
           $env:PATH = "$stubDir;$env:PATH"
 
