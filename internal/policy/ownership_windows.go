@@ -84,7 +84,7 @@ func secureWindowsACLVerdict(raw string, policyFile bool) error {
 		rights := parts[2]
 		blocked := []string{"FullControl", "Modify", "Delete", "DeleteSubdirectoriesAndFiles", "TakeOwnership", "ChangePermissions"}
 		if policyFile {
-			blocked = append(blocked, "Write", "CreateFiles", "AppendData")
+			blocked = append(blocked, "Write", "WriteData", "CreateFiles", "AppendData")
 		}
 		for _, right := range blocked {
 			if strings.Contains(rights, right) {

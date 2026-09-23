@@ -90,11 +90,11 @@ func Load(path string) (*LockFile, error) {
 				return fmt.Errorf("lock entry %q local image digest must match resolved ID", curKey)
 			}
 		} else {
-			i := strings.LastIndex(cur.Resolved, "@")
-			if i <= 0 || !validImageID(cur.Resolved[i+1:]) {
+			_, resolvedDigest, ok := splitImmutableRepositoryDigest(cur.Resolved)
+			if !ok {
 				return fmt.Errorf("lock entry %q has invalid immutable repository digest %q", curKey, cur.Resolved)
 			}
-			if cur.Digest != cur.Resolved[i+1:] {
+			if cur.Digest != resolvedDigest {
 				return fmt.Errorf("lock entry %q digest does not match resolved repository digest", curKey)
 			}
 			if matched, ok := matchRepoDigest(cur.Configured, []string{cur.Resolved}); !ok || matched != cur.Resolved {
@@ -240,15 +240,33 @@ func canonicalRepository(repo string) string {
 func matchRepoDigest(configured string, repoDigests []string) (string, bool) {
 	want := canonicalRepository(imageRepository(configured))
 	for _, rd := range repoDigests {
-		i := strings.LastIndex(rd, "@")
-		if i < 0 || !strings.HasPrefix(rd[i+1:], "sha256:") {
+		repo, _, ok := splitImmutableRepositoryDigest(rd)
+		if !ok {
 			continue
 		}
-		if canonicalRepository(rd[:i]) == want {
+		if canonicalRepository(repo) == want {
 			return rd, true
 		}
 	}
 	return "", false
+}
+
+func splitImmutableRepositoryDigest(ref string) (string, string, bool) {
+	if strings.Count(ref, "@") != 1 {
+		return "", "", false
+	}
+	repo, digest, _ := strings.Cut(ref, "@")
+	if repo == "" || !validImageID(digest) {
+		return "", "", false
+	}
+	lastSlash := strings.LastIndexByte(repo, '/')
+	if strings.LastIndexByte(repo, ':') > lastSlash {
+		return "", "", false
+	}
+	if _, err := policy.CanonicalRepository(repo); err != nil {
+		return "", "", false
+	}
+	return repo, digest, true
 }
 
 type imageInspection struct {
@@ -294,8 +312,11 @@ func repositoryLockEntry(configured string, inspected imageInspection) (LockEntr
 		// configured reference never had.
 		return LockEntry{}, fmt.Errorf("image %s has no RepoDigest for repository %q (locally tagged image?); pull it from its registry before locking", configured, imageRepository(configured))
 	}
-	i := strings.LastIndex(resolved, "@")
-	return LockEntry{Configured: configured, Resolved: resolved, Digest: resolved[i+1:]}, nil
+	_, digest, ok := splitImmutableRepositoryDigest(resolved)
+	if !ok {
+		return LockEntry{}, fmt.Errorf("image %s returned malformed RepoDigest %q", configured, resolved)
+	}
+	return LockEntry{Configured: configured, Resolved: resolved, Digest: digest}, nil
 }
 
 func localLockEntry(configured string, inspected imageInspection) (LockEntry, error) {

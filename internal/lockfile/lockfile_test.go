@@ -86,6 +86,8 @@ func TestLockFileRejectsMutableOrForeignRepositoryResolution(t *testing.T) {
 	id := entryID(configured)
 	cases := []string{
 		"ghcr.io/acme/tool:latest",
+		"ghcr.io/acme/tool:latest@sha256:" + strings.Repeat("a", 64),
+		"ghcr.io/acme/tool@bad@sha256:" + strings.Repeat("a", 64),
 		"evil.example/tool@sha256:" + strings.Repeat("a", 64),
 		"ghcr.io/acme/tool@sha256:short",
 	}
