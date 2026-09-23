@@ -489,7 +489,8 @@ func TestPipxExposeDiscoveryMountsStateReadOnly(t *testing.T) {
 	want := []string{
 		"run", "--rm", "--pull", "never", "--network", "none", "--read-only",
 		"--mount", "type=volume,src=cb-pipx117-py313-state,dst=/cb/pipx,readonly",
-		"--entrypoint", "sh", "example/pipx:1", "-c", "discover-script", "cb-expose", "/cb/pipx/bin", "/cb/pipx",
+		"--entrypoint", "/usr/local/bin/python3", "example/pipx:1", "-c", "discover-script",
+		"discover", "/cb/pipx/bin", "/cb/pipx", "/cb/pipx/.cb-pipx.lock",
 	}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("discovery args = %#v, want %#v", args, want)

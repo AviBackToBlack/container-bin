@@ -3,6 +3,7 @@ import os
 import pathlib
 import secrets
 import shutil
+import stat
 import subprocess
 import sys
 
@@ -79,11 +80,24 @@ def normalize_state(root, allowed_python):
                 temporary.unlink()
 
 
+def open_state_lock(lock_path):
+    flags = os.O_CREAT | os.O_RDWR | os.O_APPEND
+    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(lock_path, flags, 0o600)
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise RuntimeError(f"pipx state lock is not a regular file: {lock_path}")
+        return os.fdopen(descriptor, "a+b")
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
 def run(argv, root, allowed_python, runner=subprocess.run):
     root = root.resolve(strict=True)
     allowed_python = allowed_python.resolve(strict=True)
     lock_path = root / ".cb-pipx.lock"
-    with lock_path.open("a+b") as state_lock:
+    with open_state_lock(lock_path) as state_lock:
         fcntl.flock(state_lock, fcntl.LOCK_EX)
         status = 1
         try:

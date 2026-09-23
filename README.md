@@ -452,6 +452,8 @@ directory within the state volume through the selected locked profile; it does
 not search a project venv, the host `PATH`, uv's store, or other container
 directories. Each discovered executable must also resolve inside the managed
 pipx state volume, so an external link left by a failed install is rejected.
+Discovery takes a shared lock on the same volume-local lock used exclusively by
+pipx commands, so it never scans a partially updated application store.
 Plain `pip` remains for project dependencies, so scripts in `/venv/bin` are
 deliberately not eligible for global exposure.
 
@@ -580,11 +582,14 @@ expose a binary installed under the Node 22 runtime, use
 `cb expose ruby <binary>`.
 
 Managed-store discovery uses the already-locked local source image with pulls
-and networking disabled, a read-only container root, an explicit shell
-entrypoint, and read-only mounts for the selected store and any required
-companion volume. The source image must provide a POSIX-compatible `sh`;
-distroless images without one cannot use automatic discovery. Discovery never
-mutates package-manager state.
+and networking disabled, a read-only container root, and read-only mounts for
+the selected store and any required companion volume. It uses an explicit shell
+entrypoint except for pipx, whose locked Python image runs the embedded
+lock-aware scanner directly. The pipx wrapper creates its reserved lock before
+the first state mutation; discovery reports no applications if that lock does
+not exist yet, otherwise it scans under a shared lock. No discovery path mutates
+package-manager state. Other source images must provide a POSIX-compatible
+`sh`; distroless images without one cannot use automatic discovery.
 
 For a custom stateful profile, `cb expose --shared-file TOOL VOLUME FILE`
 selects one logical name from that profile's `shared_volumes` and one absolute

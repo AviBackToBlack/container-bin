@@ -75,6 +75,12 @@ class PipxWrapperTests(unittest.TestCase):
         self.assertTrue(link.is_file())
         self.assertFalse(link.is_symlink())
 
+    def test_lock_symlink_is_rejected(self):
+        lock_path = self.root / ".cb-pipx.lock"
+        lock_path.symlink_to(self.root / "other")
+        with self.assertRaises(OSError):
+            WRAPPER.run([], self.root, self.allowed_python, lambda *a, **k: Result(0))
+
 
 if __name__ == "__main__":
     unittest.main()

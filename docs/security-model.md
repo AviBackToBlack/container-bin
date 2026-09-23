@@ -62,10 +62,17 @@ readable, and dangerous to let others edit.
 - **Read-only exposure discovery.** `cb expose` requires the locked source image
   to exist locally, disables pulls and networking, uses a read-only container
   root and volume mounts, and overrides the image entrypoint with the discovery
-  shell. The source image must provide a POSIX-compatible `sh`; distroless
-  images without one cannot use automatic discovery. Explicit shared-file
+  shell or pipx's embedded Python scanner. Non-pipx source images must provide a
+  POSIX-compatible `sh`; distroless images without one cannot use automatic
+  discovery. Explicit shared-file
   discovery also rejects a final symlink or a parent directory that resolves
   outside the selected volume mount.
+- **Serialized pipx exposure.** Pipx commands create and hold the volume-local
+  lock exclusively before mutating state. Discovery mounts the state read-only,
+  reports no applications when the lock does not exist yet, and otherwise holds
+  it shared while scanning. This prevents exposure from observing partially
+  updated application state without granting the discovery container write
+  access.
 - **Validated atomic writes.** Registry/lock mutations parse the complete
   resulting file before atomically replacing the original; backups are
   restored the same way and only with `--apply`.

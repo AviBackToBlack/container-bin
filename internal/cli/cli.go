@@ -7,6 +7,7 @@ package cli
 import (
 	"archive/zip"
 	"bytes"
+	_ "embed"
 	"errors"
 	"fmt"
 	"io"
@@ -283,6 +284,7 @@ type exposeStore struct {
 	installHint      string
 	validateTargets  bool
 	requireLabels    bool
+	discoveryLock    string
 	companionTargets []string
 	companionMounts  []exposeMount
 }
@@ -308,7 +310,7 @@ func exposeStoreForMountTarget(dst string) (exposeStore, bool) {
 	case "/cb/uv-bin":
 		return exposeStore{kind: "uv tool", mountTarget: dst, binDirectory: dst, installHint: "uv tool install <package>", companionTargets: []string{"/cb/uv-tools"}}, true
 	case "/cb/pipx":
-		return exposeStore{kind: "pipx", mountTarget: dst, binDirectory: dst + "/bin", installHint: "pipx install <package>", validateTargets: true, requireLabels: true}, true
+		return exposeStore{kind: "pipx", mountTarget: dst, binDirectory: dst + "/bin", installHint: "pipx install <package>", validateTargets: true, requireLabels: true, discoveryLock: dst + "/.cb-pipx.lock"}, true
 	case "/root/.dotnet":
 		return exposeStore{kind: ".NET tool", mountTarget: dst, binDirectory: dst + "/tools", installHint: "dotnet tool install --global <package>"}, true
 	case "/cb/ruby-gems":
@@ -432,8 +434,10 @@ func discoverGlobalBins(t registry.Tool, store exposeStore) ([]exposedBin, error
 	if err := ensureExposeStoreVolumes(t, store); err != nil {
 		return nil, err
 	}
-	script := `if [ -d "$1" ]; then for f in "$1"/*; do [ -f "$f" ] && [ -x "$f" ] || continue; if [ -n "${2-}" ]; then newline='
-'; marked=$(readlink -f "$f"; status=$?; printf x; exit "$status") || { printf 'cannot resolve %s\n' "$f" >&2; exit 1; }; resolved=${marked%x}; resolved=${resolved%"$newline"}; printf '%s\000%s\000' "${f##*/}" "$resolved"; else printf '%s\000' "${f##*/}"; fi; done; fi`
+	script := `if [ -d "$1" ]; then for f in "$1"/*; do [ -f "$f" ] && [ -x "$f" ] || continue; printf '%s\000' "${f##*/}"; done; fi`
+	if store.discoveryLock != "" {
+		script = pipxDiscoveryScript
+	}
 	dockerArgs, err := exposeDiscoveryArgs(store, image, script)
 	if err != nil {
 		return nil, err
@@ -445,6 +449,9 @@ func discoverGlobalBins(t registry.Tool, store exposeStore) ([]exposedBin, error
 	}
 	return parseExposedBins(out, store)
 }
+
+//go:embed pipx_discovery.py
+var pipxDiscoveryScript string
 
 func ensureExposeStoreVolumes(t registry.Tool, store exposeStore) error {
 	volumes, err := exposeStoreManagedVolumes(t, store)
@@ -535,9 +542,13 @@ func exposeDiscoveryArgs(store exposeStore, image, script string) ([]string, err
 		}
 		dockerArgs = append(dockerArgs, "--mount", mount)
 	}
-	dockerArgs = append(dockerArgs, "--entrypoint", "sh", image, "-c", script, "cb-expose", store.binDirectory)
-	if store.validateTargets {
-		dockerArgs = append(dockerArgs, store.mountTarget)
+	if store.discoveryLock != "" {
+		dockerArgs = append(dockerArgs,
+			"--entrypoint", "/usr/local/bin/python3", image, "-c", script,
+			"discover", store.binDirectory, store.mountTarget, store.discoveryLock,
+		)
+	} else {
+		dockerArgs = append(dockerArgs, "--entrypoint", "sh", image, "-c", script, "cb-expose", store.binDirectory)
 	}
 	return dockerArgs, nil
 }
