@@ -92,7 +92,7 @@ func ParseArgs(args []string) (Options, error) {
 			}
 			opts.Prerelease = true
 		case "--version":
-			if opts.Version != "" || i+1 == len(args) || strings.HasPrefix(args[i+1], "-") {
+			if opts.Version != "" || i+1 == len(args) || args[i+1] == "" || strings.HasPrefix(args[i+1], "-") {
 				return Options{}, errors.New("--version requires one canonical version")
 			}
 			i++

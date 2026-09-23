@@ -29,6 +29,7 @@ func TestParseArgs(t *testing.T) {
 		{name: "mutually exclusive", args: []string{"--check", "--prerelease", "--version", "v1.0.0"}, wantErr: "mutually exclusive"},
 		{name: "bad exact", args: []string{"--check", "--version", "latest"}, wantErr: "canonical"},
 		{name: "missing exact", args: []string{"--check", "--version"}, wantErr: "requires"},
+		{name: "empty exact", args: []string{"--check", "--version", ""}, wantErr: "requires"},
 		{name: "missing exact before flag", args: []string{"--check", "--version", "--prerelease"}, wantErr: "requires"},
 		{name: "unknown", args: []string{"--check", "--apply"}, wantErr: "unknown"},
 		{name: "duplicate check", args: []string{"--check", "--check"}, wantErr: "only once"},
