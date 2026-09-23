@@ -229,8 +229,9 @@ func (c checker) selectRelease(ctx context.Context, current string, opts Options
 		if err := c.getJSON(ctx, apiRoot+"/releases/latest", current, &selected); err != nil {
 			return release{}, "", err
 		}
-		if selected.Draft || selected.Prerelease {
-			return release{}, "", errors.New("latest stable endpoint returned a draft or prerelease")
+		v, err := parseVersion(selected.TagName)
+		if selected.Draft || selected.Prerelease || err != nil || len(v.prerelease) != 0 {
+			return release{}, "", errors.New("latest stable endpoint returned a draft, prerelease, or invalid tag")
 		}
 		return selected, "stable", nil
 	}

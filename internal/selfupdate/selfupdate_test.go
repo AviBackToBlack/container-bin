@@ -187,7 +187,9 @@ func TestPlanRejectsUnsafeReleaseMetadata(t *testing.T) {
 		{name: "external asset URL", mutate: func(r *release) { r.Assets[0].BrowserDownloadURL = "https://evil.example/cb.exe" }, want: "non-canonical download URL"},
 		{name: "external release URL", mutate: func(r *release) { r.HTMLURL = "https://evil.example/v1.2.0" }, want: "outside the canonical release page"},
 		{name: "oversize", mutate: func(r *release) { r.Assets[0].Size = maxBinarySize + 1 }, want: "invalid size"},
-		{name: "prerelease from stable", mutate: func(r *release) { r.Prerelease = true }, want: "draft or prerelease"},
+		{name: "prerelease from stable", mutate: func(r *release) { r.Prerelease = true }, want: "prerelease"},
+		{name: "prerelease tag without flag", mutate: func(r *release) { r.TagName = "v1.2.0-rc.1" }, want: "prerelease"},
+		{name: "invalid stable tag", mutate: func(r *release) { r.TagName = "latest" }, want: "invalid tag"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
