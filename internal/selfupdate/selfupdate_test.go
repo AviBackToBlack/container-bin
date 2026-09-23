@@ -209,7 +209,7 @@ func TestGetJSONBoundsAndTransportFailures(t *testing.T) {
 		want string
 	}{
 		{name: "network", doer: doerFunc(func(*http.Request) (*http.Response, error) { return nil, errors.New("offline") }), want: "offline"},
-		{name: "http", doer: doerFunc(func(*http.Request) (*http.Response, error) { return response(http.StatusForbidden, "{}"), nil }), want: "HTTP 403"},
+		{name: "http", doer: doerFunc(func(*http.Request) (*http.Response, error) { return response(http.StatusForbidden, "{}"), nil }), want: "/repos/AviBackToBlack/container-bin/releases/latest returned HTTP 403"},
 		{name: "truncated JSON", doer: doerFunc(func(*http.Request) (*http.Response, error) { return response(http.StatusOK, "{"), nil }), want: "decode"},
 		{name: "oversize", doer: doerFunc(func(*http.Request) (*http.Response, error) {
 			return response(http.StatusOK, strings.Repeat("x", maxResponseSize+1)), nil

@@ -244,13 +244,14 @@ func (c checker) getJSON(ctx context.Context, endpoint, current string, dst any)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", apiVersion)
 	req.Header.Set("User-Agent", "container-bin/"+current)
+	endpointLabel := req.URL.RequestURI()
 	resp, err := c.doer.Do(req)
 	if err != nil {
-		return fmt.Errorf("GitHub release query failed: %w", err)
+		return fmt.Errorf("GitHub release query %s failed: %w", endpointLabel, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("GitHub release query returned HTTP %d", resp.StatusCode)
+		return fmt.Errorf("GitHub release query %s returned HTTP %d", endpointLabel, resp.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize+1))
 	if err != nil {
