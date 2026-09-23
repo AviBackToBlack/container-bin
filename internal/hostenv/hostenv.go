@@ -68,7 +68,7 @@ func requireFrontend(info Runtime, probeErr error) error {
 		if markers == "" {
 			markers = "WSL_INTEROP or WSL_DISTRO_NAME"
 		}
-		return fmt.Errorf("Windows ContainerBin process inherited WSL interoperability marker(s) %s; this invocation is unsupported; run cb from a native Windows process, or use the native WSL frontend after it is released", markers)
+		return fmt.Errorf("Windows ContainerBin process inherited WSL interoperability marker(s): %s; this invocation is unsupported; run cb from a native Windows process, or use the native WSL frontend after it is released", markers)
 	case WSL2Native:
 		if info.Distro == "" {
 			return errors.New("native WSL2 was detected but WSL_DISTRO_NAME is unavailable, so distribution identity cannot be proven")
