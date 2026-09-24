@@ -82,6 +82,20 @@ project identities and ContainerBin state namespaces. ContainerBin does not
 infer identity equivalence between `C:\x`, `/mnt/c/x` or `\\wsl$\...`.
 Native Linux path, permission, symlink, case, TTY and signal semantics apply.
 
+The accepted native layout is fixed rather than XDG-configurable: the managed
+binary is `~/.local/lib/container-bin/cb`; management and tool shims are under
+`~/.local/bin`; the registry and lockfile are under
+`~/.config/container-bin`; and private state is under
+`~/.local/state/container-bin`. The home must be a canonical distribution-local
+Linux path, never `/mnt/*`.
+
+Docker state identity is the exact case-sensitive WSL distribution name,
+canonical `/etc/machine-id` and numeric Linux UID, hashed under a versioned
+domain into an opaque namespace. Every managed WSL volume must carry that
+namespace in both its name and ownership labels, and all lifecycle operations
+must filter by exact namespace. ContainerBin does not normalize identities or
+silently adopt state across distributions, reinstalls or users.
+
 ### Enterprise policy — machine constraint layer
 
 Enterprise policy is not another registry merge layer. User registry, future
