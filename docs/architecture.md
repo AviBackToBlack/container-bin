@@ -12,6 +12,7 @@ NAME.exe (hardlink to cb.exe)
   → host runtime boundary       reject unsupported frontends before config I/O
   → machine policy load         fixed admin path, ownership/version validated
   → registry profile lookup     container-bin.toml, schema-validated, fail-closed
+  → project overlay trust       canonical root + exact digest, add-only merge
   → argv normalization          repair PowerShell-split "-opt=" "value" pairs
   → path mapping                conservative Windows→container translation
   → host_mounts resolution      explicit registry-declared bind mounts, provider-agnostic
@@ -41,6 +42,18 @@ that family together; incomplete or ambiguous families are rejected. The
 custom parser rejects everything else — unknown keys, duplicate sections,
 malformed syntax, newer schema versions. Misreading configuration silently
 would be worse than refusing to run; this is a recurring design choice.
+
+`internal/projectconfig` independently parses a nearest-ancestor
+`.container-bin.toml`, applies the restricted project capability set, and then
+performs an add-only merge. It never changes global defaults or replaces a
+global concrete tool/default alias. Activation requires a user trust record in
+the OS configuration directory whose key is the canonical project root and
+whose value includes the SHA-256 digest of the exact overlay bytes and sorted
+tool names. The trust store is strict, versioned, atomically written and
+recoverable from the same narrow `.bak` interruption window as other state.
+Read-only inspection can validate and use that backup without renaming it;
+mutation-time trust/untrust recovery runs under the global mutation lock.
+Review, invalidation and untrust do not execute Docker.
 
 Three providers own lifecycle semantics:
 
@@ -237,6 +250,7 @@ main            argv[0] dispatch, host boundary, subcommand switch, version, usa
   ↓
 internal/cli    setup, install, add, expose, unexpose, uninstall, inspect,
                 trace, env, backup, restore, lock, update
+internal/projectconfig  overlay discovery, capability validation, trust store
   ↓
 internal/statearchive  labeled-volume selection, manifest/checksum/tar
                        validation, Docker helper backup/restore
@@ -267,8 +281,9 @@ The exact import edges, from `go list -f '{{.ImportPath}} {{.Imports}}' ./...`,
 project-internal imports only:
 
 ```
-main         -> cli, diag, dockerrun, hostenv, mutationlock, policy, registry, selfupdate, state
+main         -> cli, diag, dockerrun, hostenv, mutationlock, policy, projectconfig, registry, selfupdate, state
 cli          -> atomicio, diag, dockerrun, lockfile, pathmap, policy, registry, statearchive, toml
+projectconfig -> atomicio, pathmap, policy, registry, toml
 diag         -> dockerrun, dockervol, lockfile, pathmap, policy, registry
 dockerrun    -> dockervol, lockfile, pathmap, policy, registry
 state        -> dockervol, pathmap, registry

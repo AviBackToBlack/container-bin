@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -14,6 +15,7 @@ import (
 	"github.com/AviBackToBlack/container-bin/internal/hostenv"
 	"github.com/AviBackToBlack/container-bin/internal/mutationlock"
 	"github.com/AviBackToBlack/container-bin/internal/policy"
+	"github.com/AviBackToBlack/container-bin/internal/projectconfig"
 	"github.com/AviBackToBlack/container-bin/internal/registry"
 	"github.com/AviBackToBlack/container-bin/internal/selfupdate"
 	"github.com/AviBackToBlack/container-bin/internal/state"
@@ -63,6 +65,78 @@ func main() {
 	if err != nil {
 		fatalf("registry: %v", err)
 	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		fatalf("project overlay: determine current working directory: %v", err)
+	}
+	projectContext, _ := projectconfig.InspectDefault(reg, cwd)
+
+	if isManagementInvocation(invoked) {
+		switch os.Args[1] {
+		case "trust":
+			run := func() error {
+				fresh, _, err := registry.Load()
+				if err != nil {
+					return err
+				}
+				ctx, freshTrustPath := projectconfig.InspectDefault(fresh, cwd)
+				return projectconfig.Trust(ctx, freshTrustPath, os.Args[2:], os.Stdin, os.Stdout, stdinInteractive(), machinePolicy, registry.InstallAdditionalShimNames)
+			}
+			if hasArg(os.Args[2:], "--check") {
+				err = run()
+			} else {
+				err = withMutationLock(cfgPath, run)
+			}
+			if err != nil {
+				fatalf("trust: %v", err)
+			}
+			return
+		case "untrust":
+			if len(os.Args) != 2 {
+				fatalf("untrust: usage: cb untrust")
+			}
+			if err := withMutationLock(cfgPath, func() error {
+				return projectconfig.UntrustDefault(cwd, os.Stdout)
+			}); err != nil {
+				fatalf("untrust: %v", err)
+			}
+			return
+		case "inspect":
+			if len(os.Args) == 3 && os.Args[2] == "--project" {
+				if err := projectContext.PrintReview(os.Stdout, machinePolicy); err != nil {
+					fatalf("inspect: %v", err)
+				}
+				return
+			}
+		case "doctor":
+			doctorReg := reg
+			projectErr := projectDoctorStatus(projectContext)
+			if projectContext.Status == projectconfig.Trusted {
+				doctorReg = projectContext.Effective
+			}
+			doctorErr := diag.Doctor(doctorReg, cfgPath, machinePolicy)
+			if projectErr != nil {
+				fatalf("doctor: %v", projectErr)
+			}
+			if doctorErr != nil {
+				fatalf("doctor: %v", doctorErr)
+			}
+			return
+		}
+	}
+
+	reg, err = projectContext.Registry(reg)
+	if err != nil {
+		fatalf("project overlay: %v", err)
+	}
+	loadFreshEffective := func() (registry.Registry, error) {
+		fresh, _, err := registry.Load()
+		if err != nil {
+			return registry.Registry{}, err
+		}
+		ctx, _ := projectconfig.InspectDefault(fresh, cwd)
+		return ctx.Registry(fresh)
+	}
 
 	if !isManagementInvocation(invoked) {
 		tool, _, ok := reg.Resolve(invoked)
@@ -85,7 +159,7 @@ func main() {
 		}
 	case "add":
 		if err := withMutationLock(cfgPath, func() error {
-			reg, _, err := registry.Load()
+			reg, err := loadFreshEffective()
 			if err != nil {
 				return err
 			}
@@ -98,10 +172,6 @@ func main() {
 			return cli.Setup(cfgPath, version, machinePolicy)
 		}); err != nil {
 			fatalf("setup: %v", err)
-		}
-	case "doctor":
-		if err := diag.Doctor(reg, cfgPath, machinePolicy); err != nil {
-			fatalf("doctor: %v", err)
 		}
 	case "bugreport":
 		if err := diag.Bugreport(reg, cfgPath, version, machinePolicy); err != nil {
@@ -165,11 +235,20 @@ func main() {
 		}
 	case "expose":
 		if err := withMutationLock(cfgPath, func() error {
-			reg, _, err := registry.Load()
+			fresh, _, err := registry.Load()
 			if err != nil {
 				return err
 			}
-			return cli.Expose(reg, cfgPath, os.Args[2:], machinePolicy)
+			ctx, _ := projectconfig.InspectDefault(fresh, cwd)
+			effective, err := ctx.Registry(fresh)
+			if err != nil {
+				return err
+			}
+			args := os.Args[2:]
+			if err := rejectProjectExposeSource(ctx, args); err != nil {
+				return err
+			}
+			return cli.Expose(effective, cfgPath, args, machinePolicy)
 		}); err != nil {
 			fatalf("expose: %v", err)
 		}
@@ -195,7 +274,7 @@ func main() {
 		}
 	case "lock":
 		if err := withMutationLock(cfgPath, func() error {
-			reg, _, err := registry.Load()
+			reg, err := loadFreshEffective()
 			if err != nil {
 				return err
 			}
@@ -205,7 +284,7 @@ func main() {
 		}
 	case "update":
 		if err := withMutationLock(cfgPath, func() error {
-			reg, _, err := registry.Load()
+			reg, err := loadFreshEffective()
 			if err != nil {
 				return err
 			}
@@ -281,6 +360,9 @@ Commands:
   cb env       show project root and Python environment selected for cwd
   cb state     list container-bin Docker volumes and mark current/shared state
   cb inspect   show a tool profile plus resolved project/state information
+  cb inspect --project  review the current project overlay and trust digest
+  cb trust [--check | --yes]  explicitly trust the current .container-bin.toml
+  cb untrust   revoke trust for the current project overlay
   cb gc        dry-run cleanup; supports --orphans for labeled missing projects
   cb expose    expose managed-store binaries or one explicit shared-volume file
   cb unexpose  remove dynamically exposed tool profiles/shims
@@ -310,6 +392,58 @@ var osExit = os.Exit
 func fatalf(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "container-bin: "+format+"\n", args...)
 	osExit(exitCbFailure)
+}
+
+func stdinInteractive() bool {
+	info, err := os.Stdin.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
+func hasArg(args []string, want string) bool {
+	for _, arg := range args {
+		if arg == want {
+			return true
+		}
+	}
+	return false
+}
+
+func rejectProjectExposeSource(ctx projectconfig.Context, args []string) error {
+	sourceIndex := 0
+	if len(args) > 0 && args[0] == "--shared-file" {
+		sourceIndex = 1
+	}
+	if sourceIndex >= len(args) {
+		return nil
+	}
+	source := strings.ToLower(args[sourceIndex])
+	if _, projectLocal := ctx.Overlay.Registry.Tools[source]; projectLocal {
+		return fmt.Errorf("tool %q is project-local; refusing to persist derived profiles in the global registry", source)
+	}
+	return nil
+}
+
+func projectDoctorStatus(ctx projectconfig.Context) error {
+	switch ctx.Status {
+	case projectconfig.Absent:
+		fmt.Println("OK       project overlay: absent")
+		return nil
+	case projectconfig.Trusted:
+		fmt.Printf("OK       project overlay: %s\n", ctx.Summary())
+		return nil
+	case projectconfig.Untrusted:
+		fmt.Printf("FAIL     project overlay: %s\n", ctx.Summary())
+		return errors.New("project overlay is not trusted; run `cb trust --check`")
+	case projectconfig.Changed:
+		fmt.Printf("FAIL     project overlay: %s\n", ctx.Summary())
+		return errors.New("project overlay changed after trust; review and trust the new digest")
+	default:
+		fmt.Printf("FAIL     project overlay: %s\n", ctx.Summary())
+		if ctx.Err != nil {
+			return errors.New("project overlay is invalid; see the escaped diagnostic above")
+		}
+		return fmt.Errorf("project overlay has unknown status %q", ctx.Status)
+	}
 }
 
 // withMutationLock is not re-entrant; call sites must not nest another

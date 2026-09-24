@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/AviBackToBlack/container-bin/internal/policy"
+	"github.com/AviBackToBlack/container-bin/internal/projectconfig"
 	"github.com/AviBackToBlack/container-bin/internal/registry"
 )
 
@@ -171,6 +172,62 @@ func TestSelfUpdateCheckEnforcesHostBoundaryAndSkipsPolicyAndRegistry(t *testing
 	}
 	if !hostChecked {
 		t.Fatal("self-update check skipped host enforcement")
+	}
+}
+
+func TestProjectDoctorStatus(t *testing.T) {
+	tests := []struct {
+		name    string
+		ctx     projectconfig.Context
+		wantErr string
+		wantOut string
+	}{
+		{name: "absent", ctx: projectconfig.Context{Status: projectconfig.Absent}, wantOut: "OK       project overlay: absent"},
+		{name: "trusted", ctx: projectconfig.Context{Status: projectconfig.Trusted}, wantOut: "OK       project overlay: trusted"},
+		{name: "untrusted", ctx: projectconfig.Context{Status: projectconfig.Untrusted}, wantErr: "not trusted", wantOut: "FAIL     project overlay: untrusted"},
+		{name: "changed", ctx: projectconfig.Context{Status: projectconfig.Changed}, wantErr: "changed after trust", wantOut: "FAIL     project overlay: changed"},
+		{name: "invalid", ctx: projectconfig.Context{Status: projectconfig.Invalid, Err: errors.New("bad overlay")}, wantErr: "escaped diagnostic", wantOut: "FAIL     project overlay: invalid"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotErr error
+			out := captureMainStdout(t, func() { gotErr = projectDoctorStatus(tc.ctx) })
+			if !strings.Contains(out, tc.wantOut) {
+				t.Fatalf("output %q does not contain %q", out, tc.wantOut)
+			}
+			if tc.wantErr == "" && gotErr != nil {
+				t.Fatalf("projectDoctorStatus() error = %v", gotErr)
+			}
+			if tc.wantErr != "" && (gotErr == nil || !strings.Contains(gotErr.Error(), tc.wantErr)) {
+				t.Fatalf("projectDoctorStatus() error = %v, want %q", gotErr, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestRejectProjectExposeSource(t *testing.T) {
+	ctx := projectconfig.Context{Overlay: projectconfig.Overlay{Registry: registry.Registry{Tools: map[string]registry.Tool{
+		"acme": {Name: "acme"},
+	}}}}
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr bool
+	}{
+		{name: "project source", args: []string{"acme"}, wantErr: true},
+		{name: "case folded", args: []string{"ACME", "child"}, wantErr: true},
+		{name: "shared file source", args: []string{"--shared-file", "acme", "state", "/tools/acme"}, wantErr: true},
+		{name: "global source", args: []string{"go"}},
+		{name: "malformed shared file", args: []string{"--shared-file"}},
+		{name: "empty"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := rejectProjectExposeSource(ctx, tc.args)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("rejectProjectExposeSource() error = %v, wantErr %t", err, tc.wantErr)
+			}
+		})
 	}
 }
 

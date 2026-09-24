@@ -125,6 +125,44 @@ func TestInstallShimReplacementFailurePreservesExistingShim(t *testing.T) {
 	}
 }
 
+func TestNormalizedShimNamesRejectsCaseDuplicates(t *testing.T) {
+	if _, err := normalizedShimNames([]string{"Acme", "acme"}); err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("normalizedShimNames() error = %v, want duplicate rejection", err)
+	}
+	got, err := normalizedShimNames([]string{"zeta", "Acme"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, ",") != "acme,zeta" {
+		t.Fatalf("normalized names = %v", got)
+	}
+}
+
+func TestVerifyExistingManagedShim(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "cb.exe")
+	same := filepath.Join(dir, "same.exe")
+	other := filepath.Join(dir, "other.exe")
+	if err := os.WriteFile(exe, []byte("container-bin"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(same, []byte("container-bin"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(other, []byte("unrelated"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyExistingManagedShim(exe, filepath.Join(dir, "missing.exe")); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyExistingManagedShim(exe, same); err != nil {
+		t.Fatalf("byte-identical shim rejected: %v", err)
+	}
+	if err := verifyExistingManagedShim(exe, other); err == nil || !strings.Contains(err.Error(), "not the current ContainerBin executable") {
+		t.Fatalf("unrelated shim error = %v", err)
+	}
+}
+
 func TestAppendMissingDefaultToolsPreservesCustom(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/container-bin.toml"
