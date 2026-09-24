@@ -181,6 +181,26 @@ So CI validates compilation and pure/unit logic on a GitHub-hosted Windows
 runner. The matrix is what validates the `docs/shell-contract.md` semantics on a
 real Windows 11 + Docker Desktop host before a release.
 
+### Live self-update attestation verifier check
+
+`internal/selfupdate` includes an opt-in native-Windows integration test for the
+external verifier boundary. It must be run with an Authenticode-valid GitHub CLI
+and the published v1.1.0 `cb.exe` and `SHA256SUMS` assets:
+
+```powershell
+$env:GH_TOKEN = gh auth token --hostname github.com
+$env:CB_TEST_REAL_GH = (Get-Command gh.exe).Source
+$env:CB_TEST_RELEASE_CB = (Resolve-Path .\cb.exe).Path
+$env:CB_TEST_RELEASE_SUMS = (Resolve-Path .\SHA256SUMS).Path
+go test -run '^TestVerifyRealGitHubCLIRelease$' ./internal/selfupdate
+```
+
+The assets must come from the canonical v1.1.0 release URLs. The test exercises
+the real argument surface and JSON shape, Authenticode publisher check,
+environment allowlist, checksum parsing, attestation policy and post-verification
+re-hash. The token authenticates only to the fixed `github.com` API; it is never
+printed or included in test output.
+
 ## Why not a self-hosted runner (yet)
 
 RM-7b's text is explicit: start with a documented manual release matrix, and

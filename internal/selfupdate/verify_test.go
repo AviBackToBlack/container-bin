@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -22,7 +23,7 @@ func TestVerifyRequiresChecksumAndExactAttestationPolicy(t *testing.T) {
 		gotArgs = append([]string(nil), args...)
 		return attestationJSON(fixture.digest), nil, nil
 	})
-	verified, err := (verifier{runner: runner}).Verify(context.Background(), fixture.plan, fixture.binary, fixture.checksums, fixture.gh)
+	verified, err := testVerifier(runner).Verify(context.Background(), fixture.plan, fixture.binary, fixture.checksums, fixture.gh)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,10 +88,10 @@ func TestVerifyRejectsChecksumFailuresBeforeAttestation(t *testing.T) {
 			}
 			fixture.plan.Checksums.Size = int64(len(manifest))
 			called := false
-			_, err := (verifier{runner: attestationRunnerFunc(func(context.Context, string, []string) ([]byte, []byte, error) {
+			_, err := testVerifier(attestationRunnerFunc(func(context.Context, string, []string) ([]byte, []byte, error) {
 				called = true
 				return nil, nil, nil
-			})}).Verify(context.Background(), fixture.plan, fixture.binary, fixture.checksums, fixture.gh)
+			})).Verify(context.Background(), fixture.plan, fixture.binary, fixture.checksums, fixture.gh)
 			if err == nil || !strings.Contains(err.Error(), tc.want) || called {
 				t.Fatalf("Verify = %v, called=%v, want %q before attestation", err, called, tc.want)
 			}
@@ -122,10 +123,10 @@ func TestVerifyRejectsInvalidPolicyLayoutAndPathsBeforeAttestation(t *testing.T)
 			fixture := newVerificationFixture(t)
 			tc.mutate(&fixture)
 			called := false
-			_, err := (verifier{runner: attestationRunnerFunc(func(context.Context, string, []string) ([]byte, []byte, error) {
+			_, err := testVerifier(attestationRunnerFunc(func(context.Context, string, []string) ([]byte, []byte, error) {
 				called = true
 				return nil, nil, nil
-			})}).Verify(context.Background(), fixture.plan, fixture.binary, fixture.checksums, fixture.gh)
+			})).Verify(context.Background(), fixture.plan, fixture.binary, fixture.checksums, fixture.gh)
 			if err == nil || !strings.Contains(err.Error(), tc.want) || called {
 				t.Fatalf("Verify = %v, called=%v, want %q before attestation", err, called, tc.want)
 			}
@@ -142,9 +143,9 @@ func TestVerifyRejectsInvalidPolicyLayoutAndPathsBeforeAttestation(t *testing.T)
 		if err := os.WriteFile(other, data, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		_, err = (verifier{runner: attestationRunnerFunc(func(context.Context, string, []string) ([]byte, []byte, error) {
+		_, err = testVerifier(attestationRunnerFunc(func(context.Context, string, []string) ([]byte, []byte, error) {
 			return nil, nil, errors.New("unexpected")
-		})}).Verify(context.Background(), fixture.plan, fixture.binary, other, fixture.gh)
+		})).Verify(context.Background(), fixture.plan, fixture.binary, other, fixture.gh)
 		if err == nil || !strings.Contains(err.Error(), "exact staged layout") {
 			t.Fatalf("separate-directory Verify = %v", err)
 		}
@@ -177,9 +178,9 @@ func TestVerifyRejectsAttestationFailureOrInvalidResult(t *testing.T) {
 			if tc.stdout != nil {
 				stdout = tc.stdout(fixture)
 			}
-			_, err := (verifier{runner: attestationRunnerFunc(func(context.Context, string, []string) ([]byte, []byte, error) {
+			_, err := testVerifier(attestationRunnerFunc(func(context.Context, string, []string) ([]byte, []byte, error) {
 				return stdout, tc.stderr, tc.err
-			})}).Verify(context.Background(), fixture.plan, fixture.binary, fixture.checksums, fixture.gh)
+			})).Verify(context.Background(), fixture.plan, fixture.binary, fixture.checksums, fixture.gh)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("Verify = %v, want %q", err, tc.want)
 			}
@@ -189,16 +190,132 @@ func TestVerifyRejectsAttestationFailureOrInvalidResult(t *testing.T) {
 
 func TestVerifyDetectsExecutableMutationDuringAttestation(t *testing.T) {
 	fixture := newVerificationFixture(t)
-	_, err := (verifier{runner: attestationRunnerFunc(func(_ context.Context, _ string, _ []string) ([]byte, []byte, error) {
+	_, err := testVerifier(attestationRunnerFunc(func(_ context.Context, _ string, _ []string) ([]byte, []byte, error) {
 		mutated := append([]byte(nil), fixture.binaryBytes...)
 		mutated[0] ^= 0xff
 		if writeErr := os.WriteFile(fixture.binary, mutated, 0o600); writeErr != nil {
 			t.Fatal(writeErr)
 		}
 		return attestationJSON(fixture.digest), nil, nil
-	})}).Verify(context.Background(), fixture.plan, fixture.binary, fixture.checksums, fixture.gh)
+	})).Verify(context.Background(), fixture.plan, fixture.binary, fixture.checksums, fixture.gh)
 	if err == nil || !strings.Contains(err.Error(), "changed during verification") {
 		t.Fatalf("mutation Verify = %v", err)
+	}
+}
+
+func TestVerifyRejectsGitHubCLIAuthenticationFailureOrMutation(t *testing.T) {
+	t.Run("authentication failure", func(t *testing.T) {
+		fixture := newVerificationFixture(t)
+		called := false
+		v := verifier{
+			runner: attestationRunnerFunc(func(context.Context, string, []string) ([]byte, []byte, error) {
+				called = true
+				return nil, nil, nil
+			}),
+			authenticate: func(string) (string, error) {
+				return "", errors.New("untrusted publisher")
+			},
+		}
+		_, err := v.Verify(context.Background(), fixture.plan, fixture.binary, fixture.checksums, fixture.gh)
+		if err == nil || !strings.Contains(err.Error(), "untrusted publisher") || called {
+			t.Fatalf("Verify = %v, called=%v", err, called)
+		}
+	})
+
+	t.Run("changed during verification", func(t *testing.T) {
+		fixture := newVerificationFixture(t)
+		authentications := 0
+		v := verifier{
+			runner: attestationRunnerFunc(func(context.Context, string, []string) ([]byte, []byte, error) {
+				return attestationJSON(fixture.digest), nil, nil
+			}),
+			authenticate: func(string) (string, error) {
+				authentications++
+				return fmt.Sprintf("digest-%d", authentications), nil
+			},
+		}
+		_, err := v.Verify(context.Background(), fixture.plan, fixture.binary, fixture.checksums, fixture.gh)
+		if err == nil || !strings.Contains(err.Error(), "GitHub CLI executable changed") || authentications != 2 {
+			t.Fatalf("Verify = %v, authentications=%d", err, authentications)
+		}
+	})
+}
+
+func TestHashVerificationFileRejectsSizeChangeAfterInspection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cb.exe")
+	if err := os.WriteFile(path, []byte("before"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString("-after"); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = hashVerificationFile(path, info)
+	if err == nil || !strings.Contains(err.Error(), "changed size while hashing") {
+		t.Fatalf("hashVerificationFile error = %v", err)
+	}
+}
+
+func TestAttestationEnvironmentIsExplicitlyAllowlisted(t *testing.T) {
+	t.Setenv("GH_TOKEN", "test-token")
+	t.Setenv("GITHUB_TOKEN", "ignored-fallback")
+	t.Setenv("GH_HOST", "attacker.example")
+	t.Setenv("GH_CONFIG_DIR", filepath.Join(t.TempDir(), "hostile-config"))
+	t.Setenv("HTTPS_PROXY", "https://attacker.example")
+	t.Setenv("SSL_CERT_FILE", filepath.Join(t.TempDir(), "attacker.pem"))
+	t.Setenv("SystemRoot", `X:\attacker`)
+	t.Setenv("WINDIR", `X:\attacker`)
+	hostileLocalAppData := filepath.Join(t.TempDir(), "attacker-local-app-data")
+	t.Setenv("LOCALAPPDATA", hostileLocalAppData)
+	env, err := attestationEnvironment()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make(map[string]string)
+	for _, entry := range env {
+		name, value, ok := strings.Cut(entry, "=")
+		if !ok {
+			t.Fatalf("invalid environment entry %q", entry)
+		}
+		got[strings.ToUpper(name)] = value
+	}
+	if got["GH_TOKEN"] != "test-token" || got["GH_PROMPT_DISABLED"] != "1" || got["NO_COLOR"] != "1" {
+		t.Fatalf("required verifier environment missing: %v", got)
+	}
+	for _, forbidden := range []string{"GITHUB_TOKEN", "GH_HOST", "GH_CONFIG_DIR", "HTTPS_PROXY", "SSL_CERT_FILE", "PATH", "HOME"} {
+		if _, ok := got[forbidden]; ok {
+			t.Errorf("inherited verifier environment contains %s", forbidden)
+		}
+	}
+	if runtime.GOOS == "windows" {
+		for _, name := range []string{"SYSTEMROOT", "WINDIR"} {
+			if strings.EqualFold(got[name], `X:\attacker`) {
+				t.Errorf("verifier environment trusted inherited %s", name)
+			}
+		}
+		if strings.EqualFold(got["LOCALAPPDATA"], hostileLocalAppData) {
+			t.Error("verifier environment trusted inherited LOCALAPPDATA")
+		}
+	}
+}
+
+func TestAttestationEnvironmentRequiresExplicitToken(t *testing.T) {
+	t.Setenv("GH_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "")
+	_, err := attestationEnvironment()
+	if err == nil || !strings.Contains(err.Error(), "explicit GH_TOKEN or GITHUB_TOKEN") {
+		t.Fatalf("attestationEnvironment error = %v", err)
 	}
 }
 
@@ -208,9 +325,9 @@ func TestVerifyRejectsSymlinkInputs(t *testing.T) {
 	if err := os.Symlink(fixture.binary, link); err != nil {
 		t.Skipf("symlink unavailable: %v", err)
 	}
-	_, err := (verifier{runner: attestationRunnerFunc(func(context.Context, string, []string) ([]byte, []byte, error) {
+	_, err := testVerifier(attestationRunnerFunc(func(context.Context, string, []string) ([]byte, []byte, error) {
 		return nil, nil, errors.New("unexpected")
-	})}).Verify(context.Background(), fixture.plan, link, fixture.checksums, fixture.gh)
+	})).Verify(context.Background(), fixture.plan, link, fixture.checksums, fixture.gh)
 	if err == nil || !strings.Contains(err.Error(), "regular non-symlink") {
 		t.Fatalf("symlink Verify = %v", err)
 	}
@@ -288,4 +405,13 @@ type attestationRunnerFunc func(context.Context, string, []string) ([]byte, []by
 
 func (f attestationRunnerFunc) Run(ctx context.Context, executable string, args []string) ([]byte, []byte, error) {
 	return f(ctx, executable, args)
+}
+
+func testVerifier(runner attestationRunner) verifier {
+	return verifier{
+		runner: runner,
+		authenticate: func(string) (string, error) {
+			return "authenticated-test-gh", nil
+		},
+	}
 }

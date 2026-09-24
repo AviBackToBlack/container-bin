@@ -45,20 +45,28 @@ type attestationRunner interface {
 }
 
 type verifier struct {
-	runner attestationRunner
+	runner       attestationRunner
+	authenticate func(string) (string, error)
 }
 
 // Verify checks the release checksum and GitHub build-provenance attestation
 // for a staged cb.exe. ghExecutable must name an explicitly selected absolute,
-// regular GitHub CLI executable; Verify never searches PATH and never falls
-// back to checksum-only acceptance.
+// regular executable with a valid GitHub, Inc. Authenticode signature. Verify
+// never searches PATH, passes inherited verifier configuration, or falls back
+// to checksum-only acceptance.
 func Verify(ctx context.Context, plan Plan, binaryPath, checksumsPath, ghExecutable string) (Verified, error) {
-	return (verifier{runner: commandAttestationRunner{}}).Verify(ctx, plan, binaryPath, checksumsPath, ghExecutable)
+	return (verifier{
+		runner:       commandAttestationRunner{},
+		authenticate: authenticateGitHubCLI,
+	}).Verify(ctx, plan, binaryPath, checksumsPath, ghExecutable)
 }
 
 func (v verifier) Verify(ctx context.Context, plan Plan, binaryPath, checksumsPath, ghExecutable string) (Verified, error) {
 	if v.runner == nil {
 		return Verified{}, errors.New("self-update verifier has no attestation runner")
+	}
+	if v.authenticate == nil {
+		return Verified{}, errors.New("self-update verifier has no GitHub CLI authenticator")
 	}
 	target, err := validateVerificationPlan(plan)
 	if err != nil {
@@ -84,6 +92,10 @@ func (v verifier) Verify(ctx context.Context, plan Plan, binaryPath, checksumsPa
 	ghExecutable, _, err = canonicalVerificationFile(ghExecutable, "GitHub CLI executable")
 	if err != nil {
 		return Verified{}, err
+	}
+	ghDigest, err := v.authenticate(ghExecutable)
+	if err != nil {
+		return Verified{}, fmt.Errorf("authenticate GitHub CLI executable: %w", err)
 	}
 
 	digest, size, err := hashVerificationFile(binaryPath, binaryInfo)
@@ -130,6 +142,13 @@ func (v verifier) Verify(ctx context.Context, plan Plan, binaryPath, checksumsPa
 	}
 	if err := validateAttestationResult(stdout, digest); err != nil {
 		return Verified{}, err
+	}
+	postGHDigest, err := v.authenticate(ghExecutable)
+	if err != nil {
+		return Verified{}, fmt.Errorf("re-authenticate GitHub CLI executable: %w", err)
+	}
+	if postGHDigest != ghDigest {
+		return Verified{}, errors.New("GitHub CLI executable changed during verification")
 	}
 
 	postPath, postInfo, err := canonicalVerificationFile(binaryPath, "staged executable")
@@ -207,22 +226,29 @@ func canonicalVerificationFile(path, label string) (string, os.FileInfo, error) 
 }
 
 func hashVerificationFile(path string, expected os.FileInfo) (string, int64, error) {
+	return hashRegularFile(path, expected, "staged executable")
+}
+
+func hashRegularFile(path string, expected os.FileInfo, label string) (string, int64, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return "", 0, fmt.Errorf("open staged executable for verification: %w", err)
+		return "", 0, fmt.Errorf("open %s for verification: %w", label, err)
 	}
 	defer file.Close()
 	opened, err := file.Stat()
 	if err != nil {
-		return "", 0, fmt.Errorf("inspect opened staged executable: %w", err)
+		return "", 0, fmt.Errorf("inspect opened %s: %w", label, err)
 	}
 	if !os.SameFile(expected, opened) || !opened.Mode().IsRegular() {
-		return "", 0, errors.New("staged executable changed before hashing")
+		return "", 0, fmt.Errorf("%s changed before hashing", label)
 	}
 	hash := sha256.New()
 	n, err := io.Copy(hash, file)
 	if err != nil {
-		return "", 0, fmt.Errorf("hash staged executable: %w", err)
+		return "", 0, fmt.Errorf("hash %s: %w", label, err)
+	}
+	if n != expected.Size() || n != opened.Size() {
+		return "", 0, fmt.Errorf("%s changed size while hashing", label)
 	}
 	return hex.EncodeToString(hash.Sum(nil)), n, nil
 }
@@ -333,16 +359,40 @@ type commandAttestationRunner struct{}
 
 func (commandAttestationRunner) Run(ctx context.Context, executable string, args []string) ([]byte, []byte, error) {
 	cmd := exec.CommandContext(ctx, executable, args...)
+	env, err := attestationEnvironment()
+	if err != nil {
+		return nil, nil, err
+	}
+	cmd.Env = env
+	volume := filepath.VolumeName(executable)
+	cmd.Dir = volume + string(os.PathSeparator)
 	var stdout, stderr boundedBuffer
 	stdout.limit = maxVerifierOutput
 	stderr.limit = maxVerifierOutput
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	err := cmd.Run()
+	err = cmd.Run()
 	if stdout.overflow || stderr.overflow {
 		return stdout.data, stderr.data, errors.New("verifier output exceeded the safety limit")
 	}
 	return stdout.data, stderr.data, err
+}
+
+func attestationEnvironment() ([]string, error) {
+	env, err := verifierBaseEnvironment()
+	if err != nil {
+		return nil, err
+	}
+	env = append(env, "GH_PROMPT_DISABLED=1", "NO_COLOR=1")
+	if token := os.Getenv("GH_TOKEN"); token != "" {
+		env = append(env, "GH_TOKEN="+token)
+		return env, nil
+	}
+	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+		env = append(env, "GITHUB_TOKEN="+token)
+		return env, nil
+	}
+	return nil, errors.New("GitHub attestation verification requires an explicit GH_TOKEN or GITHUB_TOKEN")
 }
 
 type boundedBuffer struct {

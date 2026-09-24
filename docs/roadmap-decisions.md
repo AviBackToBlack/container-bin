@@ -169,13 +169,24 @@ release workflow, release ref and downloaded artifact digest. Checksums are
 additional consistency evidence and never an authentication fallback.
 
 The verifier receives an explicit absolute path to a regular GitHub CLI
-executable and never searches `PATH`. It requires the canonical two-entry
-`SHA256SUMS` layout, invokes `gh attestation verify` with the repository,
-workflow, tag ref and SLSA provenance predicate fixed in argv, validates the
-reported subject digest and re-hashes `cb.exe` after verification. Its opaque
-result binds the exact digest for the later replacement phase; any missing
-verifier, policy mismatch, malformed output or file change fails closed with no
-checksum-only fallback.
+executable and never searches `PATH`. Windows Authenticode must validate that
+exact executable as published by `GitHub, Inc.` before and after use; the
+certificate thumbprint is not pinned so normal publisher-certificate rotation
+remains possible. An unsigned, differently signed or changed verifier fails
+closed.
+
+The verifier process receives a fixed volume-root working directory and a
+minimal environment: the actual Windows system directory, the LocalAppData
+known folder needed for GitHub CLI's signed-root cache, noninteractive settings,
+and exactly one explicit `GH_TOKEN` or `GITHUB_TOKEN`. These host paths come
+from Windows APIs rather than inherited variables. GitHub host, config-directory,
+proxy, custom-CA and other inherited settings are not passed through. It
+requires the canonical two-entry `SHA256SUMS` layout, invokes
+`gh attestation verify` with the repository, workflow, tag ref and SLSA
+provenance predicate fixed in argv, validates the reported subject digest and
+re-hashes `cb.exe` after verification. Its opaque result binds the exact digest
+for the later replacement phase; any missing verifier, policy mismatch,
+malformed output or file change fails closed with no checksum-only fallback.
 
 After verification, a narrowly scoped temporary helper waits for the parent
 process to exit, serializes with other ContainerBin mutations, proves ownership
