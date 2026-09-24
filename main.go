@@ -12,6 +12,7 @@ import (
 	"github.com/AviBackToBlack/container-bin/internal/dockerrun"
 	"github.com/AviBackToBlack/container-bin/internal/hostenv"
 	"github.com/AviBackToBlack/container-bin/internal/mutationlock"
+	"github.com/AviBackToBlack/container-bin/internal/policy"
 	"github.com/AviBackToBlack/container-bin/internal/registry"
 	"github.com/AviBackToBlack/container-bin/internal/state"
 )
@@ -23,9 +24,10 @@ import (
 // Local/dev builds report "dev".
 var version = "dev"
 
-// loadRegistry is a test seam for proving bootstrap commands return before
-// registry I/O. Production always uses registry.Load.
+// These test seams prove bootstrap commands return before policy or registry
+// I/O. Production always uses the corresponding package loaders.
 var loadRegistry = registry.Load
+var loadPolicy = policy.Load
 
 // requireHostFrontend is a test seam around the fail-closed host boundary.
 // Production always uses hostenv.RequireFrontend.
@@ -40,6 +42,10 @@ func main() {
 		fatalf("host runtime: %v", err)
 		return
 	}
+	machinePolicy, err := loadPolicy()
+	if err != nil {
+		fatalf("machine policy: %v", err)
+	}
 
 	reg, cfgPath, err := loadRegistry()
 	if err != nil {
@@ -51,7 +57,7 @@ func main() {
 		if !ok {
 			fatalf("no tool profile for %q (registry: %s)", invoked, cfgPath)
 		}
-		code, err := dockerrun.RunTool(tool, os.Args[1:])
+		code, err := dockerrun.RunTool(tool, os.Args[1:], machinePolicy)
 		if err != nil {
 			fatalf("%v", err)
 		}
@@ -71,22 +77,22 @@ func main() {
 			if err != nil {
 				return err
 			}
-			return cli.Add(reg, cfgPath, os.Args[2:])
+			return cli.Add(reg, cfgPath, os.Args[2:], machinePolicy)
 		}); err != nil {
 			fatalf("add: %v", err)
 		}
 	case "setup":
 		if err := withMutationLock(cfgPath, func() error {
-			return cli.Setup(cfgPath, version)
+			return cli.Setup(cfgPath, version, machinePolicy)
 		}); err != nil {
 			fatalf("setup: %v", err)
 		}
 	case "doctor":
-		if err := diag.Doctor(reg, cfgPath); err != nil {
+		if err := diag.Doctor(reg, cfgPath, machinePolicy); err != nil {
 			fatalf("doctor: %v", err)
 		}
 	case "bugreport":
-		if err := diag.Bugreport(reg, cfgPath, version); err != nil {
+		if err := diag.Bugreport(reg, cfgPath, version, machinePolicy); err != nil {
 			fatalf("bugreport: %v", err)
 		}
 	case "backup":
@@ -97,7 +103,7 @@ func main() {
 		}
 	case "restore":
 		if err := withMutationLock(cfgPath, func() error {
-			return cli.Restore(cfgPath, os.Args[2:])
+			return cli.Restore(cfgPath, os.Args[2:], machinePolicy)
 		}); err != nil {
 			fatalf("restore: %v", err)
 		}
@@ -106,7 +112,7 @@ func main() {
 		if err != nil {
 			fatalf("self-test: %v", err)
 		}
-		if err := diag.SelfTest(reg, jsonOut, release, version); err != nil {
+		if err := diag.SelfTest(reg, jsonOut, release, version, machinePolicy); err != nil {
 			fatalf("self-test: %v", err)
 		}
 	case "list":
@@ -118,15 +124,15 @@ func main() {
 				if err != nil {
 					return err
 				}
-				return cli.Default(fresh, cfgPath, os.Args[2:])
+				return cli.Default(fresh, cfgPath, os.Args[2:], machinePolicy)
 			}); err != nil {
 				fatalf("default: %v", err)
 			}
-		} else if err := cli.Default(reg, cfgPath, os.Args[2:]); err != nil {
+		} else if err := cli.Default(reg, cfgPath, os.Args[2:], machinePolicy); err != nil {
 			fatalf("default: %v", err)
 		}
 	case "trace":
-		if err := cli.Trace(reg, os.Args[2:]); err != nil {
+		if err := cli.Trace(reg, os.Args[2:], machinePolicy); err != nil {
 			fatalf("trace: %v", err)
 		}
 	case "env":
@@ -138,7 +144,7 @@ func main() {
 			fatalf("state: %v", err)
 		}
 	case "inspect":
-		if err := cli.Inspect(reg, os.Args[2:]); err != nil {
+		if err := cli.Inspect(reg, os.Args[2:], machinePolicy); err != nil {
 			fatalf("inspect: %v", err)
 		}
 	case "gc":
@@ -151,7 +157,7 @@ func main() {
 			if err != nil {
 				return err
 			}
-			return cli.Expose(reg, cfgPath, os.Args[2:])
+			return cli.Expose(reg, cfgPath, os.Args[2:], machinePolicy)
 		}); err != nil {
 			fatalf("expose: %v", err)
 		}
@@ -181,7 +187,7 @@ func main() {
 			if err != nil {
 				return err
 			}
-			return cli.Lock(reg, cfgPath, os.Args[2:])
+			return cli.Lock(reg, cfgPath, os.Args[2:], machinePolicy)
 		}); err != nil {
 			fatalf("lock: %v", err)
 		}
@@ -191,7 +197,7 @@ func main() {
 			if err != nil {
 				return err
 			}
-			return cli.Update(reg, cfgPath, os.Args[2:])
+			return cli.Update(reg, cfgPath, os.Args[2:], machinePolicy)
 		}); err != nil {
 			fatalf("update: %v", err)
 		}
@@ -249,7 +255,7 @@ func usage(cfg string) {
 Commands:
   cb setup     initialize/upgrade registry, install shims, then run doctor
   cb install   create/update shims from the tool registry
-  cb add       add a minimal stateless tool profile and install its shim
+  cb add       add a minimal stateless tool profile; --local declares local intent
   cb doctor    validate Docker, PATH, shims, registry, lock and managed volumes
   cb bugreport assemble a paste-ready diagnostic report with best-effort redaction
   cb backup    back up registry + lock; --state adds explicitly named volumes

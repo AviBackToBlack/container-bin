@@ -154,7 +154,7 @@ provider = "stateless"
 	if _, ok := reg.Tools["jq2"]; !ok {
 		t.Fatal("custom jq2 was lost")
 	}
-	for _, name := range []string{"python3", "pip", "pip3", "jq", "yq", "terraform", "ffmpeg", "node24", "npm24", "npx24", "go", "gofmt", "rustc", "cargo", "uv", "uvx", "dotnet", "ruby", "gem", "bundle"} {
+	for _, name := range []string{"python3", "pip", "pip3", "jq", "yq", "terraform", "ffmpeg", "node24", "npm24", "npx24", "go", "gofmt", "rustc", "cargo", "uv", "uvx", "pipx", "dotnet", "ruby", "gem", "bundle"} {
 		if _, ok := reg.Tools[name]; !ok {
 			t.Fatalf("missing migrated tool %q", name)
 		}
@@ -399,7 +399,7 @@ func TestAppendMissingDefaultToolsUpgradesPreRM11(t *testing.T) {
 	if _, ok := reg.Tools["jq2"]; !ok {
 		t.Fatal("custom jq2 was lost")
 	}
-	for _, name := range []string{"node22", "npm22", "npx22", "rustc", "cargo", "uv", "uvx", "dotnet", "ruby", "gem", "bundle"} {
+	for _, name := range []string{"node22", "npm22", "npx22", "rustc", "cargo", "uv", "uvx", "pipx", "dotnet", "ruby", "gem", "bundle"} {
 		if _, ok := reg.Tools[name]; !ok {
 			t.Fatalf("missing upgraded tool %q", name)
 		}

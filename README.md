@@ -3,11 +3,11 @@
 **Run CLI tools on Windows through Docker-backed executable shims — without
 installing the runtimes on the host.**
 
-ContainerBin makes commands such as `python`, `pip`, `node`, `npm`, `npx`,
+ContainerBin makes commands such as `python`, `pip`, `pipx`, `node`, `npm`, `npx`,
 `uv`, `uvx`, `go`, `cargo`, `rustc`, `dotnet`, `ruby`, `gem`, `bundle`, `jq`, `yq`, `terraform` and `ffmpeg` look like ordinary
 Windows executables while their real implementations run inside disposable
 Linux containers on Docker Desktop. Your Windows installation stays clean: no
-Python, Node, Go, Rust, uv, .NET SDK or Ruby on the host — just one small Go binary,
+Python, pipx, Node, Go, Rust, uv, .NET SDK or Ruby on the host — just one small Go binary,
 `cb.exe`.
 
 ```powershell
@@ -69,9 +69,10 @@ real Linux CLI/runtime in an ephemeral container
 
 | Environment | Status |
 |---|---|
-| Windows 10/11 + Docker Desktop (Linux containers) + PowerShell | **Supported** — this is the validated configuration |
+| Windows 10/11 x64 + Docker Desktop (Linux containers) + PowerShell | **Supported** — this is the validated configuration |
 | cmd.exe invocation of shims | Works for the common cases; less battle-tested than PowerShell |
 | WSL2 | **Not yet supported.** The selected native-Linux frontend now has an explicit fail-closed runtime boundary; config/shim/state implementation and real Docker Desktop WSL qualification remain. See [docs/wsl.md](docs/wsl.md) |
+| Windows 11 ARM64 | **CI-qualified only, not supported yet.** Native tests/build/dispatch run on GitHub-hosted ARM64 hardware, but there is no release artifact or real Docker Desktop ARM64 E2E qualification |
 | Linux / macOS hosts | **Not supported.** The program is Go and cross-compiles, but shim installation, path mapping and doctor checks are Windows-specific |
 | Windows containers | Not supported; images are Linux images |
 
@@ -126,6 +127,7 @@ cb lock
 | `rustc` | `rust:1.98.1-slim-bookworm` | stateless |
 | `cargo` | `rust:1.98.1-slim-bookworm` | stateful (`rust198` state group) |
 | `uv`, `uvx` | `ghcr.io/astral-sh/uv:0.12-python3.13-trixie-slim` | stateful (`uv012-py313` state group) |
+| `pipx` | `ghcr.io/astral-sh/uv:0.12-python3.13-trixie-slim` | stateful (`pipx117-py313` state group; pinned `pipx==1.17.4`) |
 | `dotnet` | `mcr.microsoft.com/dotnet/sdk:10.0` | stateful (`dotnet10` state group) |
 | `ruby`, `gem`, `bundle` | `ruby:4.0-trixie` | stateful (`ruby40` state group) |
 | `jq` | `ghcr.io/jqlang/jq:latest` | stateless |
@@ -173,10 +175,15 @@ the image:
 
 ```powershell
 cb add jq-corp --image registry.corp.example/devtools/jq:1.8.1
+# For an intentionally local image, declare that identity explicitly:
+cb add jq-local --image jq-local:dev --local
 ```
 
 If a lockfile exists, it becomes intentionally incomplete until you run
-`cb update jq-corp` or `cb lock`; execution fails closed in the meantime.
+`cb update jq-corp` or `cb lock`; execution fails closed in the meantime. A
+profile added with `--local` must be locked explicitly with
+`cb update --local jq-local` or `cb lock --local jq-local`; the flag never
+infers local identity from Docker metadata.
 State, environment allowlists, path rules, command overrides, and mounts still
 require an explicit reviewed registry edit followed by `cb install`.
 
@@ -200,10 +207,7 @@ and `stateful` profiles alike.
 [tools.token-meter]
 image = "example/token-meter:latest"
 provider = "stateless"
-host_mounts = [
-  "%USERPROFILE%\\.claude:/root/.claude:ro",
-  "%USERPROFILE%\\.codex:/root/.codex:ro",
-]
+host_mounts = ["%USERPROFILE%\\.claude:/root/.claude:ro", "%USERPROFILE%\\.codex:/root/.codex:ro"]
 ```
 
 Entries follow the `SOURCE:/CONTAINER_PATH:MODE` shape used by
@@ -406,6 +410,62 @@ Existing installations gain `uv` and `uvx` on `cb install`. An older lockfile
 does not include their image, so run `cb update uv` (or regenerate the lock with
 `cb lock`) before first use in locked mode.
 
+## pipx global application state
+
+`pipx` is the classic-Python global application workflow. It is a separate
+stateful profile: installed application environments live under
+`/cb/pipx/home`, their executables live under `/cb/pipx/bin`, and the pinned
+pipx launcher cache lives under `/cb/pipx/launcher-cache`. These directories
+share one managed state volume so their relative links and cached launcher
+remain portable together. That volume is not the Python provider's project
+`/venv` or pip cache, and it is not shared with uv's tool store.
+
+The locked uv/Python image launches the exact `pipx==1.17.4` release with
+`uvx`. First use therefore needs package-index access to populate the dedicated
+launcher cache; later invocations can use that cache offline. The image lock
+pins the launcher image, while package-index trust and the pipx package download
+remain governed by the profile's narrowly forwarded uv/pip index, TLS and proxy
+settings. Automatic Python downloads are disabled and pipx uses the Python 3.13
+interpreter already in the locked image. A volume-local lock serializes pipx
+commands that share this state. After every command, including failed commands,
+a fail-closed wrapper validates every pipx-owned symlink, changes links that
+resolve within the state volume to relative links, and copies only the known
+image interpreter into its launcher cache, application venvs, and the pip
+backend's shared-libraries venv. This
+includes explicit `--backend pip` installs and pipx's forced pip backend for
+the `pip` package while still rejecting any other external link target. This
+keeps `cb-pipx117-py313-state` portable
+through selected-volume backup/restore without relaxing archive link validation.
+`pipx run` environments remain ephemeral because `PIPX_VENV_CACHEDIR` is not
+placed on the managed volume; each `pipx run` may resolve and download its
+application again and therefore requires the configured package index to be
+reachable.
+
+```powershell
+pipx install cowsay==6.1
+cb expose pipx cowsay       # explicit deterministic selection
+cowsay "hello from pipx"
+
+cb expose pipx              # expose every other eligible app in the store
+cb unexpose cowsay
+```
+
+The generated application profiles preserve the pipx image, state group,
+volumes and environment policy. Exposure discovery reads only the managed bin
+directory within the state volume through the selected locked profile; it does
+not search a project venv, the host `PATH`, uv's store, or other container
+directories. Each discovered executable must also resolve inside the managed
+pipx state volume, so an external link left by a failed install is rejected.
+Discovery takes a shared lock on the same volume-local lock used exclusively by
+pipx commands, so it never scans a partially updated application store.
+Plain `pip` remains for project dependencies, so scripts in `/venv/bin` are
+deliberately not eligible for global exposure.
+
+Existing installations gain `pipx` on `cb install`. Because it shares the same
+image reference as uv, a lock that already contains that reference can resolve
+it; otherwise run `cb update pipx` (or regenerate the lock with `cb lock`) before
+first use in locked mode.
+
 ## .NET SDK state
 
 `dotnet` uses Microsoft's .NET 10 LTS SDK image. NuGet packages, user-level
@@ -488,6 +548,10 @@ uv tool install ruff
 cb expose uvx ruff
 ruff --version
 
+pipx install cowsay==6.1
+cb expose pipx cowsay
+cowsay "hello from pipx"
+
 dotnet tool install --global dotnet-ef
 cb expose dotnet dotnet-ef
 dotnet-ef --version
@@ -504,8 +568,9 @@ acme-lint --version
 
 `cb expose` takes a stateful source profile with one supported global binary
 store: the npm prefix (`npm`, `npm22`, ...), Go's shared `/go/bin` (`go`),
-Cargo's install root (`cargo`), uv's tool-bin directory (`uv`, `uvx`), .NET's
-global tool home (`dotnet`), or the RubyGems home (`ruby`, `gem`, `bundle`). It
+Cargo's install root (`cargo`), uv's tool-bin directory (`uv`, `uvx`), pipx's
+managed bin directory (`pipx`), .NET's global tool home (`dotnet`), or the
+RubyGems home (`ruby`, `gem`, `bundle`). It
 adds registry profiles that inherit the source image, `state_group`,
 project-root markers and mode, shared volumes, and environment policy, then
 creates Windows shims — `cowsay.exe`, `stringer.exe`, `just.exe`, `ruff.exe`,
@@ -515,16 +580,20 @@ expose a binary installed under the Node 22 runtime, use
 `cb expose npm22 <binary>`; for `go install` output, use
 `cb expose go <binary>`; for `cargo install`, use
 `cb expose cargo <binary>`; for `uv tool install`, use
-`cb expose uvx <binary>`; for a global .NET tool, use
+`cb expose uvx <binary>`; for a pipx application, use
+`cb expose pipx <binary>`; for a global .NET tool, use
 `cb expose dotnet <binary>`; for a Ruby gem executable, use
 `cb expose ruby <binary>`.
 
 Managed-store discovery uses the already-locked local source image with pulls
-and networking disabled, a read-only container root, an explicit shell
-entrypoint, and read-only mounts for the selected store and any required
-companion volume. The source image must provide a POSIX-compatible `sh`;
-distroless images without one cannot use automatic discovery. Discovery never
-mutates package-manager state.
+and networking disabled, a read-only container root, and read-only mounts for
+the selected store and any required companion volume. It uses an explicit shell
+entrypoint except for pipx, whose locked Python image runs the embedded
+lock-aware scanner directly. The pipx wrapper creates its reserved lock before
+the first state mutation; discovery reports no applications if that lock does
+not exist yet, otherwise it scans under a shared lock. No discovery path mutates
+package-manager state. Other source images must provide a POSIX-compatible
+`sh`; distroless images without one cannot use automatic discovery.
 
 For a custom stateful profile, `cb expose --shared-file TOOL VOLUME FILE`
 selects one logical name from that profile's `shared_volumes` and one absolute
@@ -614,6 +683,20 @@ guess that a retagged registry image should be treated as a local build.
 An image-ID lock is deliberately host-local: it makes execution immutable on
 that Docker daemon, but it does not make the image portable or pullable. Keep
 the Dockerfile/build inputs or export the image separately for recovery.
+
+## Enterprise machine policy
+
+Administrators can constrain resolved user configuration through a fixed,
+machine-owned policy at `C:\ProgramData\ContainerBin\policy.toml` (Windows) or
+`/etc/container-bin/policy.toml` (native Linux/WSL). A missing policy preserves
+unmanaged behavior. A present but unreadable, invalid, expired, unsupported or
+insufficiently protected policy fails closed before non-bootstrap work.
+
+Schema 1 can require an exact image lock, reject local image-ID locks unless
+explicitly allowed, and allowlist canonical registry/repository boundaries.
+Lower-precedence registry or command-line choices cannot weaken it. See
+[enterprise machine policy](docs/enterprise-policy.md) for the schema,
+ownership rules, normalization behavior and stable diagnostic codes.
 
 ## State inspection and garbage collection
 
@@ -838,9 +921,10 @@ benchmark methodology and the disposable-container tradeoff are in
 
 ## Current limitations
 
-- Windows + Docker Desktop (Linux containers) only. WSL2 runtime detection is
+- Windows x64 + Docker Desktop (Linux containers) only. WSL2 runtime detection is
   present, but native WSL execution remains gated until its host layout, state
-  namespace and Docker Desktop qualification slices land.
+  namespace and Docker Desktop qualification slices land. Windows ARM64 has
+  native non-Docker CI coverage, but no published artifact or support claim.
 - First invocation of a tool after `cb lock` may still need images present
   locally (`cb lock` pulls them; `cb self-test` never pulls).
 - Container startup adds latency compared to native binaries (typically
@@ -854,10 +938,10 @@ benchmark methodology and the disposable-container tradeoff are in
   executable, e.g. `$env:GOOS="windows"; go build`. `go test` must remain
   native to the container because a Windows test binary cannot run inside it.
 - `cb expose` supports the npm global prefix, Go's shared `/go/bin`, Cargo's
-  managed install root, uv's pipx-style tool bin, .NET's global tool home, and
-  RubyGems executables, plus an explicitly named executable beneath any
-  declared shared volume; direct pip/pipx environments outside uv's managed
-  tool store are not supported.
+  managed install root, uv's tool bin, pipx's managed application bin, .NET's
+  global tool home, and RubyGems executables, plus an explicitly named
+  executable beneath any declared shared volume; plain pip project environments
+  and unmanaged pipx stores are not supported.
 
 ## Roadmap
 
