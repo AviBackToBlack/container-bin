@@ -31,7 +31,7 @@ root and may not be group- or world-writable.
 ContainerBin never creates or edits this file. Provision it and its ACL/mode
 with the machine's normal administrator configuration-management mechanism.
 
-## Schema 1
+## Schema 1 — image-origin and lock constraints
 
 ```toml
 policy_version = 1
@@ -110,5 +110,96 @@ Policy failures have a stable bracketed code suitable for log processing:
 - `policy.repository_denied`
 
 The fingerprint hashes the exact policy bytes. It is an audit correlation
-value, not a signature. Registry-signature and image-signature policy are
-separate roadmap stages and are not implied by schema 1.
+value, not a signature. Image-signature policy remains a separate roadmap
+stage and is not implied by either schema.
+
+## Schema 2 — authenticated registry bytes
+
+Schema 2 retains every schema 1 control and can additionally require a detached
+Ed25519 signature for `container-bin.toml`:
+
+```toml
+policy_version = 2
+require_lock = true
+allowed_repositories = ["docker.io/library", "ghcr.io/acme"]
+require_registry_signature = true
+registry_signing_keys = [
+  "ops-2026|BASE64_OF_RAW_32_BYTE_ED25519_PUBLIC_KEY|2026-01-01T00:00:00Z|2027-01-01T00:00:00Z",
+  "ops-2027|BASE64_OF_RAW_32_BYTE_ED25519_PUBLIC_KEY|2026-12-01T00:00:00Z|2028-01-01T00:00:00Z",
+]
+revoked_registry_key_ids = ["compromised-2025"]
+expires_at = "2027-06-01T00:00:00Z"
+```
+
+`registry_signing_keys` entries are
+`KEY_ID|PUBLIC_KEY_BASE64|NOT_BEFORE|EXPIRES_AT`. Key IDs are case-sensitive,
+start with a lowercase ASCII letter and then contain only lowercase letters,
+digits, `.`, `_` or `-` (64 characters maximum). The public key is canonical
+padded base64 of the raw 32-byte Ed25519 public key. Key timestamps are
+whole-second UTC RFC 3339 values ending in `Z`; expiry is exclusive.
+
+Enabling `require_registry_signature` requires at least one currently active,
+non-revoked key. Duplicate IDs, duplicate public keys, malformed validity
+windows and duplicate revocations reject the complete policy. Revocation wins
+over presence in the trusted-key list. Multiple active keys are the supported
+rotation window: provision overlapping old/new keys in policy, deploy that
+policy, re-sign the registry with the new key, then revoke or remove the old
+identity. Never remove the only signer before the new signature is deployed.
+
+The detached file is exactly `container-bin.toml.sig` beside the registry and
+uses this strict envelope:
+
+```toml
+signature_version = 1
+algorithm = "ed25519"
+key_id = "ops-2027"
+signature = "BASE64_OF_RAW_64_BYTE_ED25519_SIGNATURE"
+```
+
+The Ed25519 message is the complete byte sequence of `container-bin.toml`
+itself—no prehash, canonicalization, newline conversion, BOM removal or parsed
+representation. Any comment, whitespace or line-ending change therefore needs
+a new signature. The envelope is bounded to 16 KiB, must be a regular
+non-symlink file and rejects unknown/duplicate fields, unsupported versions,
+other algorithms and noncanonical base64.
+
+ContainerBin does not generate keys, read a private key or sign registries.
+Create the raw Ed25519 signature in the administrator's protected signing
+system, construct the envelope, then provision the registry and envelope as one
+configuration-management transaction. Private keys must never live beside the
+registry or in the machine policy.
+
+Authentication happens on the raw bytes before TOML parsing, default fallback,
+`.bak` recovery, shim reconciliation or Docker use. A missing signed registry
+does not fall back to the built-in registry and does not auto-restore an
+unsigned backup. The parser acts only on the already authenticated in-memory
+bytes, so a later on-disk change cannot alter that invocation's effective
+registry.
+
+Signed mode deliberately makes the registry read-only to ContainerBin.
+`cb add`, `cb default set`, `cb expose`, `cb unexpose`, `cb uninstall` and
+`cb restore --apply` fail before mutation. An administrator must produce and
+provision the new registry/signature pair. `cb install` and `cb setup` skip
+registry creation/upgrades but may reconcile shims from an already authenticated
+registry; a missing signed registry still fails closed. Read-only commands and
+lockfile-only operations remain available. `cb backup`
+includes an existing detached envelope and re-verifies the exact snapshot when
+signed mode is active; signed-policy `cb restore` can verify and preview that
+archive, but applying it remains an administrator provisioning operation.
+
+Schema 1 remains supported unchanged. Registry-signature fields in schema 1
+are rejected, and policy versions newer than 2 fail closed. This makes rollback
+to a ContainerBin build that predates schema 2 fail visibly instead of silently
+ignoring the authentication requirement.
+
+Additional stable error codes are:
+
+- `policy.registry_signature_missing`
+- `policy.registry_signature_invalid`
+- `policy.registry_signer_unauthorized`
+- `policy.registry_signer_inactive`
+- `policy.registry_signed_readonly`
+
+Policy summaries report whether registry signatures are required plus trusted
+and revoked key counts. They never print public-key material or signature
+contents.

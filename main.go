@@ -59,7 +59,7 @@ func main() {
 		fatalf("machine policy: %v", err)
 	}
 
-	reg, cfgPath, err := loadRegistry()
+	reg, cfgPath, err := loadRegistry(machinePolicy.AuthenticateRegistry)
 	if err != nil {
 		fatalf("registry: %v", err)
 	}
@@ -79,13 +79,13 @@ func main() {
 	switch os.Args[1] {
 	case "install":
 		if err := withMutationLock(cfgPath, func() error {
-			return cli.Install(cfgPath, version)
+			return cli.Install(cfgPath, version, machinePolicy)
 		}); err != nil {
 			fatalf("install: %v", err)
 		}
 	case "add":
 		if err := withMutationLock(cfgPath, func() error {
-			reg, _, err := registry.Load()
+			reg, _, err := registry.Load(machinePolicy.AuthenticateRegistry)
 			if err != nil {
 				return err
 			}
@@ -109,7 +109,7 @@ func main() {
 		}
 	case "backup":
 		if err := withMutationLock(cfgPath, func() error {
-			return cli.Backup(cfgPath, os.Args[2:], version)
+			return cli.Backup(cfgPath, os.Args[2:], version, machinePolicy)
 		}); err != nil {
 			fatalf("backup: %v", err)
 		}
@@ -132,7 +132,7 @@ func main() {
 	case "default":
 		if len(os.Args) > 2 && os.Args[2] == "set" {
 			if err := withMutationLock(cfgPath, func() error {
-				fresh, _, err := registry.Load()
+				fresh, _, err := registry.Load(machinePolicy.AuthenticateRegistry)
 				if err != nil {
 					return err
 				}
@@ -165,7 +165,7 @@ func main() {
 		}
 	case "expose":
 		if err := withMutationLock(cfgPath, func() error {
-			reg, _, err := registry.Load()
+			reg, _, err := registry.Load(machinePolicy.AuthenticateRegistry)
 			if err != nil {
 				return err
 			}
@@ -175,27 +175,27 @@ func main() {
 		}
 	case "unexpose":
 		if err := withMutationLock(cfgPath, func() error {
-			reg, _, err := registry.Load()
+			reg, _, err := registry.Load(machinePolicy.AuthenticateRegistry)
 			if err != nil {
 				return err
 			}
-			return cli.Unexpose(reg, cfgPath, os.Args[2:])
+			return cli.Unexpose(reg, cfgPath, os.Args[2:], machinePolicy)
 		}); err != nil {
 			fatalf("unexpose: %v", err)
 		}
 	case "uninstall":
 		if err := withMutationLock(cfgPath, func() error {
-			reg, _, err := registry.Load()
+			reg, _, err := registry.Load(machinePolicy.AuthenticateRegistry)
 			if err != nil {
 				return err
 			}
-			return cli.Uninstall(reg, cfgPath, os.Args[2:])
+			return cli.Uninstall(reg, cfgPath, os.Args[2:], machinePolicy)
 		}); err != nil {
 			fatalf("uninstall: %v", err)
 		}
 	case "lock":
 		if err := withMutationLock(cfgPath, func() error {
-			reg, _, err := registry.Load()
+			reg, _, err := registry.Load(machinePolicy.AuthenticateRegistry)
 			if err != nil {
 				return err
 			}
@@ -205,7 +205,7 @@ func main() {
 		}
 	case "update":
 		if err := withMutationLock(cfgPath, func() error {
-			reg, _, err := registry.Load()
+			reg, _, err := registry.Load(machinePolicy.AuthenticateRegistry)
 			if err != nil {
 				return err
 			}

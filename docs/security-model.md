@@ -22,9 +22,10 @@ Inside the boundary (whoever controls these controls execution):
 
 An optional administrator-owned machine policy sits above this user-controlled
 boundary. Its fixed path, owner and permissions are validated before use. It
-can require locking and restrict image origins, but schema 1 does not constrain
-mounts, environment allowlists or commands and does not authenticate registry
-or image signatures. See [enterprise machine policy](enterprise-policy.md).
+can require locking, restrict image origins and authenticate exact registry
+bytes through a detached Ed25519 signature. It cannot grant mounts, environment
+access or commands, and it does not yet authenticate image signatures. See
+[enterprise machine policy](enterprise-policy.md).
 
 Treat the registry and lockfile like your PowerShell `$PROFILE`: yours,
 readable, and dangerous to let others edit.

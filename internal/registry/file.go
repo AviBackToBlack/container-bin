@@ -215,13 +215,25 @@ func upgradeV1Registry(path string, data []byte, reg Registry, cbVersion string)
 	return atomicio.WriteFile(path, []byte(out.String()), 0644)
 }
 
-func Load() (Registry, string, error) {
+type Authenticator func(path string, exactBytes []byte) error
+
+func Load(authenticate Authenticator) (Registry, string, error) {
 	path, err := Path()
 	if err != nil {
 		return Registry{}, "", err
 	}
+	return loadAt(path, authenticate)
+}
+
+func loadAt(path string, authenticate Authenticator) (Registry, string, error) {
+	if authenticate == nil {
+		return Registry{}, "", errors.New("registry authenticator is required")
+	}
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
+		if err := authenticate(path, nil); err != nil {
+			return Registry{}, path, err
+		}
 		rec, err := atomicio.RecoverFromBackup(path, validateBackup)
 		if err != nil {
 			return Registry{}, path, err
@@ -234,6 +246,9 @@ func Load() (Registry, string, error) {
 			return Registry{}, path, err
 		}
 	} else if err != nil {
+		return Registry{}, path, err
+	}
+	if err := authenticate(path, data); err != nil {
 		return Registry{}, path, err
 	}
 	reg, err := ParseTOML(string(data))
