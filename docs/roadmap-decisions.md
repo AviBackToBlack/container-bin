@@ -168,6 +168,15 @@ verifier is `gh attestation verify`, enforcing the expected repository,
 release workflow, release ref and downloaded artifact digest. Checksums are
 additional consistency evidence and never an authentication fallback.
 
+The verifier receives an explicit absolute path to a regular GitHub CLI
+executable and never searches `PATH`. It requires the canonical two-entry
+`SHA256SUMS` layout, invokes `gh attestation verify` with the repository,
+workflow, tag ref and SLSA provenance predicate fixed in argv, validates the
+reported subject digest and re-hashes `cb.exe` after verification. Its opaque
+result binds the exact digest for the later replacement phase; any missing
+verifier, policy mismatch, malformed output or file change fails closed with no
+checksum-only fallback.
+
 After verification, a narrowly scoped temporary helper waits for the parent
 process to exit, serializes with other ContainerBin mutations, proves ownership
 of the managed installation, preserves a validated rollback binary, replaces

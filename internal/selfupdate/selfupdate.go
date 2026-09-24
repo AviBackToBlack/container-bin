@@ -1,6 +1,6 @@
-// Package selfupdate implements the read-only selection and planning phase of
-// ContainerBin's transactional self-update. Download, attestation verification
-// and installed-file replacement are deliberately separate later phases.
+// Package selfupdate implements release selection and artifact verification
+// for ContainerBin's transactional self-update. Download/staging and installed-
+// file replacement remain deliberately separate later phases.
 package selfupdate
 
 import (
