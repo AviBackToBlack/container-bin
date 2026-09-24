@@ -105,9 +105,13 @@ readable, and dangerous to let others edit.
   release-qualified Windows/amd64 build, queries the canonical GitHub repository
   over HTTPS with a bounded response, and requires exact canonical release and
   asset URLs, names and sizes. Downgrades and prereleases require explicit
-  flags. This phase performs no asset download and changes no installed files;
-  later phases must require both checksums and GitHub provenance without a
-  fallback before replacement is possible.
+  flags. The command performs no asset download and changes no installed files.
+  A separate, not-yet-exposed staging phase downloads exact advertised bytes
+  for `cb.exe` and `SHA256SUMS` beside the destination installation, accepting
+  only the canonical URL or one HTTPS redirect to GitHub's release-asset host
+  and removing partial staging on any failure. Later phases must require both
+  checksums and GitHub provenance without a fallback before replacement is
+  possible.
 
 ## What ContainerBin does NOT protect against
 
