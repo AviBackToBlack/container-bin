@@ -9,6 +9,7 @@ is configuration (`container-bin.toml`), a generated lockfile
 ```
 NAME.exe (hardlink to cb.exe)
   → argv[0] dispatch            main() inspects its own invocation name
+  → host runtime boundary       reject unsupported frontends before config I/O
   → machine policy load         fixed admin path, ownership/version validated
   → registry profile lookup     container-bin.toml, schema-validated, fail-closed
   → argv normalization          repair PowerShell-split "-opt=" "value" pairs
@@ -230,7 +231,7 @@ for orientation, not a claim that every package depends on every package in
 the tier below it; see the exact edges further down for that):
 
 ```
-main            argv[0] dispatch, subcommand switch, version, usage,
+main            argv[0] dispatch, host boundary, subcommand switch, version, usage,
                 exit codes + fatalf/osExit, bootstrap self-update selection,
                 withMutationLock's signal wrapper
   ↓
@@ -258,6 +259,7 @@ internal/registry    Tool/Registry, TOML parser, defaults, registry file
 internal/toml        the shared TOML subset lexer                    (leaf)
 internal/atomicio    crash-safe write + .bak recovery                (leaf)
 internal/mutationlock  the registry mutation lock primitive          (leaf)
+internal/hostenv       Windows/WSL/Linux runtime classification       (leaf)
 internal/selfupdate    canonical release selection and read-only plan (leaf)
 ```
 
@@ -265,7 +267,7 @@ The exact import edges, from `go list -f '{{.ImportPath}} {{.Imports}}' ./...`,
 project-internal imports only:
 
 ```
-main         -> cli, diag, dockerrun, mutationlock, policy, registry, selfupdate, state
+main         -> cli, diag, dockerrun, hostenv, mutationlock, policy, registry, selfupdate, state
 cli          -> atomicio, diag, dockerrun, lockfile, pathmap, policy, registry, statearchive, toml
 diag         -> dockerrun, dockervol, lockfile, pathmap, policy, registry
 dockerrun    -> dockervol, lockfile, pathmap, policy, registry
@@ -275,7 +277,7 @@ lockfile     -> atomicio, policy, registry, toml
 pathmap      -> registry
 registry     -> atomicio, toml
 policy       -> toml
-atomicio, dockervol, mutationlock, selfupdate, toml -> (leaves)
+atomicio, dockervol, hostenv, mutationlock, selfupdate, toml -> (leaves)
 ```
 
 Notably: `lockfile` and `pathmap` both depend on `registry` directly, not on
@@ -301,9 +303,10 @@ release workflow inject it with `-ldflags "-X main.version=..."`, so that symbol
 path is part of the release contract. Packages that need it take it as a
 parameter.
 
-`cb self-update --check` is dispatched before machine policy and registry
-loading, like the bootstrap help/version path. Release selection therefore
-remains available when either local configuration source is missing or invalid.
+After the host runtime boundary is enforced, `cb self-update --check` is
+dispatched before machine policy and registry loading. Release selection
+therefore remains available when either local configuration source is missing
+or invalid without allowing unsupported frontends to perform network work.
 `internal/selfupdate` has no project imports and performs only bounded metadata
 queries and plan output; downloading, attestation verification and installed-file
 replacement remain separate later phases.

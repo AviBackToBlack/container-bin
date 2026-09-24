@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"strings"
@@ -36,18 +37,23 @@ func TestInvokedNameIsCaseInsensitive(t *testing.T) {
 	}
 }
 
-func TestBootstrapCommandsDoNotLoadRegistry(t *testing.T) {
+func TestBootstrapCommandsSkipHostPolicyAndRegistry(t *testing.T) {
 	oldArgs := os.Args
 	oldLoadRegistry := loadRegistry
+	oldRequireHostFrontend := requireHostFrontend
 	oldLoadPolicy := loadPolicy
 	defer func() {
 		os.Args = oldArgs
 		loadRegistry = oldLoadRegistry
+		requireHostFrontend = oldRequireHostFrontend
 		loadPolicy = oldLoadPolicy
 	}()
 
 	loadRegistry = func() (registry.Registry, string, error) {
 		panic("bootstrap command attempted to load the registry")
+	}
+	requireHostFrontend = func() error {
+		panic("bootstrap command attempted host enforcement")
 	}
 	loadPolicy = func() (policy.Policy, error) {
 		panic("bootstrap command attempted to load machine policy")
@@ -81,18 +87,66 @@ func TestBootstrapCommandsDoNotLoadRegistry(t *testing.T) {
 	}
 }
 
-func TestSelfUpdateCheckDoesNotLoadPolicyOrRegistry(t *testing.T) {
+func TestHostBoundaryPrecedesPolicyAndRegistryLoad(t *testing.T) {
 	oldArgs := os.Args
 	oldLoadRegistry := loadRegistry
 	oldLoadPolicy := loadPolicy
+	oldRequireHostFrontend := requireHostFrontend
+	oldExit := osExit
+	defer func() {
+		os.Args = oldArgs
+		loadRegistry = oldLoadRegistry
+		loadPolicy = oldLoadPolicy
+		requireHostFrontend = oldRequireHostFrontend
+		osExit = oldExit
+	}()
+
+	called := false
+	requireHostFrontend = func() error {
+		called = true
+		return errors.New("unsupported host")
+	}
+	loadRegistry = func() (registry.Registry, string, error) {
+		panic("host boundary attempted to load the registry")
+	}
+	loadPolicy = func() (policy.Policy, error) {
+		panic("host boundary attempted to load machine policy")
+	}
+	type exitCode int
+	osExit = func(code int) { panic(exitCode(code)) }
+	os.Args = []string{"cb.exe", "doctor"}
+
+	defer func() {
+		got := recover()
+		if got != exitCode(exitCbFailure) {
+			t.Fatalf("main panic = %v, want exit %d", got, exitCbFailure)
+		}
+		if !called {
+			t.Fatal("host boundary was not called")
+		}
+	}()
+	main()
+}
+
+func TestSelfUpdateCheckEnforcesHostBoundaryAndSkipsPolicyAndRegistry(t *testing.T) {
+	oldArgs := os.Args
+	oldLoadRegistry := loadRegistry
+	oldLoadPolicy := loadPolicy
+	oldRequireHostFrontend := requireHostFrontend
 	oldRunSelfUpdateCheck := runSelfUpdateCheck
 	defer func() {
 		os.Args = oldArgs
 		loadRegistry = oldLoadRegistry
 		loadPolicy = oldLoadPolicy
+		requireHostFrontend = oldRequireHostFrontend
 		runSelfUpdateCheck = oldRunSelfUpdateCheck
 	}()
 
+	hostChecked := false
+	requireHostFrontend = func() error {
+		hostChecked = true
+		return nil
+	}
 	loadRegistry = func() (registry.Registry, string, error) {
 		panic("self-update check attempted to load the registry")
 	}
@@ -114,6 +168,9 @@ func TestSelfUpdateCheckDoesNotLoadPolicyOrRegistry(t *testing.T) {
 	out := captureMainStdout(t, main)
 	if !strings.Contains(out, "self-update seam reached") {
 		t.Fatalf("output %q does not contain self-update marker", out)
+	}
+	if !hostChecked {
+		t.Fatal("self-update check skipped host enforcement")
 	}
 }
 

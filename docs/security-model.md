@@ -49,6 +49,12 @@ readable, and dangerous to let others edit.
 - **Fail-closed configuration.** Unknown registry keys, duplicate tool
   sections, newer schema versions, incomplete lock entries, and
   registry-image-not-in-lock all refuse to run rather than guess.
+- **Fail-closed host boundary.** Non-bootstrap work currently runs only in a
+  native Windows process. Windows binaries launched through detected WSL
+  interoperability, WSL1, recognized-but-not-yet-enabled native WSL2,
+  standalone Linux and other hosts refuse before registry or Docker work.
+  WSL2 classification requires Microsoft WSL2 kernel markers; environment
+  variables alone cannot turn ordinary Linux into a supported host.
 - **Machine policy cannot be redirected or weakened.** A present enterprise
   policy is loaded only from the fixed OS path, requires administrator/root
   ownership and restrictive permissions, and authorizes the already-resolved

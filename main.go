@@ -11,6 +11,7 @@ import (
 	"github.com/AviBackToBlack/container-bin/internal/cli"
 	"github.com/AviBackToBlack/container-bin/internal/diag"
 	"github.com/AviBackToBlack/container-bin/internal/dockerrun"
+	"github.com/AviBackToBlack/container-bin/internal/hostenv"
 	"github.com/AviBackToBlack/container-bin/internal/mutationlock"
 	"github.com/AviBackToBlack/container-bin/internal/policy"
 	"github.com/AviBackToBlack/container-bin/internal/registry"
@@ -30,6 +31,10 @@ var version = "dev"
 var loadRegistry = registry.Load
 var loadPolicy = policy.Load
 
+// requireHostFrontend is a test seam around the fail-closed host boundary.
+// Production always uses hostenv.RequireFrontend.
+var requireHostFrontend = hostenv.RequireFrontend
+
 // runSelfUpdateCheck is a test seam for proving self-update selection remains
 // available before policy or registry I/O. Production always uses selfupdate.Check.
 var runSelfUpdateCheck = selfupdate.Check
@@ -37,6 +42,10 @@ var runSelfUpdateCheck = selfupdate.Check
 func main() {
 	invoked := invokedName(os.Args[0])
 	if isManagementInvocation(invoked) && handleBootstrapCommand(os.Args[1:]) {
+		return
+	}
+	if err := requireHostFrontend(); err != nil {
+		fatalf("host runtime: %v", err)
 		return
 	}
 	if isManagementInvocation(invoked) && len(os.Args) > 1 && os.Args[1] == "self-update" {
