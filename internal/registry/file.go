@@ -221,27 +221,47 @@ func Load() (Registry, string, error) {
 	if err != nil {
 		return Registry{}, "", err
 	}
+	return loadPath(path, true)
+}
+
+// LoadReadOnly reads a valid backup in place when the primary registry is
+// missing. Unlike Load, it never renames recovery state and is safe for
+// commands whose contract forbids filesystem mutation.
+func LoadReadOnly() (Registry, string, error) {
+	path, err := Path()
+	if err != nil {
+		return Registry{}, "", err
+	}
+	return loadPath(path, false)
+}
+
+func loadPath(path string, recoverBackup bool) (Registry, string, error) {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		rec, err := atomicio.RecoverFromBackup(path, validateBackup)
-		if err != nil {
-			return Registry{}, path, err
+		if recoverBackup {
+			recovered, recoverErr := atomicio.RecoverFromBackup(path, validateBackup)
+			if recoverErr != nil {
+				return Registry{}, path, recoverErr
+			}
+			if !recovered {
+				return Default(), path, nil
+			}
+			data, err = os.ReadFile(path)
+		} else {
+			data, err = os.ReadFile(path + ".bak")
+			if os.IsNotExist(err) {
+				return Default(), path, nil
+			}
 		}
-		if !rec {
-			return Default(), path, nil
-		}
-		data, err = os.ReadFile(path)
-		if err != nil {
-			return Registry{}, path, err
-		}
-	} else if err != nil {
+	}
+	if err != nil {
 		return Registry{}, path, err
 	}
 	reg, err := ParseTOML(string(data))
 	return reg, path, err
 }
 
-func SetDefaultVersion(path, family, version string) error {
+func SetDefaultVersion(path, family, version string, validators ...func(Registry) error) error {
 	family, version = strings.ToLower(family), strings.ToLower(version)
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -301,8 +321,16 @@ func SetDefaultVersion(path, family, version string) error {
 	if !replaced {
 		return fmt.Errorf("default family %q has no writable version key", family)
 	}
-	if _, err := ParseTOML(out.String()); err != nil {
+	updated, err := ParseTOML(out.String())
+	if err != nil {
 		return fmt.Errorf("refusing default update: %w", err)
+	}
+	for _, validate := range validators {
+		if validate != nil {
+			if err := validate(updated); err != nil {
+				return fmt.Errorf("refusing default update: %w", err)
+			}
+		}
 	}
 	return atomicio.WriteFile(path, []byte(out.String()), 0644)
 }

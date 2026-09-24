@@ -191,6 +191,10 @@ func Merge(global registry.Registry, overlay Overlay) (registry.Registry, error)
 		if _, resolved, ok := global.Resolve(name); ok {
 			return registry.Registry{}, fmt.Errorf("project tool %q collides with global tool or alias %q", name, resolved)
 		}
+		// The approved overlay root is the maximum host filesystem boundary for
+		// every tool it contributes. Runtime marker discovery must not widen it
+		// to an ancestor repository or make sibling overlays share state.
+		tool.TrustedProjectRoot = overlay.Root
 		merged.Tools[name] = tool
 	}
 	return merged, nil
@@ -358,6 +362,14 @@ func Trust(c Context, storePath string, args []string, in io.Reader, out io.Writ
 			return fmt.Errorf("read trust confirmation: %w", err)
 		}
 	}
+	// The review and interactive prompt are intentionally outside any project
+	// file lock. Re-discover and re-read the overlay after approval so a change
+	// made while the user was reviewing cannot be recorded as trusted.
+	current, err := reloadReviewedOverlay(c)
+	if err != nil {
+		return err
+	}
+	c.Overlay = current
 	if err := validateExternalStore(c.Location.Root, storePath); err != nil {
 		return err
 	}
@@ -369,12 +381,35 @@ func Trust(c Context, storePath string, args []string, in io.Reader, out io.Writ
 	if err := installShims(names); err != nil {
 		return fmt.Errorf("install project shims before recording trust: %w", err)
 	}
+	current, err = reloadReviewedOverlay(c)
+	if err != nil {
+		return fmt.Errorf("project shims were installed but remain inert: %w", err)
+	}
+	c.Overlay = current
 	store.Entries[rootID(c.Location.Root)] = trustEntry{Root: c.Location.Root, Digest: c.Overlay.Digest, Tools: names}
 	if err := saveStore(storePath, store); err != nil {
 		return fmt.Errorf("record project trust after shims were installed (the shims remain inert): %w", err)
 	}
 	fmt.Fprintf(out, "trusted project overlay sha256:%s at %s\n", c.Overlay.Digest, strconv.Quote(c.Location.Root))
 	return nil
+}
+
+func reloadReviewedOverlay(c Context) (Overlay, error) {
+	loc, found, err := Find(c.Location.Root)
+	if err != nil {
+		return Overlay{}, fmt.Errorf("recheck project overlay after approval: %w", err)
+	}
+	if !found || loc != c.Location {
+		return Overlay{}, errors.New("project overlay location changed during review; no trust was recorded")
+	}
+	current, err := Load(loc)
+	if err != nil {
+		return Overlay{}, fmt.Errorf("recheck project overlay after approval: %w", err)
+	}
+	if current.Digest != c.Overlay.Digest {
+		return Overlay{}, errors.New("project overlay bytes changed during review; no trust was recorded (review the new digest and try again)")
+	}
+	return current, nil
 }
 
 func Untrust(start, storePath string, out io.Writer) error {

@@ -31,6 +31,7 @@ var version = "dev"
 // These test seams prove bootstrap commands return before policy or registry
 // I/O. Production always uses the corresponding package loaders.
 var loadRegistry = registry.Load
+var loadRegistryReadOnly = registry.LoadReadOnly
 var loadPolicy = policy.Load
 
 // requireHostFrontend is a test seam around the fail-closed host boundary.
@@ -61,7 +62,11 @@ func main() {
 		fatalf("machine policy: %v", err)
 	}
 
-	reg, cfgPath, err := loadRegistry()
+	registryLoader := loadRegistry
+	if useReadOnlyRegistryLoad(invoked, os.Args[1:]) {
+		registryLoader = loadRegistryReadOnly
+	}
+	reg, cfgPath, err := registryLoader()
 	if err != nil {
 		fatalf("registry: %v", err)
 	}
@@ -74,15 +79,20 @@ func main() {
 	if isManagementInvocation(invoked) {
 		switch os.Args[1] {
 		case "trust":
+			check := hasArg(os.Args[2:], "--check")
 			run := func() error {
-				fresh, _, err := registry.Load()
+				loader := registry.Load
+				if check {
+					loader = registry.LoadReadOnly
+				}
+				fresh, _, err := loader()
 				if err != nil {
 					return err
 				}
 				ctx, freshTrustPath := projectconfig.InspectDefault(fresh, cwd)
 				return projectconfig.Trust(ctx, freshTrustPath, os.Args[2:], os.Stdin, os.Stdout, stdinInteractive(), machinePolicy, registry.InstallAdditionalShimNames)
 			}
-			if hasArg(os.Args[2:], "--check") {
+			if check {
 				err = run()
 			} else {
 				err = withMutationLock(cfgPath, run)
@@ -206,7 +216,14 @@ func main() {
 				if err != nil {
 					return err
 				}
-				return cli.Default(fresh, cfgPath, os.Args[2:], machinePolicy)
+				validateProjectOverlay := func(candidate registry.Registry) error {
+					ctx, _ := projectconfig.InspectDefault(candidate, cwd)
+					if _, err := ctx.Registry(candidate); err != nil {
+						return fmt.Errorf("default selection conflicts with current project overlay: %w", err)
+					}
+					return nil
+				}
+				return cli.Default(fresh, cfgPath, os.Args[2:], machinePolicy, validateProjectOverlay)
 			}); err != nil {
 				fatalf("default: %v", err)
 			}
@@ -274,11 +291,19 @@ func main() {
 		}
 	case "lock":
 		if err := withMutationLock(cfgPath, func() error {
-			reg, err := loadFreshEffective()
+			fresh, _, err := registry.Load()
 			if err != nil {
 				return err
 			}
-			return cli.Lock(reg, cfgPath, os.Args[2:], machinePolicy)
+			ctx, _ := projectconfig.InspectDefault(fresh, cwd)
+			effective, err := ctx.Registry(fresh)
+			if err != nil {
+				return err
+			}
+			if ctx.Status == projectconfig.Trusted {
+				return cli.LockPreservingUnconfigured(effective, cfgPath, os.Args[2:], machinePolicy)
+			}
+			return cli.Lock(effective, cfgPath, os.Args[2:], machinePolicy)
 		}); err != nil {
 			fatalf("lock: %v", err)
 		}
@@ -308,6 +333,22 @@ func invokedName(argv0 string) string {
 
 func isManagementInvocation(invoked string) bool {
 	return invoked == "cb" || invoked == "container-bin" || registry.IsVersionedBinaryName(invoked)
+}
+
+func useReadOnlyRegistryLoad(invoked string, args []string) bool {
+	if !isManagementInvocation(invoked) || len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case "trust":
+		// The mutating trust path reloads with recovery only after acquiring the
+		// mutation lock; its initial review must remain read-only too.
+		return true
+	case "inspect":
+		return len(args) == 2 && args[1] == "--project"
+	default:
+		return false
+	}
 }
 
 // handleBootstrapCommand serves commands that must remain available when the

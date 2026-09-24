@@ -175,6 +175,9 @@ func TestMergeIsAddOnlyAcrossConcreteToolsAndAliases(t *testing.T) {
 	if _, _, ok := merged.Resolve("acme"); !ok {
 		t.Fatal("merged registry does not resolve project tool")
 	}
+	if got := merged.Tools["acme"].TrustedProjectRoot; got != root {
+		t.Fatalf("merged project root = %q, want %q", got, root)
+	}
 
 	for _, name := range []string{"node", "node22"} {
 		path = writeOverlay(t, root, strings.Replace(validOverlay, "tools.acme", "tools."+name, 1))
@@ -313,6 +316,59 @@ func TestTrustInteractiveRequiresExactConfirmation(t *testing.T) {
 	trustPath := filepath.Join(t.TempDir(), "trust.toml")
 	if err := Trust(ctx, trustPath, nil, strings.NewReader("trust\n"), ioDiscard{}, true, policy.Policy{}, install); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestTrustRechecksOverlayBytesAfterInteractiveApproval(t *testing.T) {
+	root := t.TempDir()
+	path := writeOverlay(t, root, validOverlay)
+	trustPath := filepath.Join(t.TempDir(), "trust.toml")
+	ctx := Inspect(mustRegistry(t, globalRegistry), root, trustPath)
+	input := strings.NewReader("trust\n")
+	changed := false
+	reader := readerFunc(func(p []byte) (int, error) {
+		if !changed {
+			changed = true
+			if err := os.WriteFile(path, []byte(validOverlay+"# changed during prompt\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return input.Read(p)
+	})
+	installed := false
+	err := Trust(ctx, trustPath, nil, reader, ioDiscard{}, true, policy.Policy{}, func([]string) error {
+		installed = true
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "changed during review") {
+		t.Fatalf("Trust() error = %v, want changed-during-review refusal", err)
+	}
+	if installed {
+		t.Fatal("Trust() installed shims after the approved bytes changed")
+	}
+	if _, err := os.Stat(trustPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Trust() recorded stale bytes: %v", err)
+	}
+}
+
+func TestTrustRechecksOverlayBytesAfterShimInstallation(t *testing.T) {
+	root := t.TempDir()
+	path := writeOverlay(t, root, validOverlay)
+	trustPath := filepath.Join(t.TempDir(), "trust.toml")
+	ctx := Inspect(mustRegistry(t, globalRegistry), root, trustPath)
+	installed := false
+	err := Trust(ctx, trustPath, []string{"--yes"}, strings.NewReader(""), ioDiscard{}, false, policy.Policy{}, func([]string) error {
+		installed = true
+		return os.WriteFile(path, []byte(validOverlay+"# changed while shims installed\n"), 0o600)
+	})
+	if err == nil || !strings.Contains(err.Error(), "shims were installed but remain inert") || !strings.Contains(err.Error(), "changed during review") {
+		t.Fatalf("Trust() error = %v, want post-install change refusal", err)
+	}
+	if !installed {
+		t.Fatal("test did not reach shim installation")
+	}
+	if _, err := os.Stat(trustPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Trust() recorded bytes changed during shim installation: %v", err)
 	}
 }
 
@@ -484,3 +540,7 @@ func (ioDiscard) Write(p []byte) (int, error) { return len(p), nil }
 type failingWriter struct{}
 
 func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("output closed") }
+
+type readerFunc func([]byte) (int, error)
+
+func (f readerFunc) Read(p []byte) (int, error) { return f(p) }

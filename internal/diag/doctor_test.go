@@ -4,7 +4,25 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/AviBackToBlack/container-bin/internal/registry"
 )
+
+func TestProjectShimRemediationClassification(t *testing.T) {
+	reg := registry.Registry{Tools: map[string]registry.Tool{
+		"global":  {Name: "global"},
+		"project": {Name: "project", TrustedProjectRoot: `C:\project`},
+	}}
+	if isProjectShim(reg, "global") {
+		t.Fatal("global shim classified as project-owned")
+	}
+	if !isProjectShim(reg, "project") {
+		t.Fatal("overlay shim was not classified as project-owned")
+	}
+	if isProjectShim(reg, "missing") {
+		t.Fatal("missing shim classified as project-owned")
+	}
+}
 
 func TestRegistrySchemaVerdictUsesParserMaximum(t *testing.T) {
 	cases := []struct {

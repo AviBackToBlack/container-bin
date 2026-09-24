@@ -53,7 +53,13 @@ tool names. The trust store is strict, versioned, atomically written and
 recoverable from the same narrow `.bak` interruption window as other state.
 Read-only inspection can validate and use that backup without renaming it;
 mutation-time trust/untrust recovery runs under the global mutation lock.
-Review, invalidation and untrust do not execute Docker.
+Project review commands apply the same rule to `container-bin.toml`: a valid
+registry backup may be read in place, but only the subsequent locked mutation
+path may promote it to the primary file.
+Each merged overlay tool carries runtime-only provenance binding its workspace
+mount and project-volume identity to that exact trusted root; its marker policy
+cannot select an ancestor or a neighboring overlay's state. Review,
+invalidation and untrust do not execute Docker.
 
 Three providers own lifecycle semantics:
 
@@ -164,6 +170,10 @@ pipeline, not repeating either.
 
 `cb lock` pulls each unique registry-backed image and records
 `configured → repository@sha256:digest` entries in `container-bin.lock`.
+When a trusted project overlay is active, its full lock refresh preserves
+strictly parsed, policy-authorized entries outside the current effective
+registry so locking one project cannot unlock another. A global full refresh
+still rebuilds the file from global configuration and removes stale entries.
 Images explicitly selected with `--local TOOL` are not pulled and are recorded
 as `configured → sha256:image-id`. Selection is explicit because current
 Docker engines can expose `RepoDigests` for both local and pulled images, so

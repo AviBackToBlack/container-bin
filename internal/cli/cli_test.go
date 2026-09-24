@@ -352,6 +352,41 @@ func TestParseLockArgs(t *testing.T) {
 	}
 }
 
+func TestProjectOverlayLockRefreshPreservesOnlyOtherValidatedEntries(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	current := "ghcr.io/acme/current:1"
+	other := "ghcr.io/acme/other:1"
+	path := filepath.Join(t.TempDir(), "container-bin.lock")
+	lf := &lockfile.LockFile{Version: 1, Images: map[string]lockfile.LockEntry{
+		current: {Configured: current, Resolved: "ghcr.io/acme/current@" + digest, Digest: digest},
+		other:   {Configured: other, Resolved: "ghcr.io/acme/other@" + digest, Digest: digest},
+	}}
+	if err := lockfile.Write(path, lf); err != nil {
+		t.Fatal(err)
+	}
+
+	seed, preserved, err := lockFileForRefresh(path, []string{current}, true, policy.Policy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preserved != 1 || len(seed.Images) != 1 || seed.Images[other].Configured != other {
+		t.Fatalf("preserved seed = %+v, count=%d", seed.Images, preserved)
+	}
+	if _, exists := seed.Images[current]; exists {
+		t.Fatal("current effective image was preserved instead of being refreshed")
+	}
+
+	full, preserved, err := lockFileForRefresh(path, []string{current}, false, policy.Policy{})
+	if err != nil || preserved != 0 || len(full.Images) != 0 {
+		t.Fatalf("global full-refresh seed = %+v, count=%d, err=%v", full.Images, preserved, err)
+	}
+
+	denied := policy.Policy{SchemaVersion: 1, AllowedRepositories: []string{"ghcr.io/allowed"}}
+	if _, _, err := lockFileForRefresh(path, []string{current}, true, denied); err == nil || !strings.Contains(err.Error(), "cannot preserve") {
+		t.Fatalf("policy-denied preserved entry error = %v", err)
+	}
+}
+
 func TestCheckLockReportsEveryStatusAfterPolicyPreflight(t *testing.T) {
 	reg := registry.Registry{Tools: map[string]registry.Tool{
 		"present": {Image: "ghcr.io/acme/present:1"},

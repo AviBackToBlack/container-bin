@@ -334,6 +334,14 @@ func FindProjectRoot(start string, markers []string) (string, bool) {
 // Outermost mode is useful for workspace-oriented tools whose member directory
 // has its own marker but still depends on a parent workspace manifest.
 func FindProjectRootForTool(start string, t registry.Tool) (string, bool) {
+	if t.TrustedProjectRoot != "" {
+		root := filepath.Clean(t.TrustedProjectRoot)
+		rel, err := filepath.Rel(root, start)
+		if err != nil || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return "", false
+		}
+		return root, true
+	}
 	markers := ProjectMarkersFor(t)
 	if t.ProjectRootMode != "outermost" {
 		return FindProjectRoot(start, markers)

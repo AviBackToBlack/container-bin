@@ -456,6 +456,61 @@ func TestResolveRunContextIsolated(t *testing.T) {
 	}
 }
 
+func TestResolveRunContextUsesTrustedOverlayRootInsteadOfAncestorMarker(t *testing.T) {
+	repository := t.TempDir()
+	if err := os.Mkdir(filepath.Join(repository, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	overlayRoot := filepath.Join(repository, "packages", "a")
+	cwd := filepath.Join(overlayRoot, "src")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	overlayRoot, err := pathmap.CanonicalPath(overlayRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cwd, err = pathmap.CanonicalPath(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool := registry.Tool{
+		Name:               "acme",
+		Image:              "acme:1",
+		Provider:           "stateful",
+		StateGroup:         "acme",
+		ProjectVolumes:     []string{"cache:/cb/cache"},
+		TrustedProjectRoot: overlayRoot,
+	}
+	ctx, err := resolveRunContext(tool, cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ctx.root != overlayRoot || !ctx.found {
+		t.Fatalf("trusted overlay context = %+v, want root %q", ctx, overlayRoot)
+	}
+	if ctx.containerWD != ctx.workspaceRoot+"/src" {
+		t.Fatalf("container cwd = %q, want %q", ctx.containerWD, ctx.workspaceRoot+"/src")
+	}
+	args, err := buildDockerArgs(tool, nil, ctx, "acme:1", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantVolume := pathmap.StatefulProjectVolumeID("acme", "cache", overlayRoot, true)
+	joined := strings.Join(args, "\n")
+	if !strings.Contains(joined, "src="+overlayRoot+",dst="+ctx.workspaceRoot) || !strings.Contains(joined, "src="+wantVolume+",dst=/cb/cache") {
+		t.Fatalf("overlay root/state not reflected in docker args:\n%s", joined)
+	}
+
+	outside, err := pathmap.CanonicalPath(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolveRunContext(tool, outside); err == nil || !strings.Contains(err.Error(), "outside trusted project overlay root") {
+		t.Fatalf("outside-root error = %v", err)
+	}
+}
+
 func TestBuildDockerArgsIsolatedNoCwdMount(t *testing.T) {
 	dir := t.TempDir()
 	cwd, err := pathmap.CanonicalPath(dir)

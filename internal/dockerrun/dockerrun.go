@@ -184,6 +184,9 @@ func resolveRunContext(t registry.Tool, cwd string) (runContext, error) {
 	}
 
 	root, found := pathmap.FindProjectRootForTool(cwd, t)
+	if t.TrustedProjectRoot != "" && !found {
+		return runContext{}, fmt.Errorf("current directory %q is outside trusted project overlay root %q", cwd, t.TrustedProjectRoot)
+	}
 	if !found {
 		root = cwd
 	}

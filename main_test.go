@@ -38,6 +38,25 @@ func TestInvokedNameIsCaseInsensitive(t *testing.T) {
 	}
 }
 
+func TestProjectReviewCommandsSelectReadOnlyRegistryLoad(t *testing.T) {
+	for _, tc := range []struct {
+		invoked string
+		args    []string
+		want    bool
+	}{
+		{invoked: "cb", args: []string{"trust", "--check"}, want: true},
+		{invoked: "cb", args: []string{"trust"}, want: true},
+		{invoked: "cb", args: []string{"inspect", "--project"}, want: true},
+		{invoked: "cb", args: []string{"inspect", "node"}, want: false},
+		{invoked: "cb", args: []string{"doctor"}, want: false},
+		{invoked: "node", args: []string{"trust", "--check"}, want: false},
+	} {
+		if got := useReadOnlyRegistryLoad(tc.invoked, tc.args); got != tc.want {
+			t.Errorf("useReadOnlyRegistryLoad(%q, %v) = %t, want %t", tc.invoked, tc.args, got, tc.want)
+		}
+	}
+}
+
 func TestBootstrapCommandsSkipHostPolicyAndRegistry(t *testing.T) {
 	oldArgs := os.Args
 	oldLoadRegistry := loadRegistry

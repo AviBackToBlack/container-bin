@@ -63,7 +63,9 @@ readable, and dangerous to let others edit.
   unresolvable project-root reparse chain also fails because canonical identity
   cannot be proven. Exact environment names and project-volume requests are
   included in the review output; every project-controlled value is quoted so
-  control characters cannot spoof review labels.
+  control characters cannot spoof review labels. Runtime workspace mounts and
+  project-volume IDs for overlay tools are fixed to the approved overlay root;
+  an ancestor marker cannot silently widen that boundary.
 - **Fail-closed host boundary.** Non-bootstrap work currently runs only in a
   native Windows process. Windows binaries launched through detected WSL
   interoperability, WSL1, recognized-but-not-yet-enabled native WSL2,

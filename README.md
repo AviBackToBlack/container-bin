@@ -216,6 +216,10 @@ cb trust --yes        # explicit non-interactive pre-provisioning after separate
 cb untrust            # revoke the current root; leftover shims become inert
 ```
 
+The mutating trust commands re-read the overlay after approval and again after
+shim installation, before recording trust. If its location or bytes change
+during that window, the command fails and any installed shims remain inert.
+
 Trust records live outside the repository in the OS user configuration
 directory (`%APPDATA%\ContainerBin\project-trust.toml` on Windows). The file is
 strictly parsed, atomically replaced, and never read from the project. Moving a
@@ -231,7 +235,14 @@ tool profiles, exact `env_names`, literal `env_set` values and project-scoped
 `project_volumes`. It rejects `[defaults.*]`, default-alias metadata,
 `host_mounts`, `env_prefixes`, and cross-project `shared_volumes`. Overlay
 images remain subject to the administrator machine policy and normal image-lock
-rules; project trust cannot weaken either one. `cb trust` installs only the
+rules; project trust cannot weaken either one. An overlay tool's workspace bind
+mount and project-volume identity are pinned to the trusted overlay root;
+tool-specific markers cannot widen the mount to an ancestor repository or make
+sibling overlays share state. Because project overlays share the global image
+lockfile, `cb lock` inside a trusted overlay refreshes the current effective
+images while preserving and revalidating entries belonging to other overlays;
+plain global `cb lock` remains a complete refresh that drops stale entries.
+`cb trust` installs only the
 reviewed tool-name shims. `cb untrust` leaves those files in place because an
 unrelated trusted project may use the same dispatch name; without a matching
 trusted overlay they cannot resolve a tool and fail closed. Registry mutation
