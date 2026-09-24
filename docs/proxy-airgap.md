@@ -136,11 +136,12 @@ appears in `docker image ls`.
 
 ## What `cb backup` protects
 
-Plain `cb backup` archives `container-bin.toml`, its detached signature when
-present, the lockfile when present, and informational metadata. Under signed
-registry policy the exact registry/signature snapshot is re-authenticated
-before the archive is created. Add `--state` followed by explicit names from
-`cb state` to include selected ContainerBin-managed Docker volumes:
+Plain `cb backup` archives `container-bin.toml`, a valid bounded detached
+signature when present, the lockfile when present, and informational metadata.
+Under signed registry policy the exact registry/signature snapshot is
+re-authenticated before the archive is created. An invalid optional signature is
+skipped with a warning in unmanaged mode. Add `--state` followed by explicit
+names from `cb state` to include selected ContainerBin-managed Docker volumes:
 
 ```powershell
 cb state

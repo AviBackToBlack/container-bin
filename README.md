@@ -754,8 +754,10 @@ configuration, or host project files. Output archives are created exclusively:
 choose a new filename instead of overwriting an existing backup. Volume data can
 itself contain package credentials or other secrets, so store and transfer the
 archive as sensitive data even though ContainerBin requests owner-only file mode.
-When present, the detached `container-bin.toml.sig` envelope is included; a
-required signed-registry snapshot is re-authenticated before backup.
+When valid and bounded, the detached `container-bin.toml.sig` envelope is
+included; a required signed-registry snapshot is re-authenticated before
+backup. An invalid optional envelope is skipped with a warning in unmanaged
+mode.
 
 See [proxies, private registries, and air-gapped operation](docs/proxy-airgap.md)
 for mirror identity rules, disconnected image preparation, and the complete

@@ -1664,6 +1664,75 @@ func TestRestoreAuthenticatesSignedSnapshotBeforeRegistryParsing(t *testing.T) {
 	}
 }
 
+func TestUnsignedRestoreRemovesStaleDetachedSignature(t *testing.T) {
+	dir := t.TempDir()
+	backup := filepath.Join(dir, "backup.zip")
+	f, err := os.Create(backup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zw := zip.NewWriter(f)
+	w, err := zw.Create("container-bin.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte(registry.DefaultTOML)); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := filepath.Join(dir, "container-bin.toml")
+	for _, file := range []struct {
+		path, contents string
+	}{{cfg, "old registry"}, {cfg + ".sig", "old signature"}, {cfg + ".sig.bak", "old signature backup"}} {
+		if err := os.WriteFile(file.path, []byte(file.contents), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := Restore(cfg, []string{backup, "--apply"}, policy.Policy{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, stale := range []string{cfg + ".sig", cfg + ".sig.bak"} {
+		if _, err := os.Stat(stale); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("stale signature %s remains: %v", stale, err)
+		}
+	}
+}
+
+func TestUnmanagedBackupSkipsInvalidOptionalSignature(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "container-bin.toml")
+	out := filepath.Join(dir, "backup.zip")
+	if err := os.WriteFile(cfg, []byte(registry.DefaultTOML), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg+".sig", make([]byte, 20<<10), 0600); err != nil {
+		t.Fatal(err)
+	}
+	output, err := captureStdout(func() error { return Backup(cfg, []string{out}, "test", policy.Policy{}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output, "warning: detached registry signature not archived") {
+		t.Fatalf("backup output missing optional-signature warning: %q", output)
+	}
+	zr, err := zip.OpenReader(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zr.Close()
+	for _, entry := range zr.File {
+		if entry.Name == "container-bin.toml.sig" {
+			t.Fatal("invalid optional signature was archived")
+		}
+	}
+}
+
 func TestPlainBackupIsValidAndNeverOverwrites(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "container-bin.toml")

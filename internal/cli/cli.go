@@ -1098,7 +1098,11 @@ func Backup(cfgPath string, args []string, version string, machinePolicy policy.
 	}
 	signatureBytes, err := machinePolicy.LoadRegistrySignature(cfgPath, registryBytes)
 	if err != nil {
-		return fmt.Errorf("authenticate registry backup snapshot: %w", err)
+		if machinePolicy.RequireRegistrySignature {
+			return fmt.Errorf("authenticate registry backup snapshot: %w", err)
+		}
+		fmt.Printf("warning: detached registry signature not archived: %v\n", err)
+		signatureBytes = nil
 	}
 	dir := filepath.Dir(cfgPath)
 	created := time.Now()
@@ -1343,12 +1347,23 @@ func Restore(cfgPath string, args []string, machinePolicy policy.Policy) error {
 		}
 	}
 	if !apply {
-		fmt.Println("\nDry run only. Re-run with --apply to perform the reported restore.")
+		if machinePolicy.RequireRegistrySignature {
+			fmt.Println("\nDry run only. Signed registry policy forbids `cb restore --apply`; have an administrator provision the archived registry/signature pair.")
+		} else {
+			fmt.Println("\nDry run only. Re-run with --apply to perform the reported restore.")
+		}
 		return nil
 	}
 	if restoreState {
 		if err := stateBackup.Restore(); err != nil {
 			return err
+		}
+	}
+	if _, signed := files["container-bin.toml.sig"]; !signed {
+		for _, stale := range []string{cfgPath + ".sig", cfgPath + ".sig.bak"} {
+			if err := os.Remove(stale); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("remove stale detached registry signature %s: %w", stale, err)
+			}
 		}
 	}
 	if err := atomicio.WriteFile(cfgPath, cfg, 0644); err != nil {

@@ -182,10 +182,13 @@ Signed mode deliberately makes the registry read-only to ContainerBin.
 provision the new registry/signature pair. `cb install` and `cb setup` skip
 registry creation/upgrades but may reconcile shims from an already authenticated
 registry; a missing signed registry still fails closed. Read-only commands and
-lockfile-only operations remain available. `cb backup`
-includes an existing detached envelope and re-verifies the exact snapshot when
-signed mode is active; signed-policy `cb restore` can verify and preview that
-archive, but applying it remains an administrator provisioning operation.
+lockfile-only operations remain available. `cb backup` includes a valid bounded
+detached envelope and re-verifies the exact snapshot when signed mode is active.
+An invalid optional envelope is skipped with a warning when policy is unmanaged;
+a required invalid envelope still fails. Signed-policy `cb restore` can verify
+and preview that archive, but applying it remains an administrator provisioning
+operation. An unmanaged restore of an unsigned archive removes any stale
+envelope and its backup.
 
 Schema 1 remains supported unchanged. Registry-signature fields in schema 1
 are rejected, and policy versions newer than 2 fail closed. This makes rollback
