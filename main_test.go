@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -124,6 +126,52 @@ func TestHostBoundaryPrecedesPolicyAndRegistryLoad(t *testing.T) {
 		}
 	}()
 	main()
+}
+
+func TestSelfUpdateCheckEnforcesHostBoundaryAndSkipsPolicyAndRegistry(t *testing.T) {
+	oldArgs := os.Args
+	oldLoadRegistry := loadRegistry
+	oldLoadPolicy := loadPolicy
+	oldRequireHostFrontend := requireHostFrontend
+	oldRunSelfUpdateCheck := runSelfUpdateCheck
+	defer func() {
+		os.Args = oldArgs
+		loadRegistry = oldLoadRegistry
+		loadPolicy = oldLoadPolicy
+		requireHostFrontend = oldRequireHostFrontend
+		runSelfUpdateCheck = oldRunSelfUpdateCheck
+	}()
+
+	hostChecked := false
+	requireHostFrontend = func() error {
+		hostChecked = true
+		return nil
+	}
+	loadRegistry = func() (registry.Registry, string, error) {
+		panic("self-update check attempted to load the registry")
+	}
+	loadPolicy = func() (policy.Policy, error) {
+		panic("self-update check attempted to load machine policy")
+	}
+	runSelfUpdateCheck = func(_ context.Context, current string, args []string, out io.Writer) error {
+		if current != "dev" {
+			t.Fatalf("current version = %q, want dev", current)
+		}
+		if strings.Join(args, " ") != "--check --version v1.1.0" {
+			t.Fatalf("self-update args = %q", args)
+		}
+		_, err := io.WriteString(out, "self-update seam reached\n")
+		return err
+	}
+	os.Args = []string{"cb.exe", "self-update", "--check", "--version", "v1.1.0"}
+
+	out := captureMainStdout(t, main)
+	if !strings.Contains(out, "self-update seam reached") {
+		t.Fatalf("output %q does not contain self-update marker", out)
+	}
+	if !hostChecked {
+		t.Fatal("self-update check skipped host enforcement")
+	}
 }
 
 func captureMainStdout(t *testing.T, fn func()) string {

@@ -232,7 +232,8 @@ the tier below it; see the exact edges further down for that):
 
 ```
 main            argv[0] dispatch, host boundary, subcommand switch, version, usage,
-                exit codes + fatalf/osExit, withMutationLock's signal wrapper
+                exit codes + fatalf/osExit, bootstrap self-update selection,
+                withMutationLock's signal wrapper
   ↓
 internal/cli    setup, install, add, expose, unexpose, uninstall, inspect,
                 trace, env, backup, restore, lock, update
@@ -259,13 +260,14 @@ internal/toml        the shared TOML subset lexer                    (leaf)
 internal/atomicio    crash-safe write + .bak recovery                (leaf)
 internal/mutationlock  the registry mutation lock primitive          (leaf)
 internal/hostenv       Windows/WSL/Linux runtime classification       (leaf)
+internal/selfupdate    canonical release selection and read-only plan (leaf)
 ```
 
 The exact import edges, from `go list -f '{{.ImportPath}} {{.Imports}}' ./...`,
 project-internal imports only:
 
 ```
-main         -> cli, diag, dockerrun, hostenv, mutationlock, policy, registry, state
+main         -> cli, diag, dockerrun, hostenv, mutationlock, policy, registry, selfupdate, state
 cli          -> atomicio, diag, dockerrun, lockfile, pathmap, policy, registry, statearchive, toml
 diag         -> dockerrun, dockervol, lockfile, pathmap, policy, registry
 dockerrun    -> dockervol, lockfile, pathmap, policy, registry
@@ -275,7 +277,7 @@ lockfile     -> atomicio, policy, registry, toml
 pathmap      -> registry
 registry     -> atomicio, toml
 policy       -> toml
-atomicio, dockervol, hostenv, mutationlock, toml -> (leaves)
+atomicio, dockervol, hostenv, mutationlock, selfupdate, toml -> (leaves)
 ```
 
 Notably: `lockfile` and `pathmap` both depend on `registry` directly, not on
@@ -300,3 +302,11 @@ Two boundaries are load-bearing rather than cosmetic:
 release workflow inject it with `-ldflags "-X main.version=..."`, so that symbol
 path is part of the release contract. Packages that need it take it as a
 parameter.
+
+After the host runtime boundary is enforced, `cb self-update --check` is
+dispatched before machine policy and registry loading. Release selection
+therefore remains available when either local configuration source is missing
+or invalid without allowing unsupported frontends to perform network work.
+`internal/selfupdate` has no project imports and performs only bounded metadata
+queries and plan output; downloading, attestation verification and installed-file
+replacement remain separate later phases.
