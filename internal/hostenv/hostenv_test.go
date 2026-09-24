@@ -15,6 +15,7 @@ func TestClassify(t *testing.T) {
 	}{
 		{name: "windows", goos: "windows", want: WindowsNative},
 		{name: "windows distro marker", goos: "windows", distro: "Ubuntu", want: WindowsWSLInterop},
+		{name: "windows whitespace distro marker", goos: "windows", distro: " ", want: WindowsWSLInterop},
 		{name: "windows interop marker", goos: "windows", interop: "/run/WSL/1_interop", want: WindowsWSLInterop},
 		{name: "wsl2", goos: "linux", kernel: "6.6.87.2-microsoft-standard-WSL2", distro: "Ubuntu", want: WSL2Native},
 		{name: "wsl2 case insensitive", goos: "linux", kernel: "5.15.167.4-MICROSOFT-standard-wsl2", want: WSL2Native},
@@ -47,6 +48,7 @@ func TestRequireFrontend(t *testing.T) {
 		{name: "windows native", info: Runtime{Kind: WindowsNative}},
 		{name: "windows interop", info: Runtime{Kind: WindowsWSLInterop, InteropMarkers: []string{"WSL_INTEROP"}}, want: "WSL_INTEROP"},
 		{name: "wsl2 missing distro", info: Runtime{Kind: WSL2Native}, want: "distribution identity cannot be proven"},
+		{name: "wsl2 whitespace distro", info: Runtime{Kind: WSL2Native, Distro: " \t"}, want: "distribution identity cannot be proven"},
 		{name: "wsl2 gated", info: Runtime{Kind: WSL2Native, Distro: "Ubuntu"}, want: "WSL frontend is not enabled"},
 		{name: "wsl1", info: Runtime{Kind: WSL1Native}, want: "WSL1 is unsupported"},
 		{name: "unrecognized Microsoft kernel", info: Runtime{Kind: WSLUnrecognized, KernelRelease: "4.19.128-microsoft-standard"}, want: "generation cannot be proven"},

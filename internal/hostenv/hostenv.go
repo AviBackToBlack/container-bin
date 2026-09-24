@@ -70,7 +70,7 @@ func requireFrontend(info Runtime, probeErr error) error {
 		}
 		return fmt.Errorf("Windows ContainerBin process inherited WSL interoperability marker(s): %s; this invocation is unsupported; run cb from a native Windows process, or use the native WSL frontend after it is released", markers)
 	case WSL2Native:
-		if info.Distro == "" {
+		if strings.TrimSpace(info.Distro) == "" {
 			return errors.New("native WSL2 was detected but WSL_DISTRO_NAME is unavailable, so distribution identity cannot be proven")
 		}
 		return fmt.Errorf("native WSL2 distribution %q was detected, but the WSL frontend is not enabled in this release", info.Distro)
@@ -89,15 +89,14 @@ func classify(goos, kernelRelease, distro, interop string) Runtime {
 	info := Runtime{
 		GOOS:          strings.TrimSpace(goos),
 		KernelRelease: strings.TrimSpace(kernelRelease),
-		Distro:        strings.TrimSpace(distro),
+		Distro:        distro,
 	}
-	interop = strings.TrimSpace(interop)
 	switch info.GOOS {
 	case "windows":
 		if interop != "" {
 			info.InteropMarkers = append(info.InteropMarkers, "WSL_INTEROP")
 		}
-		if info.Distro != "" {
+		if distro != "" {
 			info.InteropMarkers = append(info.InteropMarkers, "WSL_DISTRO_NAME")
 		}
 		if len(info.InteropMarkers) != 0 {

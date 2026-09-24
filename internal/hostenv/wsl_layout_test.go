@@ -97,3 +97,14 @@ func TestNativeWSLLayoutRejectsAmbiguousInputs(t *testing.T) {
 		})
 	}
 }
+
+func TestClassifiedPaddedDistroDoesNotCollapseStateIdentity(t *testing.T) {
+	runtime := classify("linux", "6.6.87.2-microsoft-standard-WSL2", " Ubuntu-24.04", "")
+	if runtime.Distro != " Ubuntu-24.04" {
+		t.Fatalf("classify() distro = %q, want raw identity", runtime.Distro)
+	}
+	_, err := runtime.NativeWSLLayout("/home/alice", 1000, testMachineID)
+	if err == nil || !strings.Contains(err.Error(), "canonical UTF-8") {
+		t.Fatalf("NativeWSLLayout error = %v, want padded identity rejection", err)
+	}
+}
