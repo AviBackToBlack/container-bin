@@ -55,7 +55,15 @@ func TestStageBesideRunningWindowsExecutableUsesProtectedUserOnlyDACL(t *testing
 		if err != nil {
 			t.Fatalf("inspect %q DACL: %v", path, err)
 		}
-		wantACE := "(A;" + flags + ";FA;;;" + current.Uid + ")"
+		canonical, err := canonicalDACL("D:P(A;" + flags + ";FA;;;" + current.Uid + ")")
+		if err != nil {
+			t.Fatalf("canonicalize expected DACL: %v", err)
+		}
+		aceStart := strings.Index(canonical, "(")
+		if aceStart < 0 {
+			t.Fatalf("canonical expected DACL has no ACE: %q", canonical)
+		}
+		wantACE := canonical[aceStart:]
 		if !strings.HasPrefix(dacl, "D:P") || !strings.HasSuffix(dacl, wantACE) || strings.Count(dacl, "(") != 1 {
 			t.Fatalf("%q DACL = %q, want one protected ACE %q", path, dacl, wantACE)
 		}
@@ -65,6 +73,25 @@ func TestStageBesideRunningWindowsExecutableUsesProtectedUserOnlyDACL(t *testing
 			}
 		}
 	}
+}
+
+func canonicalDACL(sddl string) (string, error) {
+	sddlPtr, err := syscall.UTF16PtrFromString(sddl)
+	if err != nil {
+		return "", err
+	}
+	var descriptor uintptr
+	result, _, callErr := convertStringSecurityDescriptor.Call(
+		uintptr(unsafe.Pointer(sddlPtr)),
+		sddlRevision1,
+		uintptr(unsafe.Pointer(&descriptor)),
+		0,
+	)
+	if result == 0 {
+		return "", windowsAPIError("convert expected staging DACL", callErr)
+	}
+	defer localFree.Call(descriptor)
+	return encodeDACL(descriptor)
 }
 
 func stagingPathDACL(path string) (string, error) {
@@ -87,7 +114,10 @@ func stagingPathDACL(path string) (string, error) {
 		return "", syscall.Errno(result)
 	}
 	defer localFree.Call(descriptor)
+	return encodeDACL(descriptor)
+}
 
+func encodeDACL(descriptor uintptr) (string, error) {
 	var encoded uintptr
 	var encodedLength uint32
 	result, _, callErr := convertSecurityDescriptorToStringForTest.Call(
