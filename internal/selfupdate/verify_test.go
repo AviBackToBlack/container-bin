@@ -26,11 +26,13 @@ func TestVerifyRequiresChecksumAndExactAttestationPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if verified.BinaryPath() != fixture.binary || verified.Target() != fixture.plan.Target || verified.SHA256() != fixture.digest || verified.Size() != int64(len(fixture.binaryBytes)) {
+	resolvedBinary := mustResolveTestPath(t, fixture.binary)
+	resolvedGH := mustResolveTestPath(t, fixture.gh)
+	if verified.BinaryPath() != resolvedBinary || verified.Target() != fixture.plan.Target || verified.SHA256() != fixture.digest || verified.Size() != int64(len(fixture.binaryBytes)) {
 		t.Fatalf("unexpected verified result: %+v", verified)
 	}
 	wantArgs := []string{
-		"attestation", "verify", fixture.binary,
+		"attestation", "verify", resolvedBinary,
 		"--hostname", "github.com",
 		"--repo", expectedReleaseRepo,
 		"--signer-workflow", expectedReleaseRepo + "/" + expectedReleaseWorkflow,
@@ -40,8 +42,8 @@ func TestVerifyRequiresChecksumAndExactAttestationPolicy(t *testing.T) {
 		"--predicate-type", provenancePredicate,
 		"--format", "json",
 	}
-	if gotExecutable != fixture.gh || !reflect.DeepEqual(gotArgs, wantArgs) {
-		t.Fatalf("attestation invocation = %q %q, want %q %q", gotExecutable, gotArgs, fixture.gh, wantArgs)
+	if gotExecutable != resolvedGH || !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Fatalf("attestation invocation = %q %q, want %q %q", gotExecutable, gotArgs, resolvedGH, wantArgs)
 	}
 }
 
@@ -267,6 +269,19 @@ func newVerificationFixture(t *testing.T) verificationFixture {
 
 func attestationJSON(digest string) []byte {
 	return []byte(fmt.Sprintf(`[{"attestation":{"bundle":"ignored"},"verificationResult":{"statement":{"predicateType":"%s","subject":[{"name":"cb.exe","digest":{"sha256":"%s"}}]}}}]`, provenancePredicate, digest))
+}
+
+func mustResolveTestPath(t *testing.T, path string) string {
+	t.Helper()
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err = filepath.Abs(resolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resolved
 }
 
 type attestationRunnerFunc func(context.Context, string, []string) ([]byte, []byte, error)
