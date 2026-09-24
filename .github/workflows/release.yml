@@ -275,10 +275,16 @@ jobs:
               exit 1
               ;;
           esac
+          RELEASE_ARGS=(
+            --repo "${GITHUB_REPOSITORY}"
+            --verify-tag
+            --draft
+            --title "ContainerBin ${GITHUB_REF_NAME}"
+            --generate-notes
+          )
+          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then
+            RELEASE_ARGS+=(--prerelease)
+          fi
           gh release create "${GITHUB_REF_NAME}" \
-            --repo "${GITHUB_REPOSITORY}" \
-            --verify-tag \
-            --draft \
-            --title "ContainerBin ${GITHUB_REF_NAME}" \
-            --generate-notes \
+            "${RELEASE_ARGS[@]}" \
             dist/cb.exe dist/*.zip dist/SHA256SUMS
