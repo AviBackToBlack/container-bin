@@ -34,8 +34,8 @@ func TestStageDownloadsPrivateExactAssetsBesideDestination(t *testing.T) {
 			return nil, nil
 		}
 	})
-	destination := t.TempDir()
-	staged, err := (stager{doer: doer}).Stage(context.Background(), plan, destination)
+	destination, installed := testInstallation(t)
+	staged, err := (stager{doer: doer}).Stage(context.Background(), plan, installed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,12 +178,12 @@ func TestStageCleansUpEveryPartialFailure(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			plan := stagingPlan()
-			destination := t.TempDir()
-			_, err := (stager{doer: tc.doer(plan)}).Stage(context.Background(), plan, destination)
+			destination, installed := testInstallation(t)
+			_, err := (stager{doer: tc.doer(plan)}).Stage(context.Background(), plan, installed)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("Stage error = %v, want %q", err, tc.want)
 			}
-			entries, readErr := os.ReadDir(destination)
+			entries, readErr := stagingEntries(destination)
 			if readErr != nil || len(entries) != 0 {
 				t.Fatalf("failed staging left files behind: entries=%v err=%v", entries, readErr)
 			}
@@ -199,6 +199,11 @@ func TestStageRejectsInvalidInputsBeforeCreatingFilesOrCallingNetwork(t *testing
 		want   string
 	}{
 		{name: "development current", mutate: func(p *Plan) { p.Current = "dev" }, want: "development builds"},
+		{name: "already installed", mutate: func(p *Plan) { p.Target = p.Current }, want: "already installed"},
+		{name: "unauthorized downgrade", mutate: func(p *Plan) { p.Target = "v1.0.0" }, want: "does not authorize"},
+		{name: "inconsistent downgrade authorization", mutate: func(p *Plan) {
+			p.downgradeAuthorization = downgradeAuthorization{current: p.Current, target: "v1.0.0"}
+		}, want: "inconsistent"},
 		{name: "wrong platform", mutate: func(p *Plan) { p.Arch = "arm64" }, want: "no qualified artifact"},
 		{name: "wrong release", mutate: func(p *Plan) { p.ReleaseURL = "https://evil.example/release" }, want: "non-canonical release URL"},
 		{name: "wrong provenance", mutate: func(p *Plan) { p.ExpectedRepo = "other/repo" }, want: "unexpected provenance policy"},
@@ -212,39 +217,81 @@ func TestStageRejectsInvalidInputsBeforeCreatingFilesOrCallingNetwork(t *testing
 			plan := base
 			tc.mutate(&plan)
 			called := false
-			destination := t.TempDir()
-			_, err := (stager{doer: doerFunc(func(*http.Request) (*http.Response, error) { called = true; return nil, nil })}).Stage(context.Background(), plan, destination)
+			destination, installed := testInstallation(t)
+			_, err := (stager{doer: doerFunc(func(*http.Request) (*http.Response, error) { called = true; return nil, nil })}).Stage(context.Background(), plan, installed)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("Stage error = %v, want %q", err, tc.want)
 			}
 			if called {
 				t.Fatal("network called for rejected plan")
 			}
-			entries, _ := os.ReadDir(destination)
+			entries, _ := stagingEntries(destination)
 			if len(entries) != 0 {
 				t.Fatalf("invalid plan created staging files: %v", entries)
 			}
 		})
 	}
 
-	t.Run("relative destination", func(t *testing.T) {
+	t.Run("relative installed executable", func(t *testing.T) {
 		called := false
 		_, err := (stager{doer: doerFunc(func(*http.Request) (*http.Response, error) { called = true; return nil, nil })}).Stage(context.Background(), base, "relative")
 		if err == nil || !strings.Contains(err.Error(), "must be absolute") || called {
-			t.Fatalf("relative destination result = %v, called=%v", err, called)
+			t.Fatalf("relative executable result = %v, called=%v", err, called)
 		}
 	})
 
-	t.Run("destination is a file", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "cb.exe")
-		if err := os.WriteFile(path, nil, 0o600); err != nil {
-			t.Fatal(err)
-		}
+	t.Run("installed executable is a directory", func(t *testing.T) {
+		path := t.TempDir()
 		_, err := (stager{doer: doerFunc(func(*http.Request) (*http.Response, error) { return nil, errors.New("unexpected") })}).Stage(context.Background(), base, path)
-		if err == nil || !strings.Contains(err.Error(), "not a directory") {
-			t.Fatalf("file destination error = %v", err)
+		if err == nil || !strings.Contains(err.Error(), "regular non-symlink file") {
+			t.Fatalf("directory executable error = %v", err)
 		}
 	})
+}
+
+func TestStageAcceptsOnlyAuthorizedDowngradePlan(t *testing.T) {
+	plan := retargetStagingPlan(stagingPlan(), "v1.0.0")
+	if err := validateStagingPlan(plan); err == nil || !strings.Contains(err.Error(), "does not authorize") {
+		t.Fatalf("unauthorized downgrade validation = %v", err)
+	}
+	plan.downgradeAuthorization = downgradeAuthorization{current: plan.Current, target: plan.Target}
+	if err := validateStagingPlan(plan); err != nil {
+		t.Fatalf("authorized downgrade validation = %v", err)
+	}
+	plan.Target = "v0.9.0"
+	if err := validateStagingPlan(plan); err == nil || !strings.Contains(err.Error(), "does not authorize") {
+		t.Fatalf("mutated authorized downgrade validation = %v", err)
+	}
+}
+
+func TestStageCleansUpRestrictionFailureAndReportsCleanupFailure(t *testing.T) {
+	destination, installed := testInstallation(t)
+	restrictErr := errors.New("ACL unavailable")
+	_, err := (stager{
+		doer:         doerFunc(func(*http.Request) (*http.Response, error) { return nil, errors.New("unexpected network") }),
+		restrictPath: func(string, bool) error { return restrictErr },
+	}).Stage(context.Background(), stagingPlan(), installed)
+	if !errors.Is(err, restrictErr) {
+		t.Fatalf("restriction failure = %v", err)
+	}
+	entries, readErr := stagingEntries(destination)
+	if readErr != nil || len(entries) != 0 {
+		t.Fatalf("restriction failure left staging files: entries=%v err=%v", entries, readErr)
+	}
+
+	cleanupErr := errors.New("cleanup unavailable")
+	_, err = (stager{
+		doer:         doerFunc(func(*http.Request) (*http.Response, error) { return nil, errors.New("unexpected network") }),
+		restrictPath: func(string, bool) error { return restrictErr },
+		removeAll:    func(string) error { return cleanupErr },
+	}).Stage(context.Background(), stagingPlan(), installed)
+	if !errors.Is(err, restrictErr) || !errors.Is(err, cleanupErr) {
+		t.Fatalf("combined restriction/cleanup failure = %v", err)
+	}
+	entries, _ = stagingEntries(destination)
+	for _, entry := range entries {
+		_ = os.RemoveAll(filepath.Join(destination, entry.Name()))
+	}
 }
 
 func TestDownloadAcceptsOnlyCanonicalOrSingleGitHubAssetRedirect(t *testing.T) {
@@ -296,6 +343,41 @@ func stagingPlan() Plan {
 		ExpectedRef:  "refs/tags/v1.2.0",
 		Workflow:     ".github/workflows/release.yml",
 	}
+}
+
+func retargetStagingPlan(plan Plan, target string) Plan {
+	plan.Target = target
+	plan.ReleaseURL = releaseWebRoot + "/tag/" + target
+	plan.Binary.URL = releaseWebRoot + "/download/" + target + "/cb.exe"
+	plan.Archive.Name = "container-bin-" + target + "-windows-amd64.zip"
+	plan.Archive.URL = releaseWebRoot + "/download/" + target + "/" + plan.Archive.Name
+	plan.Checksums.URL = releaseWebRoot + "/download/" + target + "/SHA256SUMS"
+	plan.ExpectedRef = "refs/tags/" + target
+	return plan
+}
+
+func testInstallation(t *testing.T) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	executable := filepath.Join(dir, "cb.exe")
+	if err := os.WriteFile(executable, []byte("installed ContainerBin test executable"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return dir, executable
+}
+
+func stagingEntries(destination string) ([]os.DirEntry, error) {
+	entries, err := os.ReadDir(destination)
+	if err != nil {
+		return nil, err
+	}
+	filtered := entries[:0]
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), stagingPrefix) {
+			filtered = append(filtered, entry)
+		}
+	}
+	return filtered, nil
 }
 
 func assetResponse(req *http.Request, body []byte) *http.Response {

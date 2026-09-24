@@ -48,14 +48,17 @@ func (s Staged) Cleanup() error {
 }
 
 type stager struct {
-	doer httpDoer
+	doer         httpDoer
+	restrictPath func(string, bool) error
+	removeAll    func(string) error
 }
 
 // Stage downloads the directly attested executable and its checksum manifest
-// into a private temporary directory beside the destination installation. The
-// caller must still authenticate and verify both inputs before any replacement.
-func Stage(ctx context.Context, plan Plan, destinationDir string) (Staged, error) {
-	return (stager{doer: newDownloadClient()}).Stage(ctx, plan, destinationDir)
+// into a private temporary directory beside the installed management
+// executable. The caller must still authenticate and verify both inputs before
+// any replacement.
+func Stage(ctx context.Context, plan Plan, installedExecutable string) (Staged, error) {
+	return (stager{doer: newDownloadClient()}).Stage(ctx, plan, installedExecutable)
 }
 
 func newDownloadClient() *http.Client {
@@ -77,14 +80,14 @@ func newDownloadClient() *http.Client {
 	}
 }
 
-func (s stager) Stage(ctx context.Context, plan Plan, destinationDir string) (staged Staged, err error) {
+func (s stager) Stage(ctx context.Context, plan Plan, installedExecutable string) (staged Staged, err error) {
 	if s.doer == nil {
 		return Staged{}, errors.New("self-update stager has no HTTP client")
 	}
 	if err := validateStagingPlan(plan); err != nil {
 		return Staged{}, err
 	}
-	destinationDir, err = canonicalDestinationDir(destinationDir)
+	destinationDir, err := canonicalInstalledExecutableDir(installedExecutable)
 	if err != nil {
 		return Staged{}, err
 	}
@@ -93,8 +96,15 @@ func (s stager) Stage(ctx context.Context, plan Plan, destinationDir string) (st
 	if err != nil {
 		return Staged{}, fmt.Errorf("create private self-update staging directory: %w", err)
 	}
-	if err := os.Chmod(dir, 0o700); err != nil {
-		_ = os.RemoveAll(dir)
+	defer func() {
+		if err != nil {
+			if cleanupErr := s.removeStaging(dir); cleanupErr != nil {
+				err = errors.Join(err, fmt.Errorf("remove failed self-update staging directory: %w", cleanupErr))
+			}
+			staged = Staged{}
+		}
+	}()
+	if err = s.restrict(dir, true); err != nil {
 		return Staged{}, fmt.Errorf("restrict self-update staging directory: %w", err)
 	}
 	staged = Staged{
@@ -104,14 +114,6 @@ func (s stager) Stage(ctx context.Context, plan Plan, destinationDir string) (st
 		Target:        plan.Target,
 		owned:         true,
 	}
-	defer func() {
-		if err != nil {
-			if cleanupErr := os.RemoveAll(dir); cleanupErr != nil {
-				err = errors.Join(err, fmt.Errorf("remove failed self-update staging directory: %w", cleanupErr))
-			}
-			staged = Staged{}
-		}
-	}()
 
 	// Fetch the small manifest first so a later binary failure also exercises
 	// all-or-nothing staging cleanup.
@@ -170,6 +172,9 @@ func (s stager) download(ctx context.Context, current string, asset Asset, desti
 	if closeErr != nil {
 		return fmt.Errorf("close staged release asset %q: %w", asset.Name, closeErr)
 	}
+	if err := s.restrict(destination, false); err != nil {
+		return fmt.Errorf("restrict staged release asset %q: %w", asset.Name, err)
+	}
 	switch {
 	case n < asset.Size:
 		return fmt.Errorf("release asset %q was truncated: received %d bytes, expected %d", asset.Name, n, asset.Size)
@@ -179,13 +184,36 @@ func (s stager) download(ctx context.Context, current string, asset Asset, desti
 	return nil
 }
 
+func (s stager) restrict(path string, directory bool) error {
+	if s.restrictPath != nil {
+		return s.restrictPath(path, directory)
+	}
+	return restrictStagingPath(path, directory)
+}
+
+func (s stager) removeStaging(path string) error {
+	if s.removeAll != nil {
+		return s.removeAll(path)
+	}
+	return os.RemoveAll(path)
+}
+
 func validateStagingPlan(plan Plan) error {
-	if _, err := currentVersion(plan.Current); err != nil {
+	current, err := currentVersion(plan.Current)
+	if err != nil {
 		return fmt.Errorf("invalid self-update staging plan: %w", err)
 	}
 	target, err := parseVersion(plan.Target)
 	if err != nil {
 		return fmt.Errorf("invalid self-update staging target: %w", err)
+	}
+	switch comparison := current.compare(target); {
+	case comparison == 0:
+		return errors.New("self-update staging target is already installed")
+	case comparison > 0 && (plan.downgradeAuthorization.current != current.raw || plan.downgradeAuthorization.target != target.raw):
+		return errors.New("self-update staging plan does not authorize the requested downgrade")
+	case comparison < 0 && plan.downgradeAuthorization != (downgradeAuthorization{}):
+		return errors.New("self-update staging plan has inconsistent downgrade authorization")
 	}
 	if plan.OS != "windows" || plan.Arch != "amd64" {
 		return fmt.Errorf("self-update staging has no qualified artifact for %s/%s", plan.OS, plan.Arch)
@@ -227,26 +255,34 @@ func validateStagingAsset(asset Asset, name, target string, limit int64) error {
 	return nil
 }
 
-func canonicalDestinationDir(destination string) (string, error) {
-	if !filepath.IsAbs(destination) {
-		return "", errors.New("self-update destination directory must be absolute")
+func canonicalInstalledExecutableDir(installedExecutable string) (string, error) {
+	if !filepath.IsAbs(installedExecutable) {
+		return "", errors.New("installed ContainerBin executable path must be absolute")
 	}
-	resolved, err := filepath.EvalSymlinks(filepath.Clean(destination))
+	clean := filepath.Clean(installedExecutable)
+	info, err := os.Lstat(clean)
 	if err != nil {
-		return "", fmt.Errorf("resolve self-update destination directory: %w", err)
+		return "", fmt.Errorf("inspect installed ContainerBin executable: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return "", errors.New("installed ContainerBin executable must be a regular non-symlink file")
+	}
+	resolved, err := filepath.EvalSymlinks(clean)
+	if err != nil {
+		return "", fmt.Errorf("resolve installed ContainerBin executable: %w", err)
 	}
 	resolved, err = filepath.Abs(resolved)
 	if err != nil {
-		return "", fmt.Errorf("make self-update destination directory absolute: %w", err)
+		return "", fmt.Errorf("make installed ContainerBin executable path absolute: %w", err)
 	}
-	info, err := os.Stat(resolved)
+	info, err = os.Stat(resolved)
 	if err != nil {
-		return "", fmt.Errorf("inspect self-update destination directory: %w", err)
+		return "", fmt.Errorf("inspect resolved installed ContainerBin executable: %w", err)
 	}
-	if !info.IsDir() {
-		return "", errors.New("self-update destination is not a directory")
+	if !info.Mode().IsRegular() {
+		return "", errors.New("installed ContainerBin executable must resolve to a regular file")
 	}
-	return resolved, nil
+	return filepath.Dir(resolved), nil
 }
 
 func isCanonicalReleaseAssetURL(candidate *url.URL) bool {

@@ -309,8 +309,10 @@ therefore remains available when either local configuration source is missing
 or invalid without allowing unsupported frontends to perform network work.
 `internal/selfupdate` has no project imports. The CLI currently performs only
 bounded metadata queries and plan output. The package also has an unexposed
-same-volume staging phase that downloads the directly attested executable and
-checksum manifest into private, exact-size temporary files through a narrowly
-allowed GitHub release redirect. Attestation/checksum verification and
+same-volume staging phase that requires the installed executable path, then
+downloads the directly attested executable and checksum manifest into private,
+exact-size temporary files through a narrowly allowed GitHub release redirect.
+Windows staging replaces inherited permissions with a protected DACL granting
+access only to the current user. Attestation/checksum verification and
 installed-file replacement remain separate later phases, so no download path
 can yet mutate the installed binary.

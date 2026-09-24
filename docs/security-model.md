@@ -107,11 +107,12 @@ readable, and dangerous to let others edit.
   asset URLs, names and sizes. Downgrades and prereleases require explicit
   flags. The command performs no asset download and changes no installed files.
   A separate, not-yet-exposed staging phase downloads exact advertised bytes
-  for `cb.exe` and `SHA256SUMS` beside the destination installation, accepting
-  only the canonical URL or one HTTPS redirect to GitHub's release-asset host
-  and removing partial staging on any failure. Later phases must require both
-  checksums and GitHub provenance without a fallback before replacement is
-  possible.
+  for `cb.exe` and `SHA256SUMS` beside a supplied, existing installed
+  executable, accepting only the canonical URL or one HTTPS redirect to
+  GitHub's release-asset host. Staging applies a protected current-user-only
+  DACL on Windows and removes partial staging on any failure. Later phases must
+  require both checksums and GitHub provenance without a fallback before
+  replacement is possible.
 
 ## What ContainerBin does NOT protect against
 
