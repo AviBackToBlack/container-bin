@@ -276,9 +276,20 @@ func TestPrepareRejectsHomeOnDifferentFilesystem(t *testing.T) {
 
 func TestInspectDirectoryRejectsNestedDifferentFilesystem(t *testing.T) {
 	const sharedMemoryRoot = "/dev/shm"
-	info, err := os.Stat(sharedMemoryRoot)
-	if err != nil {
+	if _, err := os.Stat(sharedMemoryRoot); err != nil {
 		t.Skipf("shared-memory filesystem unavailable: %v", err)
+	}
+	path, err := os.MkdirTemp(sharedMemoryRoot, "container-bin-wslfs-nested-")
+	if err != nil {
+		t.Skipf("cannot create cross-filesystem directory fixture: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(path) })
+	if err := os.Chmod(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
 	}
 	rootInfo, err := os.Stat(string(filepath.Separator))
 	if err != nil {
@@ -295,7 +306,7 @@ func TestInspectDirectoryRejectsNestedDifferentFilesystem(t *testing.T) {
 	if device == rootDevice {
 		t.Skip("fixture shares the distribution root filesystem device")
 	}
-	if _, err := inspectDirectory(sharedMemoryRoot, uint32(os.Getuid()), false, &rootDevice); err == nil || !strings.Contains(err.Error(), "not distribution root device") {
+	if _, err := inspectDirectory(path, uint32(os.Getuid()), false, &rootDevice); err == nil || !strings.Contains(err.Error(), "not distribution root device") {
 		t.Fatalf("nested cross-filesystem directory error = %v", err)
 	}
 }
