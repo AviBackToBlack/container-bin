@@ -166,6 +166,106 @@ func TestParseRejectsInvalidRegistrySignaturePolicies(t *testing.T) {
 	}
 }
 
+func TestImageTrustPolicyCanonicalRulesAndSelection(t *testing.T) {
+	verifierPath := filepath.Join(t.TempDir(), "cosign")
+	keyPath := filepath.Join(t.TempDir(), "keys", "release.pub")
+	verifierHash := strings.Repeat("a", 64)
+	keyHash := strings.Repeat("b", 64)
+	keylessRule := "GHCR.IO/Acme|keyless|https://token.actions.githubusercontent.com|https://github.com/acme/tools/.github/workflows/release.yml@refs/tags/v1.2.3|online"
+	keyRule := strings.Join([]string{"ghcr.io/acme/release", "key", keyPath, keyHash, "offline-bundle"}, "|")
+	body := fmt.Sprintf("policy_version = 3\ncosign_path = %q\ncosign_sha256 = %q\nimage_trust_rules = [%q, %q]\n", verifierPath, verifierHash, keylessRule, keyRule)
+	p, err := parse("policy.toml", []byte(body), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	verifier, ok := p.CosignVerifier()
+	if !ok || verifier.Path != verifierPath || verifier.SHA256 != verifierHash {
+		t.Fatalf("CosignVerifier() = (%+v, %t)", verifier, ok)
+	}
+	rule, ok, err := p.ImageTrustFor("ghcr.io/acme/release/tool:v1")
+	if err != nil || !ok || rule.Repository != "ghcr.io/acme/release" || rule.Mechanism != ImageTrustKey || rule.PublicKey.Path != keyPath || rule.PublicKey.SHA256 != keyHash || rule.NetworkMode != ImageTrustOfflineBundle {
+		t.Fatalf("nested ImageTrustFor() = (%+v, %t, %v)", rule, ok, err)
+	}
+	rule, ok, err = p.ImageTrustFor("ghcr.io/acme/other:v1")
+	if err != nil || !ok || rule.Repository != "ghcr.io/acme" || rule.Mechanism != ImageTrustKeyless || rule.Issuer != "https://token.actions.githubusercontent.com" || rule.Subject == "" || rule.NetworkMode != ImageTrustOnline {
+		t.Fatalf("parent ImageTrustFor() = (%+v, %t, %v)", rule, ok, err)
+	}
+	if _, ok, err := p.ImageTrustFor("python:3.13"); err != nil || ok {
+		t.Fatalf("unconfigured ImageTrustFor() = (_, %t, %v), want digest-only absence", ok, err)
+	}
+	if _, _, err := p.ImageTrustFor("https://ghcr.io/acme/tool"); err == nil {
+		t.Fatal("invalid image reference was treated as an absent trust rule")
+	}
+	summary := p.Summary()
+	if !strings.Contains(summary, "image_trust_rules=2") || !strings.Contains(summary, "cosign_pinned=true") {
+		t.Fatalf("summary does not report image trust: %q", summary)
+	}
+	for _, secret := range []string{verifierPath, verifierHash, keyPath, keyHash, rule.Subject} {
+		if strings.Contains(summary, secret) {
+			t.Fatalf("summary disclosed image trust material %q: %q", secret, summary)
+		}
+	}
+}
+
+func TestParseRejectsInvalidImageTrustPolicies(t *testing.T) {
+	verifierPath := filepath.Join(t.TempDir(), "cosign")
+	keyPath := filepath.Join(t.TempDir(), "release.pub")
+	validHash := strings.Repeat("a", 64)
+	validRule := "ghcr.io/acme|keyless|https://token.actions.githubusercontent.com|https://github.com/acme/tools/.github/workflows/release.yml@refs/tags/v1|online"
+	validVerifier := fmt.Sprintf("cosign_path = %q\ncosign_sha256 = %q\n", verifierPath, validHash)
+	policy := func(version int, fields string, rules ...string) string {
+		quoted := make([]string, len(rules))
+		for i, rule := range rules {
+			quoted[i] = fmt.Sprintf("%q", rule)
+		}
+		return fmt.Sprintf("policy_version = %d\nrequire_lock = true\n%simage_trust_rules = [%s]\n", version, fields, strings.Join(quoted, ", "))
+	}
+	cases := []struct {
+		name, body, code string
+	}{
+		{"schema two", policy(2, validVerifier, validRule), "version"},
+		{"missing verifier", policy(3, "", validRule), "syntax"},
+		{"verifier without rules", policy(3, validVerifier), "syntax"},
+		{"relative verifier", policy(3, "cosign_path = \"cosign\"\ncosign_sha256 = \""+validHash+"\"\n", validRule), "syntax"},
+		{"uppercase verifier hash", policy(3, fmt.Sprintf("cosign_path = %q\ncosign_sha256 = %q\n", verifierPath, strings.ToUpper(validHash)), validRule), "syntax"},
+		{"short rule", policy(3, validVerifier, "ghcr.io/acme|keyless"), "syntax"},
+		{"unsupported mechanism", policy(3, validVerifier, "ghcr.io/acme|notation|issuer|subject|online"), "syntax"},
+		{"insecure issuer", policy(3, validVerifier, "ghcr.io/acme|keyless|http://issuer.example|subject|online"), "syntax"},
+		{"empty subject", policy(3, validVerifier, "ghcr.io/acme|keyless|https://issuer.example||online"), "syntax"},
+		{"relative key", policy(3, validVerifier, "ghcr.io/acme|key|release.pub|"+validHash+"|online"), "syntax"},
+		{"bad key hash", policy(3, validVerifier, strings.Join([]string{"ghcr.io/acme", "key", keyPath, "bad", "online"}, "|")), "syntax"},
+		{"bad network mode", policy(3, validVerifier, "ghcr.io/acme|keyless|https://issuer.example|subject|best-effort"), "syntax"},
+		{"duplicate canonical repository", policy(3, validVerifier, validRule, "GHCR.IO/ACME|keyless|https://issuer.example|subject|online"), "syntax"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := parse("policy.toml", []byte(tc.body), time.Now())
+			assertPolicyCode(t, err, tc.code)
+		})
+	}
+}
+
+func TestImageTrustPolicyFailsClosedUntilEvidenceIsSupported(t *testing.T) {
+	verifierPath := filepath.Join(t.TempDir(), "cosign")
+	verifierHash := strings.Repeat("a", 64)
+	rule := "ghcr.io/acme|keyless|https://token.actions.githubusercontent.com|https://github.com/acme/tools/.github/workflows/release.yml@refs/tags/v1|online"
+	body := fmt.Sprintf("policy_version = 3\ncosign_path = %q\ncosign_sha256 = %q\nimage_trust_rules = [%q]\n", verifierPath, verifierHash, rule)
+	p, err := parse("policy.toml", []byte(body), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPolicyCode(t, p.AuthorizeImage("ghcr.io/acme/tool:v1", true, false), "image_trust_unverified")
+	assertPolicyCode(t, p.AuthorizeLockTarget("ghcr.io/acme/tool:v1", false), "image_trust_unverified")
+	p.AllowLocalImages = true
+	assertPolicyCode(t, p.AuthorizeImage("ghcr.io/acme/tool:v1", true, true), "image_trust_unverified")
+	if err := p.AuthorizeImage("docker.io/library/python:3.13", true, false); err != nil {
+		t.Fatalf("unconfigured digest-only repository rejected: %v", err)
+	}
+	p.AllowedRepositories = []string{"docker.io/library"}
+	assertPolicyCode(t, p.AuthorizeImage("ghcr.io/acme/tool:v1", true, false), "repository_denied")
+}
+
 func TestParseRegistrySignatureEnvelopeIsStrict(t *testing.T) {
 	signature := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, ed25519.SignatureSize))
 	cases := []string{
@@ -213,7 +313,7 @@ func TestParseRejectsInvalidPolicies(t *testing.T) {
 		name, contents, code string
 	}{
 		{"missing version", "require_lock = true\n", "version"},
-		{"unknown version", "policy_version = 3\nrequire_lock = true\n", "version"},
+		{"unknown version", "policy_version = 4\nrequire_lock = true\n", "version"},
 		{"duplicate", "policy_version = 1\nrequire_lock = true\nrequire_lock = false\n", "syntax"},
 		{"unknown key", "policy_version = 1\nrequire_lock = true\nsurprise = true\n", "syntax"},
 		{"section", "policy_version = 1\nrequire_lock = true\n[extra]\n", "syntax"},

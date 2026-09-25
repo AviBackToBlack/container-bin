@@ -18,7 +18,7 @@ NAME.exe (hardlink to cb.exe)
   → host_mounts resolution      explicit registry-declared bind mounts, provider-agnostic
   → provider assembly           stateless | python | stateful volume/env setup
   → image lock resolution       container-bin.lock digest, fail-closed
-  → policy authorization        lock/local-origin/repository constraints
+  → policy authorization        lock/local-origin/repository/image-trust constraints
   → docker run --rm ...         stdio passthrough, exit code preserved
 ```
 
@@ -215,6 +215,15 @@ active, non-revoked machine-policy key. Missing signed files do not trigger the
 built-in default or `.bak` recovery. Registry-mutating commands are disabled in
 this mode because ContainerBin never possesses the administrator's signing key;
 lockfile-only operations remain separate.
+
+Policy schema 3 adds a canonical repository-bound image-trust rule set plus
+absolute SHA-256 pins for an external cosign verifier and any public-key files.
+Rule lookup reuses Docker Hub normalization and selects the most-specific
+repository boundary. The policy layer does not invoke external code. Until a
+later package verifies exact resolved digests and the lockfile can carry
+structured evidence, every covered image fails authorization with
+`policy.image_trust_unverified`; no existing digest-only path can silently
+bypass the new control.
 
 ## Atomic writes
 
