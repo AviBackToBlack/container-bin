@@ -16,7 +16,8 @@ decision.
 Status snapshot: **2026-09-25**. The earlier 2026-09-17 snapshot counted every
 unchecked roadmap line as unfinished work; that is no longer an accurate model.
 RM-26 pipx, the enterprise-policy foundation, the RM-31 selection/check slice,
-the WSL host boundary, and native Windows ARM64 CI have since shipped. The
+the WSL host boundary, native Windows ARM64 CI, and reproducible ARM64 release
+packaging have since shipped. The
 maintainer has also explicitly accepted product/security dispositions for the
 remaining design gates. Use the readiness table below plus
 [roadmap-decisions.md](roadmap-decisions.md), not checkbox count or unmerged pull
@@ -69,7 +70,7 @@ The minimum delivery gate for a code change is:
 | RM-23 8.3 path alias | **Intentionally deferred** | Keep explicit comma-path rejection; reconsider only on demonstrated user demand |
 | RM-24 Python/uv provider choice | **Decision complete — keep both** | No provider migration; Python provider and uv/uvx remain separate |
 | RM-26 Python global CLI exposure | **Completed in PR #74** | Stateful pipx + `cb expose pipx` shipped; plain pip `/venv/bin` remains intentionally unexposed |
-| RM-29 Windows ARM64 | **Native CI shipped / release and hardware work remain** | PR #78 added native hosted ARM64 CI; release packaging, ARM64 self-update selection, and real Windows-on-Arm + Docker Desktop E2E remain |
+| RM-29 Windows ARM64 | **Native CI and release packaging shipped / update and hardware work remain** | PR #78 added native hosted ARM64 CI and PR #86 added reproducible release packaging; ARM64 self-update selection and real Windows-on-Arm + Docker Desktop E2E remain |
 | RM-30 Authenticode | **Design complete / externally blocked** | Provision real code-signing certificate and protected signing mechanism |
 | RM-31 self-update | **Selection/check foundation shipped** | PR #76 shipped selection/check behavior; staging, verification, transactional apply and E2E remain |
 | RM-34 Cargo expose enhancement | **Intentionally deferred** | Existing expose-all/explicit selection are sufficient; reopen only for concrete unmet use case |
@@ -311,14 +312,17 @@ Cross-compilation proves only that Go can emit a PE file. Support may be
 claimed only after qualification on real Windows ARM64 hardware running Docker
 Desktop in Linux-container mode.
 
-PR #78 shipped native hosted ARM64 CI for non-Docker qualification. It did not
-add ARM64 release assets, and PR #76's self-update foundation deliberately
-rejects architectures other than Windows/amd64. The release matrix,
-architecture-specific packaging and update selection below therefore remain,
-along with real Windows-on-Arm + Docker Desktop qualification. Passing native
-management-command CI alone is not a full support claim.
+PR #78 shipped native hosted ARM64 CI for non-Docker qualification. PR #86
+shipped the architecture-specific ARM64 archive, checksum coverage, independent
+byte-for-byte reproduction and release provenance while preserving existing
+amd64 asset names. PR #76's self-update foundation still deliberately rejects
+architectures other than Windows/amd64. ARM64 install/update selection and real
+Windows-on-Arm + Docker Desktop qualification therefore remain; CI and a
+provenanced archive alone are not a full support claim. The first three bullets
+below are the shipped PR #86 contract. Install/update selection and the
+hardware-backed qualification record remain.
 
-### Required implementation
+### Shipped release contract and remaining implementation
 
 - Add an explicit `windows/arm64` release matrix entry and an unambiguous asset
   name such as `container-bin-VERSION-windows-arm64.zip`. Keep the current
@@ -649,7 +653,8 @@ implementation task in this roadmap document.
 
 Merged foundations are not remaining queue entries: RM-26 shipped in PR #74,
 enterprise-policy foundation in PR #75, RM-31 selection/check in PR #76, the
-WSL host boundary in PR #77, and native Windows ARM64 CI in PR #78.
+WSL host boundary in PR #77, native Windows ARM64 CI in PR #78, and
+reproducible ARM64 release packaging in PR #86.
 
 1. Per-project overlay trust foundation.
 2. Signed-registry enterprise policy.
@@ -657,8 +662,8 @@ WSL host boundary in PR #77, and native Windows ARM64 CI in PR #78.
 4. Remaining RM-31 staging, verification, transactional apply and E2E.
 5. Remaining WSL2 native layout, Docker Desktop integration and real E2E.
 6. RM-30 Authenticode only after certificate/protected-signing prerequisites exist.
-7. RM-29 real Windows-on-Arm + Docker Desktop qualification last; do not delay
-   higher-value work for it.
+7. RM-29 ARM64 self-update selection and real Windows-on-Arm + Docker Desktop
+   qualification last; do not delay higher-value work for them.
 
 RM-19, RM-23, RM-34, standalone Linux/macOS, plugins, SBOM and Snyk are dormant
 until their documented triggers occur. The govulncheck pin is recurring
