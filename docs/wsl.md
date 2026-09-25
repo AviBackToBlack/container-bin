@@ -5,10 +5,11 @@ Linux shims inside one WSL2 distribution, using Docker Desktop's supported WSL
 integration. A Windows `cb.exe` launched through WSL interoperability is not the
 WSL frontend, and standalone Linux remains a separate, demand-gated product.
 
-The implemented foundation establishes the runtime boundary and the fixed
-native-WSL layout contract. It does not publish a Linux artifact or enable WSL
-execution yet. Until the remaining filesystem, Docker and qualification slices
-land, non-bootstrap commands fail closed on every host except native Windows.
+The implemented foundation establishes the runtime boundary, fixed native-WSL
+layout contract and an unexposed filesystem-preparation step. It does not
+publish a Linux artifact or enable WSL execution yet. Until the remaining
+frontend wiring, Docker and qualification slices land, non-bootstrap commands
+fail closed on every host except native Windows.
 
 ## Runtime classification
 
@@ -47,18 +48,28 @@ root:
 | lockfile | `~/.config/container-bin/container-bin.lock` |
 | private state | `~/.local/state/container-bin` |
 
-The home directory must be a canonical absolute Linux path in the distribution
-filesystem. A home under `/mnt` is rejected rather than placing trust or state
-files on a Windows filesystem. The machine policy location remains the separate
+The home directory must be a canonical absolute Linux path on the same
+filesystem device as the distribution root. A lexical `/mnt` check rejects the
+default Windows-drive layout early; filesystem preparation then rejects a
+symlinked home, a
+[custom DrvFs automount root](https://learn.microsoft.com/windows/wsl/wsl-config#automount-settings),
+a bind-mounted Windows home, and any other separate filesystem rather than
+guessing its trust semantics. This is deliberately narrower than accepting
+every possible Linux `/home` mount: support for a separate native filesystem
+needs its own filesystem-type and ownership qualification. The machine policy
+location remains the separate
 administrator-owned `/etc/container-bin/policy.toml` contract.
 
-Later filesystem wiring must create config and state directories as private,
-current-user-owned directories; create registry and lock files with mode `0600`;
-install the managed binary with mode `0755`; and reject an existing shim
-directory that is group- or world-writable. It must never repair permissions on
-an unrelated shared directory by guessing ownership intent. Tool shims are
-native Linux symlinks to the managed binary, and collisions with unrelated
-files or links fail closed.
+The unexposed `internal/wslfs` preparation step creates only missing fixed
+layout directories. Config, state and managed-binary directories must be
+private and current-user-owned; existing registry and lock files must be
+regular non-symlink files with mode `0600`; and an existing managed binary must
+be a regular non-symlink file with mode `0755`. The shim directory must be
+current-user-owned, owner-accessible and not group- or world-writable. Existing
+permissions and ownership are never repaired by guessing intent. The management
+shim, when present, must be a current-user-owned symlink to the fixed managed
+binary; unrelated files or links fail closed. Tool-shim enumeration remains a
+later registry/install wiring concern.
 
 Every ContainerBin-managed Docker object in WSL is scoped to one exact tuple:
 
@@ -78,8 +89,9 @@ distribution therefore cannot silently adopt existing state.
 
 Later reviewable slices must still implement and qualify all of the following:
 
-1. Linux ownership, permission and symlink enforcement for the accepted native
-   layout;
+1. wire the implemented Linux ownership, permission and symlink preflight into
+   the native installer/config lifecycle and extend it to registry-derived tool
+   shims;
 2. wiring the accepted distribution/machine/user namespace into shared and
    project volume creation and lifecycle commands;
 3. native Linux path, symlink, case, stdin/TTY and signal semantics;

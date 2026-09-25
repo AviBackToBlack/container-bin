@@ -294,6 +294,7 @@ internal/toml        the shared TOML subset lexer                    (leaf)
 internal/atomicio    crash-safe write + .bak recovery                (leaf)
 internal/mutationlock  the registry mutation lock primitive          (leaf)
 internal/hostenv       host classification and gated WSL layout       (leaf)
+internal/wslfs         native WSL filesystem ownership/mode preflight
 internal/selfupdate    canonical release selection and read-only plan (leaf)
 ```
 
@@ -312,6 +313,7 @@ lockfile     -> atomicio, policy, registry, toml
 pathmap      -> registry
 registry     -> atomicio, toml
 policy       -> toml
+wslfs       -> hostenv
 atomicio, dockervol, hostenv, mutationlock, selfupdate, toml -> (leaves)
 ```
 
@@ -337,6 +339,14 @@ Two boundaries are load-bearing rather than cosmetic:
 release workflow inject it with `-ldflags "-X main.version=..."`, so that symbol
 path is part of the release contract. Packages that need it take it as a
 parameter.
+
+`internal/wslfs` is an unexposed Linux-only preflight over the fixed layout
+derived by `internal/hostenv`. It accepts only a real current-user-owned home on
+the distribution root filesystem device, creates missing ContainerBin layout
+directories without repairing existing objects, and validates strict modes for
+managed registry, lock, binary and management-shim endpoints. The non-Linux
+build-tagged implementation always rejects the operation. Frontend wiring,
+registry-derived tool shims and Docker integration remain later WSL slices.
 
 After the host runtime boundary is enforced, `cb self-update --check` is
 dispatched before machine policy and registry loading. Release selection
