@@ -259,7 +259,7 @@ internal/registry    Tool/Registry, TOML parser, defaults, registry file
 internal/toml        the shared TOML subset lexer                    (leaf)
 internal/atomicio    crash-safe write + .bak recovery                (leaf)
 internal/mutationlock  the registry mutation lock primitive          (leaf)
-internal/hostenv       Windows/WSL/Linux runtime classification       (leaf)
+internal/hostenv       host classification and gated WSL layout       (leaf)
 internal/selfupdate    canonical release selection and read-only plan (leaf)
 ```
 
