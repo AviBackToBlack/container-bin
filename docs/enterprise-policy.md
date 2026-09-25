@@ -110,8 +110,8 @@ Policy failures have a stable bracketed code suitable for log processing:
 - `policy.repository_denied`
 
 The fingerprint hashes the exact policy bytes. It is an audit correlation
-value, not a signature. Image-signature policy remains a separate roadmap
-stage and is not implied by either schema.
+value, not a signature. Schemas 1 and 2 do not imply image-signature policy;
+schema 3 declares that separate requirement as described below.
 
 ## Schema 2 — authenticated registry bytes
 

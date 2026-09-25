@@ -266,6 +266,16 @@ func TestImageTrustPolicyFailsClosedUntilEvidenceIsSupported(t *testing.T) {
 	assertPolicyCode(t, p.AuthorizeImage("ghcr.io/acme/tool:v1", true, false), "repository_denied")
 }
 
+func TestImageTrustDoesNotChangeEarlierSchemaReferenceAuthorization(t *testing.T) {
+	imageID := "sha256:" + strings.Repeat("a", 64)
+	for _, version := range []int{1, 2, 3} {
+		p := Policy{SchemaVersion: version}
+		if err := p.AuthorizeImage(imageID, true, false); err != nil {
+			t.Errorf("schema %d image-ID authorization changed without image trust rules: %v", version, err)
+		}
+	}
+}
+
 func TestParseRegistrySignatureEnvelopeIsStrict(t *testing.T) {
 	signature := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, ed25519.SignatureSize))
 	cases := []string{

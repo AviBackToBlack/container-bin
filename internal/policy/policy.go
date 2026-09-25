@@ -764,7 +764,12 @@ func (p Policy) AuthorizeImage(configured string, locked, local bool) error {
 	if p.RequireLock && !locked {
 		return policyError("lock_required", "image %q is not covered by an exact lock entry", configured)
 	}
-	rule, trustRequired, trustErr := p.ImageTrustFor(configured)
+	var rule ImageTrustRule
+	var trustRequired bool
+	var trustErr error
+	if len(p.imageTrustRules) != 0 {
+		rule, trustRequired, trustErr = p.ImageTrustFor(configured)
+	}
 	if local {
 		if trustErr == nil && trustRequired {
 			return policyError("image_trust_unverified", "local image %q cannot satisfy the %s signature requirement for repository boundary %q", configured, rule.Mechanism, rule.Repository)
