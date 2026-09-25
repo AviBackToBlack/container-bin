@@ -72,7 +72,7 @@ real Linux CLI/runtime in an ephemeral container
 | Windows 10/11 x64 + Docker Desktop (Linux containers) + PowerShell | **Supported** — this is the validated configuration |
 | cmd.exe invocation of shims | Works for the common cases; less battle-tested than PowerShell |
 | WSL2 | **Not yet supported.** The selected native-Linux frontend now has an explicit fail-closed runtime boundary; config/shim/state implementation and real Docker Desktop WSL qualification remain. See [docs/wsl.md](docs/wsl.md) |
-| Windows 11 ARM64 | **CI-qualified only, not supported yet.** Native tests/build/dispatch run on GitHub-hosted ARM64 hardware, but there is no release artifact or real Docker Desktop ARM64 E2E qualification |
+| Windows 11 ARM64 | **CI/release-artifact qualified only, not supported yet.** Native tests/build/dispatch run on GitHub-hosted ARM64 hardware and the release workflow produces a reproducible ARM64 archive, but real Docker Desktop ARM64 E2E qualification remains |
 | Linux / macOS hosts | **Not supported.** The program is Go and cross-compiles, but shim installation, path mapping and doctor checks are Windows-specific |
 | Windows containers | Not supported; images are Linux images |
 
@@ -1000,3 +1000,14 @@ attestation:
 ```powershell
 gh attestation verify cb.exe --repo AviBackToBlack/container-bin
 ```
+
+The release keeps the existing raw `cb.exe` asset for Windows amd64.
+Architecture-specific ZIP archives are named
+`container-bin-VERSION-windows-amd64.zip` and
+`container-bin-VERSION-windows-arm64.zip`; each archive contains its target
+binary under the required management name `cb.exe`. ARM64 is archive-only so
+users never receive an architecture-qualified executable name that would be
+misinterpreted as a tool shim. Verify the exact executable or archive you
+download. The ARM64 archive is release-provenance coverage, not a support
+claim: full Windows ARM64 support still requires real Docker Desktop
+qualification.
