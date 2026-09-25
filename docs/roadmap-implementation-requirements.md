@@ -13,12 +13,14 @@ ready items. Requirements below remain useful acceptance detail, but an older
 "decision required" sentence must not be interpreted as reopening an accepted
 decision.
 
-Status snapshot: **2026-09-19**. The earlier 2026-09-17 snapshot counted every
+Status snapshot: **2026-09-25**. The earlier 2026-09-17 snapshot counted every
 unchecked roadmap line as unfinished work; that is no longer an accurate model.
-Several items have since shipped, while the maintainer has explicitly accepted
-product/security dispositions for the remaining design gates. Use the readiness
-table below plus [roadmap-decisions.md](roadmap-decisions.md), not checkbox count,
-to decide whether work is actionable.
+RM-26 pipx, the enterprise-policy foundation, the RM-31 selection/check slice,
+the WSL host boundary, and native Windows ARM64 CI have since shipped. The
+maintainer has also explicitly accepted product/security dispositions for the
+remaining design gates. Use the readiness table below plus
+[roadmap-decisions.md](roadmap-decisions.md), not checkbox count or unmerged pull
+request coverage, to decide whether work is actionable.
 
 ## Requirements that apply to every item
 
@@ -66,17 +68,17 @@ The minimum delivery gate for a code change is:
 | RM-19 reserved-name migration | **Conditionally deferred** | Wake only when a future release proposes reserving a name accepted by a published older release |
 | RM-23 8.3 path alias | **Intentionally deferred** | Keep explicit comma-path rejection; reconsider only on demonstrated user demand |
 | RM-24 Python/uv provider choice | **Decision complete — keep both** | No provider migration; Python provider and uv/uvx remain separate |
-| RM-26 Python global CLI exposure | **Implementation-ready** | Add stateful pipx + `cb expose pipx`; plain pip `/venv/bin` is not globally exposed |
-| RM-29 Windows ARM64 | **Lowest priority / hardware-gated for full support** | Native hosted ARM64 CI may come later; official support requires real Windows-on-Arm + Docker Desktop E2E |
+| RM-26 Python global CLI exposure | **Completed in PR #74** | Stateful pipx + `cb expose pipx` shipped; plain pip `/venv/bin` remains intentionally unexposed |
+| RM-29 Windows ARM64 | **Native CI shipped / hardware-gated for full support** | PR #78 added native hosted ARM64 CI and release plumbing; official support still requires real Windows-on-Arm + Docker Desktop E2E |
 | RM-30 Authenticode | **Design complete / externally blocked** | Provision real code-signing certificate and protected signing mechanism |
-| RM-31 self-update | **Design complete / implementation-ready** | Implement explicit attestation-verifying transactional update in reviewable slices |
+| RM-31 self-update | **Selection/check foundation shipped** | PR #76 shipped selection/check behavior; staging, verification, transactional apply and E2E remain |
 | RM-34 Cargo expose enhancement | **Intentionally deferred** | Existing expose-all/explicit selection are sufficient; reopen only for concrete unmet use case |
 | Linux/macOS hosts | **Demand-gated** | WSL may factor reusable Linux host code; standalone support needs its own demand and qualification |
-| Enterprise policy | **Design complete / implementation-ready** | Implement machine-owned constraint layer first |
-| Image trust | **Design complete / sequenced** | Implement after enterprise-policy foundation using policy-driven Sigstore/cosign verification |
+| Enterprise policy | **Foundation shipped / signed registry remains** | PR #75 shipped the machine-owned constraint layer; authenticated registry and image-trust slices remain |
+| Image trust | **Design complete / sequenced** | Implement after signed-registry policy using policy-driven Sigstore/cosign verification |
 | Plugin/provider architecture | **Intentionally deferred** | Reopen only after at least two real integrations cannot fit the declarative model |
-| WSL2 | **Design complete / implementation-ready** | Native WSL frontend using Docker Desktop WSL integration |
-| Per-project overlays | **Design complete / sequenced** | Implement add-only digest-bound trust model after enterprise-policy foundation |
+| WSL2 | **Host boundary shipped / implementation remaining** | PR #77 shipped the fail-closed host boundary; native layout, Docker Desktop integration and real WSL qualification remain |
+| Per-project overlays | **Design complete / implementation-ready** | Implement add-only digest-bound trust model on the merged enterprise-policy foundation |
 | Release SBOM | **Conditionally deferred** | Trigger on shipped third-party/runtime dependencies or concrete compliance/consumer demand |
 | Snyk | **Conditionally deferred** | Trigger only for a real coverage gap plus owner/account/token and triage/outage policy |
 | Issue #69 | **Completed** | Superseded by merged implementation; no remaining roadmap dependency |
@@ -213,12 +215,15 @@ selection.
 Likely areas: provider assembly in `internal/dockerrun`, default registry,
 registry migration, state/backup logic, self-test and Python documentation.
 
-## RM-26 — pipx global CLI exposure (remaining work)
+## RM-26 — pipx global CLI exposure — completed
 
 The provider-neutral shared-volume primitive shipped in PR #72 as
-`cb expose --shared-file`. The accepted remaining Python scope is narrower:
+`cb expose --shared-file`. The accepted Python scope then shipped in PR #74:
 plain pip environments are dependency environments and are not a source for
 global exposed shims; pipx is the classic-Python global application store.
+
+The requirements and acceptance evidence below are retained as the shipped
+contract, not as remaining implementation work.
 
 ### pipx requirements
 
@@ -306,6 +311,12 @@ Cross-compilation proves only that Go can emit a PE file. Support may be
 claimed only after qualification on real Windows ARM64 hardware running Docker
 Desktop in Linux-container mode.
 
+PR #78 shipped the native hosted ARM64 CI and release-architecture plumbing,
+and PR #76 shipped architecture-aware self-update asset selection. The
+remaining gate is real Windows-on-Arm + Docker Desktop qualification; the
+existence of an ARM64 artifact or passing native management-command CI is not a
+full support claim.
+
 ### Required implementation
 
 - Add an explicit `windows/arm64` release matrix entry and an unambiguous asset
@@ -377,6 +388,11 @@ Windows executable replacement and hardlink reconciliation. Treat those as
 separate phases with explicit boundaries. GitHub documents both
 [release asset downloads](https://docs.github.com/en/rest/releases/assets)
 and [artifact-attestation verification](https://docs.github.com/en/actions/concepts/security/artifact-attestations).
+
+PR #76 shipped the command surface, release selection, check/dry-run behavior,
+architecture-aware asset selection and bounded metadata rules. Download
+staging, provenance verification, transactional Windows apply, rollback and
+release E2E remain incomplete until their implementations merge.
 
 ### Command and selection requirements
 
@@ -456,8 +472,15 @@ matrix, backup/restore and release qualification exist for that host.
 
 ## Enterprise policy controls
 
-Implement policy before individual switches so precedence cannot be bypassed
-by later features.
+PR #75 shipped the machine-owned policy foundation: fixed policy location and
+ownership checks, schema/versioning, stable diagnostics, effective-request
+authorization, repository/image allowlisting, mandatory lock enforcement, and
+restricted host-mount/environment controls. Lower-precedence configuration
+cannot weaken that policy.
+
+Authenticated registry files and image trust remain separate follow-up slices.
+They must extend the merged policy boundary rather than introducing a parallel
+precedence model.
 
 ### Required policy model
 
@@ -540,6 +563,10 @@ distribution and Docker Desktop's supported WSL integration. Windows `cb.exe`
 interop and a Windows client talking to a Docker engine exposed by WSL are not
 the supported WSL models.
 
+PR #77 shipped the fail-closed host runtime boundary and explicit Windows/WSL
+separation. Native Linux config/shim/state layout, Docker Desktop WSL
+integration, project behavior and real WSL qualification remain.
+
 Implementation must define native config/shim location, Docker endpoint,
 project identity, named-volume behavior, file permissions, case sensitivity,
 symlinks, stdin/TTY/signals and mixed-invocation rejection. Windows and WSL do
@@ -618,15 +645,19 @@ implementation task in this roadmap document.
 
 ## Recommended implementation order
 
-1. RM-26 pipx support.
-2. Enterprise-policy foundation.
-3. Per-project overlay trust foundation.
-4. Signed-registry enterprise policy.
-5. Image trust at lock time.
-6. RM-31 transactional self-update.
-7. WSL2 native frontend.
-8. RM-30 Authenticode only after certificate/protected-signing prerequisites exist.
-9. RM-29 Windows ARM64 last; do not delay higher-value work for it.
+Merged foundations are not remaining queue entries: RM-26 shipped in PR #74,
+enterprise-policy foundation in PR #75, RM-31 selection/check in PR #76, the
+WSL host boundary in PR #77, and native Windows ARM64 CI/release plumbing in
+PR #78.
+
+1. Per-project overlay trust foundation.
+2. Signed-registry enterprise policy.
+3. Image trust at lock time, after signed-registry policy merges.
+4. Remaining RM-31 staging, verification, transactional apply and E2E.
+5. Remaining WSL2 native layout, Docker Desktop integration and real E2E.
+6. RM-30 Authenticode only after certificate/protected-signing prerequisites exist.
+7. RM-29 real Windows-on-Arm + Docker Desktop qualification last; do not delay
+   higher-value work for it.
 
 RM-19, RM-23, RM-34, standalone Linux/macOS, plugins, SBOM and Snyk are dormant
 until their documented triggers occur. The govulncheck pin is recurring
