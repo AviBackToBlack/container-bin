@@ -479,9 +479,10 @@ ownership checks, schema/versioning, stable diagnostics, effective-request
 authorization, repository/image allowlisting, mandatory lock enforcement, and
 diagnostics. Lower-precedence configuration cannot weaken that policy.
 
-Authenticated registry files, project host-mount/environment restrictions and
-image trust remain separate follow-up slices. They must extend the merged
-policy boundary rather than introducing a parallel precedence model.
+Authenticated registry files and image trust remain separate follow-up slices.
+Host-mount/environment restrictions are not part of schema 1 and are not
+implied by the merged foundation. Follow-ups must extend the merged policy
+boundary rather than introducing a parallel precedence model.
 
 ### Required policy model
 
