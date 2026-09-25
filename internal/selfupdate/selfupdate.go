@@ -1,6 +1,6 @@
-// Package selfupdate implements the read-only selection and planning phase of
-// ContainerBin's transactional self-update. Download, attestation verification
-// and installed-file replacement are deliberately separate later phases.
+// Package selfupdate implements release selection and same-volume staging for
+// ContainerBin's transactional self-update. Attestation/checksum verification
+// and installed-file replacement remain deliberately separate later phases.
 package selfupdate
 
 import (
@@ -40,19 +40,25 @@ type Asset struct {
 }
 
 type Plan struct {
-	Current      string
-	Target       string
-	Channel      string
-	Status       string
-	OS           string
-	Arch         string
-	ReleaseURL   string
-	Binary       Asset
-	Archive      Asset
-	Checksums    Asset
-	ExpectedRepo string
-	ExpectedRef  string
-	Workflow     string
+	Current                string
+	Target                 string
+	Channel                string
+	Status                 string
+	OS                     string
+	Arch                   string
+	ReleaseURL             string
+	Binary                 Asset
+	Archive                Asset
+	Checksums              Asset
+	ExpectedRepo           string
+	ExpectedRef            string
+	Workflow               string
+	downgradeAuthorization downgradeAuthorization
+}
+
+type downgradeAuthorization struct {
+	current string
+	target  string
 }
 
 type releaseAsset struct {
@@ -169,7 +175,7 @@ func (c checker) Plan(ctx context.Context, current, goos, goarch string, opts Op
 	if err != nil {
 		return Plan{}, err
 	}
-	return Plan{
+	plan := Plan{
 		Current:      currentParsed.raw,
 		Target:       target.raw,
 		Channel:      channel,
@@ -183,7 +189,11 @@ func (c checker) Plan(ctx context.Context, current, goos, goarch string, opts Op
 		ExpectedRepo: "AviBackToBlack/container-bin",
 		ExpectedRef:  "refs/tags/" + target.raw,
 		Workflow:     ".github/workflows/release.yml",
-	}, nil
+	}
+	if comparison > 0 && opts.AllowDowngrade {
+		plan.downgradeAuthorization = downgradeAuthorization{current: currentParsed.raw, target: target.raw}
+	}
+	return plan, nil
 }
 
 func (c checker) selectRelease(ctx context.Context, current string, opts Options) (release, string, error) {
