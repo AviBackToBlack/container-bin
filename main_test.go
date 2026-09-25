@@ -69,7 +69,7 @@ func TestBootstrapCommandsSkipHostPolicyAndRegistry(t *testing.T) {
 		loadPolicy = oldLoadPolicy
 	}()
 
-	loadRegistry = func() (registry.Registry, string, error) {
+	loadRegistry = func(registry.Authenticator) (registry.Registry, string, error) {
 		panic("bootstrap command attempted to load the registry")
 	}
 	requireHostFrontend = func() error {
@@ -126,7 +126,7 @@ func TestHostBoundaryPrecedesPolicyAndRegistryLoad(t *testing.T) {
 		called = true
 		return errors.New("unsupported host")
 	}
-	loadRegistry = func() (registry.Registry, string, error) {
+	loadRegistry = func(registry.Authenticator) (registry.Registry, string, error) {
 		panic("host boundary attempted to load the registry")
 	}
 	loadPolicy = func() (policy.Policy, error) {
@@ -167,7 +167,7 @@ func TestSelfUpdateCheckEnforcesHostBoundaryAndSkipsPolicyAndRegistry(t *testing
 		hostChecked = true
 		return nil
 	}
-	loadRegistry = func() (registry.Registry, string, error) {
+	loadRegistry = func(registry.Authenticator) (registry.Registry, string, error) {
 		panic("self-update check attempted to load the registry")
 	}
 	loadPolicy = func() (policy.Policy, error) {

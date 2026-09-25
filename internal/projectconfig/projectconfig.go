@@ -160,6 +160,9 @@ func validateOverlay(reg registry.Registry) error {
 		if tool.DefaultFamily != "" || tool.DefaultVersion != "" || tool.DefaultAlias != "" {
 			return fmt.Errorf("tool %q: default alias metadata is not allowed in a project overlay", name)
 		}
+		if tool.Provider == "python" {
+			return fmt.Errorf("tool %q: provider %q is not allowed; it implicitly uses the shared cross-project pip cache", name, tool.Provider)
+		}
 		if len(tool.HostMounts) != 0 {
 			return fmt.Errorf("tool %q: host_mounts are not allowed in the initial project overlay capability set", name)
 		}
@@ -720,11 +723,15 @@ func within(root, candidate string) (bool, error) {
 	if runtime.GOOS == "windows" {
 		root, candidate = strings.ToLower(root), strings.ToLower(candidate)
 	}
+	return relativeWithin(root, candidate), nil
+}
+
+func relativeWithin(root, candidate string) bool {
 	rel, err := filepath.Rel(root, candidate)
-	if err != nil {
-		return false, err
+	if err != nil || filepath.IsAbs(rel) {
+		return false
 	}
-	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)), nil
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // canonicalForContainment resolves the nearest existing ancestor so a

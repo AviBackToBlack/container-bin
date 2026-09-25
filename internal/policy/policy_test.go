@@ -1,7 +1,11 @@
 package policy
 
 import (
+	"bytes"
+	"crypto/ed25519"
+	"encoding/base64"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,6 +69,119 @@ allowed_repositories = [
 	}
 }
 
+func TestRegistrySignaturePolicyVerifiesExactBytesAndRotation(t *testing.T) {
+	now := time.Date(2029, 1, 1, 0, 0, 0, 0, time.UTC)
+	keyA := testSigningKey(1)
+	keyB := testSigningKey(2)
+	p := parseSigningPolicy(t, now, []string{
+		testSigningKeySpec("ops-2028", keyA.Public().(ed25519.PublicKey), "2028-01-01T00:00:00Z", "2030-01-01T00:00:00Z"),
+		testSigningKeySpec("ops-2029", keyB.Public().(ed25519.PublicKey), "2028-06-01T00:00:00Z", "2031-01-01T00:00:00Z"),
+	}, nil)
+	registryBytes := []byte("schema_version = 2\n[tools.demo]\nimage = \"demo:1\"\nprovider = \"stateless\"\n")
+	for _, signer := range []struct {
+		id  string
+		key ed25519.PrivateKey
+	}{{"ops-2028", keyA}, {"ops-2029", keyB}} {
+		envelope := testSignatureEnvelope(signer.id, ed25519.Sign(signer.key, registryBytes))
+		if err := p.authenticateRegistryEnvelope("container-bin.toml", registryBytes, envelope, now); err != nil {
+			t.Fatalf("rotation signer %s rejected: %v", signer.id, err)
+		}
+	}
+
+	mutated := append([]byte(nil), registryBytes...)
+	mutated[len(mutated)-2] = '2'
+	err := p.authenticateRegistryEnvelope("container-bin.toml", mutated, testSignatureEnvelope("ops-2028", ed25519.Sign(keyA, registryBytes)), now)
+	assertPolicyCode(t, err, "registry_signature_invalid")
+	if summary := p.Summary(); !strings.Contains(summary, "require_registry_signature=true") || !strings.Contains(summary, "registry_trusted_keys=2") {
+		t.Fatalf("summary does not report registry signature policy: %q", summary)
+	}
+}
+
+func TestRegistrySignaturePolicyRevocationAndValidity(t *testing.T) {
+	now := time.Date(2029, 1, 1, 0, 0, 0, 0, time.UTC)
+	revokedKey := testSigningKey(3)
+	activeKey := testSigningKey(4)
+	p := parseSigningPolicy(t, now, []string{
+		testSigningKeySpec("revoked-key", revokedKey.Public().(ed25519.PublicKey), "2028-01-01T00:00:00Z", "2030-01-01T00:00:00Z"),
+		testSigningKeySpec("active-key", activeKey.Public().(ed25519.PublicKey), "2028-01-01T00:00:00Z", "2030-01-01T00:00:00Z"),
+	}, []string{"revoked-key"})
+	registryBytes := []byte("exact registry bytes")
+	assertPolicyCode(t, p.authenticateRegistryEnvelope("container-bin.toml", registryBytes, testSignatureEnvelope("revoked-key", ed25519.Sign(revokedKey, registryBytes)), now), "registry_signer_unauthorized")
+	assertPolicyCode(t, p.authenticateRegistryEnvelope("container-bin.toml", registryBytes, testSignatureEnvelope("active-key", ed25519.Sign(activeKey, registryBytes)), time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)), "registry_signer_inactive")
+	assertPolicyCode(t, p.AuthorizeRegistryMutation("cb add"), "registry_signed_readonly")
+}
+
+func TestAuthenticateRegistryReadsDetachedRegularFile(t *testing.T) {
+	now := time.Now().UTC()
+	key := testSigningKey(5)
+	p := parseSigningPolicy(t, now, []string{
+		testSigningKeySpec("filesystem-key", key.Public().(ed25519.PublicKey), now.Add(-time.Hour).Format(time.RFC3339), now.Add(time.Hour).Format(time.RFC3339)),
+	}, nil)
+	registryBytes := []byte("signed registry")
+	path := filepath.Join(t.TempDir(), "container-bin.toml")
+	if err := p.AuthenticateRegistry(path, nil); err == nil {
+		t.Fatal("missing signed registry accepted")
+	} else {
+		assertPolicyCode(t, err, "registry_signature_missing")
+	}
+	assertPolicyCode(t, p.AuthenticateRegistry(path, registryBytes), "registry_signature_missing")
+	if err := os.WriteFile(path+".sig", testSignatureEnvelope("filesystem-key", ed25519.Sign(key, registryBytes)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.AuthenticateRegistry(path, registryBytes); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path+".sig", bytes.Repeat([]byte{'x'}, maxRegistrySignatureFileSize+1), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (Policy{}).LoadRegistrySignature(path, registryBytes); err == nil {
+		t.Fatal("oversized optional detached signature accepted for backup")
+	} else {
+		assertPolicyCode(t, err, "registry_signature_invalid")
+	}
+}
+
+func TestParseRejectsInvalidRegistrySignaturePolicies(t *testing.T) {
+	now := time.Date(2029, 1, 1, 0, 0, 0, 0, time.UTC)
+	key := testSigningKey(6).Public().(ed25519.PublicKey)
+	valid := testSigningKeySpec("valid-key", key, "2028-01-01T00:00:00Z", "2030-01-01T00:00:00Z")
+	cases := []struct {
+		name, body, code string
+	}{
+		{"schema one", fmt.Sprintf("policy_version = 1\nrequire_registry_signature = true\nregistry_signing_keys = [%q]\n", valid), "version"},
+		{"missing keys", "policy_version = 2\nrequire_registry_signature = true\n", "syntax"},
+		{"invalid key id", fmt.Sprintf("policy_version = 2\nrequire_registry_signature = true\nregistry_signing_keys = [%q]\n", strings.Replace(valid, "valid-key", "INVALID", 1)), "syntax"},
+		{"duplicate key id", fmt.Sprintf("policy_version = 2\nrequire_registry_signature = true\nregistry_signing_keys = [%q, %q]\n", valid, valid), "syntax"},
+		{"duplicate public key", fmt.Sprintf("policy_version = 2\nrequire_registry_signature = true\nregistry_signing_keys = [%q, %q]\n", valid, strings.Replace(valid, "valid-key", "second-key", 1)), "syntax"},
+		{"invalid public key", "policy_version = 2\nrequire_registry_signature = true\nregistry_signing_keys = [\"valid-key|not-base64|2028-01-01T00:00:00Z|2030-01-01T00:00:00Z\"]\n", "syntax"},
+		{"noncanonical time", fmt.Sprintf("policy_version = 2\nrequire_registry_signature = true\nregistry_signing_keys = [%q]\n", strings.Replace(valid, "2028-01-01T00:00:00Z", "2028-01-01T01:00:00+01:00", 1)), "syntax"},
+		{"no active key", fmt.Sprintf("policy_version = 2\nrequire_registry_signature = true\nregistry_signing_keys = [%q]\n", strings.Replace(valid, "2030-01-01T00:00:00Z", "2028-12-31T00:00:00Z", 1)), "syntax"},
+		{"duplicate revoked id", fmt.Sprintf("policy_version = 2\nrequire_registry_signature = true\nregistry_signing_keys = [%q]\nrevoked_registry_key_ids = [\"old-key\", \"old-key\"]\n", valid), "syntax"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := parse("policy.toml", []byte(tc.body), now)
+			assertPolicyCode(t, err, tc.code)
+		})
+	}
+}
+
+func TestParseRegistrySignatureEnvelopeIsStrict(t *testing.T) {
+	signature := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, ed25519.SignatureSize))
+	cases := []string{
+		fmt.Sprintf("signature_version = 2\nalgorithm = \"ed25519\"\nkey_id = \"key\"\nsignature = %q\n", signature),
+		fmt.Sprintf("signature_version = 1\nalgorithm = \"rsa\"\nkey_id = \"key\"\nsignature = %q\n", signature),
+		fmt.Sprintf("signature_version = 1\nalgorithm = \"ed25519\"\nkey_id = \"INVALID\"\nsignature = %q\n", signature),
+		"signature_version = 1\nalgorithm = \"ed25519\"\nkey_id = \"key\"\nsignature = \"bad\"\n",
+		fmt.Sprintf("signature_version = 1\nalgorithm = \"ed25519\"\nkey_id = \"key\"\nsignature = %q\nextra = true\n", signature),
+	}
+	for i, raw := range cases {
+		if _, err := parseRegistrySignatureEnvelope([]byte(raw)); err == nil {
+			t.Errorf("case %d accepted malformed envelope", i)
+		}
+	}
+}
+
 func TestLoadAtOwnershipFailureIsCoded(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "policy.toml")
 	if err := os.WriteFile(path, []byte("policy_version = 1\nrequire_lock = true\n"), 0600); err != nil {
@@ -96,7 +213,7 @@ func TestParseRejectsInvalidPolicies(t *testing.T) {
 		name, contents, code string
 	}{
 		{"missing version", "require_lock = true\n", "version"},
-		{"unknown version", "policy_version = 2\nrequire_lock = true\n", "version"},
+		{"unknown version", "policy_version = 3\nrequire_lock = true\n", "version"},
 		{"duplicate", "policy_version = 1\nrequire_lock = true\nrequire_lock = false\n", "syntax"},
 		{"unknown key", "policy_version = 1\nrequire_lock = true\nsurprise = true\n", "syntax"},
 		{"section", "policy_version = 1\nrequire_lock = true\n[extra]\n", "syntax"},
@@ -168,4 +285,37 @@ func assertPolicyCode(t *testing.T, err error, want string) {
 	if !errors.As(err, &pe) || pe.Code != want {
 		t.Fatalf("error = %v, want policy code %q", err, want)
 	}
+}
+
+func testSigningKey(seedByte byte) ed25519.PrivateKey {
+	return ed25519.NewKeyFromSeed(bytes.Repeat([]byte{seedByte}, ed25519.SeedSize))
+}
+
+func testSigningKeySpec(id string, publicKey ed25519.PublicKey, notBefore, expiresAt string) string {
+	return strings.Join([]string{id, base64.StdEncoding.EncodeToString(publicKey), notBefore, expiresAt}, "|")
+}
+
+func parseSigningPolicy(t *testing.T, now time.Time, keys, revoked []string) Policy {
+	t.Helper()
+	quotedKeys := make([]string, len(keys))
+	for i, key := range keys {
+		quotedKeys[i] = fmt.Sprintf("%q", key)
+	}
+	quotedRevoked := make([]string, len(revoked))
+	for i, id := range revoked {
+		quotedRevoked[i] = fmt.Sprintf("%q", id)
+	}
+	body := "policy_version = 2\nrequire_registry_signature = true\nregistry_signing_keys = [" + strings.Join(quotedKeys, ", ") + "]\n"
+	if len(revoked) > 0 {
+		body += "revoked_registry_key_ids = [" + strings.Join(quotedRevoked, ", ") + "]\n"
+	}
+	p, err := parse("policy.toml", []byte(body), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func testSignatureEnvelope(keyID string, signature []byte) []byte {
+	return []byte(fmt.Sprintf("signature_version = 1\nalgorithm = \"ed25519\"\nkey_id = %q\nsignature = %q\n", keyID, base64.StdEncoding.EncodeToString(signature)))
 }

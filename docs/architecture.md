@@ -208,6 +208,14 @@ This preserves the precedence boundary: user/project/CLI layers may choose a
 request, but only the machine layer can authorize it. Full schema and ownership
 rules are in [enterprise-policy.md](enterprise-policy.md).
 
+When policy schema 2 requires registry authentication, `registry.Load` passes
+the exact file bytes to the policy verifier before parsing. The verifier accepts
+only a strict detached Ed25519 envelope beside the registry and a currently
+active, non-revoked machine-policy key. Missing signed files do not trigger the
+built-in default or `.bak` recovery. Registry-mutating commands are disabled in
+this mode because ContainerBin never possesses the administrator's signing key;
+lockfile-only operations remain separate.
+
 ## Atomic writes
 
 Registry and lock mutations (add, expose, unexpose, uninstall, lock, update,
@@ -219,7 +227,9 @@ The next `cb` load automatically recovers `container-bin.toml` or
 `container-bin.lock` from its `.bak` if the live file is missing, after
 validating the backup. If the backup is unreadable or otherwise unusable,
 loading stops with a hard error rather than falling back to defaults or an
-unlocked state.
+unlocked state. Required signed-registry mode is the intentional exception: a
+missing live registry is never restored from an unauthenticated `.bak`; the
+administrator must provision the registry/signature pair.
 
 Atomic replacement protects file integrity, but it does not protect against
 lost updates when two `cb` processes read, modify and write the same file.
@@ -283,7 +293,7 @@ internal/registry    Tool/Registry, TOML parser, defaults, registry file
 internal/toml        the shared TOML subset lexer                    (leaf)
 internal/atomicio    crash-safe write + .bak recovery                (leaf)
 internal/mutationlock  the registry mutation lock primitive          (leaf)
-internal/hostenv       Windows/WSL/Linux runtime classification       (leaf)
+internal/hostenv       host classification and gated WSL layout       (leaf)
 internal/selfupdate    canonical release selection and read-only plan (leaf)
 ```
 
@@ -332,6 +342,12 @@ After the host runtime boundary is enforced, `cb self-update --check` is
 dispatched before machine policy and registry loading. Release selection
 therefore remains available when either local configuration source is missing
 or invalid without allowing unsupported frontends to perform network work.
-`internal/selfupdate` has no project imports and performs only bounded metadata
-queries and plan output; downloading, attestation verification and installed-file
-replacement remain separate later phases.
+`internal/selfupdate` has no project imports. The CLI currently performs only
+bounded metadata queries and plan output. The package also has an unexposed
+same-volume staging phase that requires the installed executable path, then
+downloads the directly attested executable and checksum manifest into private,
+exact-size temporary files through a narrowly allowed GitHub release redirect.
+Windows staging replaces inherited permissions with a protected DACL granting
+access only to the current user. Attestation/checksum verification and
+installed-file replacement remain separate later phases, so no download path
+can yet mutate the installed binary.

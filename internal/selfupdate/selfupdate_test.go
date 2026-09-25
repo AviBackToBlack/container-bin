@@ -120,7 +120,7 @@ func TestPlanExactAndDowngradePolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.Channel != "exact" || plan.Status != "DOWNGRADE AUTHORIZED (CHECK ONLY)" {
+	if plan.Channel != "exact" || plan.Status != "DOWNGRADE AUTHORIZED (CHECK ONLY)" || plan.downgradeAuthorization != (downgradeAuthorization{current: "v1.1.0", target: "v1.0.0"}) {
 		t.Fatalf("unexpected exact downgrade plan: %+v", plan)
 	}
 }

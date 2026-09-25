@@ -2,6 +2,7 @@ package cli
 
 import (
 	"archive/zip"
+	"encoding/base64"
 	"errors"
 	"os"
 	"path/filepath"
@@ -15,6 +16,58 @@ import (
 	"github.com/AviBackToBlack/container-bin/internal/policy"
 	"github.com/AviBackToBlack/container-bin/internal/registry"
 )
+
+func TestSignedRegistryPolicyBlocksRegistryMutationsBeforeSideEffects(t *testing.T) {
+	machinePolicy := policy.Policy{SchemaVersion: 2, RequireRegistrySignature: true}
+	reg := registry.Default()
+	tests := []struct {
+		name string
+		run  func(string) error
+	}{
+		{"add", func(path string) error {
+			return add(reg, path, []string{"demo", "--image", "example/demo:1"}, func(registry.Registry) error { return nil }, machinePolicy)
+		}},
+		{"default", func(path string) error { return Default(reg, path, []string{"set", "node", "22"}, machinePolicy) }},
+		{"expose", func(path string) error { return Expose(reg, path, []string{"cargo"}, machinePolicy) }},
+		{"unexpose", func(path string) error { return Unexpose(reg, path, []string{"demo"}, machinePolicy) }},
+		{"uninstall", func(path string) error { return Uninstall(reg, path, []string{"demo"}, machinePolicy) }},
+		{"restore", func(path string) error { return Restore(path, []string{"backup.zip", "--apply"}, machinePolicy) }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "container-bin.toml")
+			err := tc.run(path)
+			if err == nil || !strings.Contains(err.Error(), "[policy.registry_signed_readonly]") {
+				t.Fatalf("error = %v, want signed-registry mutation denial", err)
+			}
+			if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("registry mutation occurred: %v", statErr)
+			}
+		})
+	}
+}
+
+func TestSignedRegistryInstallAndSetupNeverCreateOrUpgradeRegistry(t *testing.T) {
+	machinePolicy := policy.Policy{SchemaVersion: 2, RequireRegistrySignature: true}
+	for _, tc := range []struct {
+		name string
+		run  func(string) error
+	}{
+		{"install", func(path string) error { return Install(path, "dev", machinePolicy) }},
+		{"setup", func(path string) error { return Setup(path, "dev", machinePolicy) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "container-bin.toml")
+			err := tc.run(path)
+			if err == nil || !strings.Contains(err.Error(), "[policy.registry_signature_missing]") {
+				t.Fatalf("error = %v, want missing signed registry", err)
+			}
+			if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("registry was created or upgraded: %v", statErr)
+			}
+		})
+	}
+}
 
 func TestAddRequiresExactShape(t *testing.T) {
 	for _, args := range [][]string{
@@ -297,8 +350,8 @@ shared_volumes = ["global:/cb/npm-global"]
 		run  func(string) error
 		want string
 	}{
-		{name: "uninstall", run: func(path string) error { return Uninstall(reg, path, []string{"acme"}) }, want: "uninstall requires a concrete tool name"},
-		{name: "unexpose", run: func(path string) error { return Unexpose(reg, path, []string{"acme"}) }, want: "unexpose requires a concrete tool name"},
+		{name: "uninstall", run: func(path string) error { return Uninstall(reg, path, []string{"acme"}, policy.Policy{}) }, want: "uninstall requires a concrete tool name"},
+		{name: "unexpose", run: func(path string) error { return Unexpose(reg, path, []string{"acme"}, policy.Policy{}) }, want: "unexpose requires a concrete tool name"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1205,7 +1258,7 @@ shared_volumes = ["cache:/other"]
 	if err := os.WriteFile(path, []byte(config), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := Unexpose(reg, path, []string{"acme"}); err == nil || !strings.Contains(err.Error(), "not marked as a cb-exposed") {
+	if err := Unexpose(reg, path, []string{"acme"}, policy.Policy{}); err == nil || !strings.Contains(err.Error(), "not marked as a cb-exposed") {
 		t.Fatalf("unexpose error = %v", err)
 	}
 	data, err := os.ReadFile(path)
@@ -1497,6 +1550,29 @@ provider = "stateless"
 	}
 }
 
+func TestTraceRejectsOutsideTrustedProjectRoot(t *testing.T) {
+	trustedRoot := t.TempDir()
+	outside := t.TempDir()
+	old, _ := os.Getwd()
+	if err := os.Chdir(outside); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(old)
+
+	reg := registry.Registry{Tools: map[string]registry.Tool{
+		"demo": {
+			Name:               "demo",
+			Image:              "demo:1",
+			Provider:           "stateless",
+			TrustedProjectRoot: trustedRoot,
+		},
+	}}
+	err := Trace(reg, []string{"demo"}, policy.Policy{})
+	if err == nil || !strings.Contains(err.Error(), "outside trusted project overlay root") {
+		t.Fatalf("Trace() error = %v, want trusted-root refusal", err)
+	}
+}
+
 func TestTraceIsolatedNoProjectMount(t *testing.T) {
 	dir := t.TempDir()
 	old, _ := os.Getwd()
@@ -1612,6 +1688,109 @@ func TestParseRestoreArgs(t *testing.T) {
 	}
 }
 
+func TestRestoreAuthenticatesSignedSnapshotBeforeRegistryParsing(t *testing.T) {
+	dir := t.TempDir()
+	backup := filepath.Join(dir, "backup.zip")
+	f, err := os.Create(backup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zw := zip.NewWriter(f)
+	entries := map[string][]byte{
+		"container-bin.toml":     []byte("not valid registry TOML\n"),
+		"container-bin.toml.sig": []byte("signature_version = 1\nalgorithm = \"ed25519\"\nkey_id = \"unknown-key\"\nsignature = \"" + base64.StdEncoding.EncodeToString(make([]byte, 64)) + "\"\n"),
+	}
+	for name, contents := range entries {
+		w, createErr := zw.Create(name)
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		if _, writeErr := w.Write(contents); writeErr != nil {
+			t.Fatal(writeErr)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	machinePolicy := policy.Policy{SchemaVersion: 2, RequireRegistrySignature: true}
+	err = Restore(filepath.Join(dir, "container-bin.toml"), []string{backup}, machinePolicy)
+	if err == nil || !strings.Contains(err.Error(), "[policy.registry_signer_unauthorized]") || strings.Contains(err.Error(), "backup registry invalid") {
+		t.Fatalf("Restore error = %v, want signature rejection before registry parsing", err)
+	}
+}
+
+func TestUnsignedRestoreRemovesStaleDetachedSignature(t *testing.T) {
+	dir := t.TempDir()
+	backup := filepath.Join(dir, "backup.zip")
+	f, err := os.Create(backup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zw := zip.NewWriter(f)
+	w, err := zw.Create("container-bin.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte(registry.DefaultTOML)); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := filepath.Join(dir, "container-bin.toml")
+	for _, file := range []struct {
+		path, contents string
+	}{{cfg, "old registry"}, {cfg + ".sig", "old signature"}, {cfg + ".sig.bak", "old signature backup"}} {
+		if err := os.WriteFile(file.path, []byte(file.contents), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := Restore(cfg, []string{backup, "--apply"}, policy.Policy{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, stale := range []string{cfg + ".sig", cfg + ".sig.bak"} {
+		if _, err := os.Stat(stale); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("stale signature %s remains: %v", stale, err)
+		}
+	}
+}
+
+func TestUnmanagedBackupSkipsInvalidOptionalSignature(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "container-bin.toml")
+	out := filepath.Join(dir, "backup.zip")
+	if err := os.WriteFile(cfg, []byte(registry.DefaultTOML), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg+".sig", make([]byte, 20<<10), 0600); err != nil {
+		t.Fatal(err)
+	}
+	output, err := captureStdout(func() error { return Backup(cfg, []string{out}, "test", policy.Policy{}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output, "warning: detached registry signature not archived") {
+		t.Fatalf("backup output missing optional-signature warning: %q", output)
+	}
+	zr, err := zip.OpenReader(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zr.Close()
+	for _, entry := range zr.File {
+		if entry.Name == "container-bin.toml.sig" {
+			t.Fatal("invalid optional signature was archived")
+		}
+	}
+}
+
 func TestPlainBackupIsValidAndNeverOverwrites(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "container-bin.toml")
@@ -1619,7 +1798,10 @@ func TestPlainBackupIsValidAndNeverOverwrites(t *testing.T) {
 	if err := os.WriteFile(cfg, []byte(registry.DefaultTOML), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := Backup(cfg, []string{out}, "test"); err != nil {
+	if err := os.WriteFile(cfg+".sig", []byte("detached-signature-envelope"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Backup(cfg, []string{out}, "test", policy.Policy{}); err != nil {
 		t.Fatal(err)
 	}
 	zr, err := zip.OpenReader(out)
@@ -1631,7 +1813,7 @@ func TestPlainBackupIsValidAndNeverOverwrites(t *testing.T) {
 		seen[f.Name] = true
 	}
 	zr.Close()
-	for _, name := range []string{"container-bin.toml", "backup-info.txt"} {
+	for _, name := range []string{"container-bin.toml", "container-bin.toml.sig", "backup-info.txt"} {
 		if !seen[name] {
 			t.Fatalf("backup missing %s", name)
 		}
@@ -1640,7 +1822,7 @@ func TestPlainBackupIsValidAndNeverOverwrites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := Backup(cfg, []string{out}, "test"); err == nil || !strings.Contains(err.Error(), "choose a different filename") {
+	if err := Backup(cfg, []string{out}, "test", policy.Policy{}); err == nil || !strings.Contains(err.Error(), "choose a different filename") {
 		t.Fatalf("existing-backup error = %v", err)
 	}
 	after, err := os.ReadFile(out)

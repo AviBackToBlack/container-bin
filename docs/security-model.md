@@ -27,9 +27,10 @@ Inside the boundary (whoever controls these controls execution):
 
 An optional administrator-owned machine policy sits above this user-controlled
 boundary. Its fixed path, owner and permissions are validated before use. It
-can require locking and restrict image origins, but schema 1 does not constrain
-mounts, environment allowlists or commands and does not authenticate registry
-or image signatures. See [enterprise machine policy](enterprise-policy.md).
+can require locking, restrict image origins and authenticate exact registry
+bytes through a detached Ed25519 signature. It cannot grant mounts, environment
+access or commands, and it does not yet authenticate image signatures. See
+[enterprise machine policy](enterprise-policy.md).
 
 Treat the registry and lockfile like your PowerShell `$PROFILE`: yours,
 readable, and dangerous to let others edit.
@@ -61,11 +62,13 @@ readable, and dangerous to let others edit.
   outside the project. A moved project, changed byte or invalid trust store
   fails before Docker or registry mutation. A discovered overlay with an
   unresolvable project-root reparse chain also fails because canonical identity
-  cannot be proven. Exact environment names and project-volume requests are
-  included in the review output; every project-controlled value is quoted so
-  control characters cannot spoof review labels. Runtime workspace mounts and
-  project-volume IDs for overlay tools are fixed to the approved overlay root;
-  an ancestor marker cannot silently widen that boundary.
+  cannot be proven. The legacy `python` provider is excluded because its
+  implicit pip-cache mount is shared across projects. Exact environment names
+  and project-volume requests are included in the review output; every
+  project-controlled value is quoted so control characters cannot spoof review
+  labels. Runtime workspace mounts and project-volume IDs for overlay tools are
+  fixed to the approved overlay root; an ancestor marker cannot silently widen
+  that boundary.
 - **Fail-closed host boundary.** Non-bootstrap work currently runs only in a
   native Windows process. Windows binaries launched through detected WSL
   interoperability, WSL1, recognized-but-not-yet-enabled native WSL2,
@@ -122,9 +125,14 @@ readable, and dangerous to let others edit.
   release-qualified Windows/amd64 build, queries the canonical GitHub repository
   over HTTPS with a bounded response, and requires exact canonical release and
   asset URLs, names and sizes. Downgrades and prereleases require explicit
-  flags. This phase performs no asset download and changes no installed files;
-  later phases must require both checksums and GitHub provenance without a
-  fallback before replacement is possible.
+  flags. The command performs no asset download and changes no installed files.
+  A separate, not-yet-exposed staging phase downloads exact advertised bytes
+  for `cb.exe` and `SHA256SUMS` beside a supplied, existing installed
+  executable, accepting only the canonical URL or one HTTPS redirect to
+  GitHub's release-asset host. Staging applies a protected current-user-only
+  DACL on Windows and removes partial staging on any failure. Later phases must
+  require both checksums and GitHub provenance without a fallback before
+  replacement is possible.
 
 ## What ContainerBin does NOT protect against
 

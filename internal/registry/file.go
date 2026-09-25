@@ -216,28 +216,40 @@ func upgradeV1Registry(path string, data []byte, reg Registry, cbVersion string)
 	return atomicio.WriteFile(path, []byte(out.String()), 0644)
 }
 
-func Load() (Registry, string, error) {
+type Authenticator func(path string, exactBytes []byte) error
+
+func Load(authenticate Authenticator) (Registry, string, error) {
 	path, err := Path()
 	if err != nil {
 		return Registry{}, "", err
 	}
-	return loadPath(path, true)
+	return loadPath(path, true, authenticate)
+}
+
+func loadAt(path string, authenticate Authenticator) (Registry, string, error) {
+	return loadPath(path, true, authenticate)
 }
 
 // LoadReadOnly reads a valid backup in place when the primary registry is
 // missing. Unlike Load, it never renames recovery state and is safe for
 // commands whose contract forbids filesystem mutation.
-func LoadReadOnly() (Registry, string, error) {
+func LoadReadOnly(authenticate Authenticator) (Registry, string, error) {
 	path, err := Path()
 	if err != nil {
 		return Registry{}, "", err
 	}
-	return loadPath(path, false)
+	return loadPath(path, false, authenticate)
 }
 
-func loadPath(path string, recoverBackup bool) (Registry, string, error) {
+func loadPath(path string, recoverBackup bool, authenticate Authenticator) (Registry, string, error) {
+	if authenticate == nil {
+		return Registry{}, "", errors.New("registry authenticator is required")
+	}
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
+		if err := authenticate(path, nil); err != nil {
+			return Registry{}, path, err
+		}
 		if recoverBackup {
 			recovered, recoverErr := atomicio.RecoverFromBackup(path, validateBackup)
 			if recoverErr != nil {
@@ -255,6 +267,9 @@ func loadPath(path string, recoverBackup bool) (Registry, string, error) {
 		}
 	}
 	if err != nil {
+		return Registry{}, path, err
+	}
+	if err := authenticate(path, data); err != nil {
 		return Registry{}, path, err
 	}
 	reg, err := ParseTOML(string(data))

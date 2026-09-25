@@ -147,6 +147,16 @@ env_names =`, 1), want: "host_mounts are not allowed"},
 env_names =`, 1), want: "env_prefixes are not allowed"},
 		{name: "shared volumes", body: strings.Replace(validOverlay, "project_volumes =", `shared_volumes = ["cache:/root/.cache"]
 project_volumes =`, 1), want: "shared_volumes are not allowed"},
+		{
+			name: "python provider implicit shared cache",
+			body: `schema_version = 2
+[tools.project-python]
+image = "python:3.13-slim"
+provider = "python"
+role = "python"
+`,
+			want: "implicitly uses the shared cross-project pip cache",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -157,6 +167,15 @@ project_volumes =`, 1), want: "shared_volumes are not allowed"},
 				t.Fatalf("Load() error = %v, want %q", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestRelativeWithinTreatsDifferentWindowsVolumesAsOutside(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("different-volume filepath.Rel behavior is Windows-specific")
+	}
+	if relativeWithin(`C:\projects\acme`, `D:\ContainerBin\project-trust.toml`) {
+		t.Fatal("relativeWithin() treated a different Windows volume as inside the project")
 	}
 }
 

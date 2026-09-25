@@ -8,6 +8,53 @@ import (
 	"testing"
 )
 
+func TestLoadAtAuthenticatesExactBytesBeforeParsing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "container-bin.toml")
+	raw := []byte("this is not registry TOML\n")
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	wantErr := errors.New("registry signature rejected")
+	_, gotPath, err := loadAt(path, func(gotPath string, got []byte) error {
+		if gotPath != path || string(got) != string(raw) {
+			t.Fatalf("authenticator received (%q, %q), want (%q, %q)", gotPath, got, path, raw)
+		}
+		return wantErr
+	})
+	if gotPath != path || !errors.Is(err, wantErr) {
+		t.Fatalf("loadAt = path %q, error %v; want %q and authenticator error", gotPath, err, path)
+	}
+}
+
+func TestLoadAtSignedMissingRegistryDoesNotRecoverBackup(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "container-bin.toml")
+	if err := os.WriteFile(path+".bak", []byte(DefaultTOML), 0600); err != nil {
+		t.Fatal(err)
+	}
+	wantErr := errors.New("signed registry missing")
+	_, _, err := loadAt(path, func(gotPath string, got []byte) error {
+		if gotPath != path || got != nil {
+			t.Fatalf("missing authenticator input = (%q, %v)", gotPath, got)
+		}
+		return wantErr
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("loadAt error = %v, want authenticator error", err)
+	}
+	if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("unauthenticated backup was restored: %v", statErr)
+	}
+	if _, statErr := os.Stat(path + ".bak"); statErr != nil {
+		t.Fatalf("backup was changed: %v", statErr)
+	}
+}
+
+func TestLoadAtRequiresAuthenticator(t *testing.T) {
+	if _, _, err := loadAt(filepath.Join(t.TempDir(), "container-bin.toml"), nil); err == nil || !strings.Contains(err.Error(), "authenticator") {
+		t.Fatalf("loadAt nil authenticator error = %v", err)
+	}
+}
+
 func TestInstallShimCopyFailurePreservesExistingShim(t *testing.T) {
 	dir := t.TempDir()
 	exe := filepath.Join(dir, "container-bin.exe")
@@ -551,7 +598,15 @@ func TestLoadPathReadOnlyUsesBackupWithoutRecovering(t *testing.T) {
 	if err := os.WriteFile(backup, []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	reg, gotPath, err := loadPath(path, false)
+	var authenticated [][]byte
+	authenticate := func(gotPath string, exactBytes []byte) error {
+		if gotPath != path {
+			t.Fatalf("authenticated path = %q, want %q", gotPath, path)
+		}
+		authenticated = append(authenticated, append([]byte(nil), exactBytes...))
+		return nil
+	}
+	reg, gotPath, err := loadPath(path, false, authenticate)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -567,8 +622,12 @@ func TestLoadPathReadOnlyUsesBackupWithoutRecovering(t *testing.T) {
 	if _, err := os.Stat(backup); err != nil {
 		t.Fatalf("read-only load removed backup: %v", err)
 	}
+	if len(authenticated) != 2 || authenticated[0] != nil || string(authenticated[1]) != config {
+		t.Fatalf("read-only authentication inputs = %q, want missing primary then exact backup bytes", authenticated)
+	}
 
-	if _, _, err := loadPath(path, true); err != nil {
+	authenticated = nil
+	if _, _, err := loadPath(path, true, authenticate); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(path); err != nil {
