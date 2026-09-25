@@ -60,6 +60,11 @@ needs its own filesystem-type and ownership qualification. The machine policy
 location remains the separate
 administrator-owned `/etc/container-bin/policy.toml` contract.
 
+The filesystem checks are a point-in-time preflight, not a durable path handle.
+The later wiring slice must revalidate managed paths at each mutation boundary
+or use descriptor-relative, no-follow traversal so a path swap after preflight
+cannot redirect a registry, lockfile, binary, or shim operation.
+
 The unexposed `internal/wslfs` preparation step creates only missing fixed
 layout directories. Config, state and managed-binary directories must be
 private and current-user-owned; existing registry and lock files must be

@@ -5,7 +5,6 @@
 package wslfs
 
 import (
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -28,7 +27,19 @@ const (
 // replaced: ambiguous ownership, symlinks and unsafe permissions fail closed.
 // The WSL frontend remains gated; later registry/install wiring will call this
 // before creating files or shims.
-func Prepare(layout hostenv.WSLLayout) (err error) {
+func Prepare(layout hostenv.WSLLayout) error {
+	runtime, err := hostenv.Current()
+	if err != nil {
+		return fmt.Errorf("classify native WSL runtime: %w", err)
+	}
+	machineID, err := os.ReadFile("/etc/machine-id")
+	if err != nil {
+		return fmt.Errorf("read native WSL machine identity: %w", err)
+	}
+	return prepare(layout, runtime, strings.TrimSpace(string(machineID)))
+}
+
+func prepare(layout hostenv.WSLLayout, runtime hostenv.Runtime, machineID string) (err error) {
 	if err := validateLayout(layout); err != nil {
 		return err
 	}
@@ -36,8 +47,15 @@ func Prepare(layout hostenv.WSLLayout) (err error) {
 	if layout.UID != uid {
 		return fmt.Errorf("native WSL layout UID %d does not match current user UID %d", layout.UID, uid)
 	}
+	expected, err := runtime.NativeWSLLayout(layout.Home, layout.UID, machineID)
+	if err != nil {
+		return fmt.Errorf("validate native WSL state identity: %w", err)
+	}
+	if layout.Distro != expected.Distro || layout.StateNamespace != expected.StateNamespace {
+		return fmt.Errorf("native WSL state namespace %q does not match current distribution, machine and user identity", layout.StateNamespace)
+	}
 
-	homeInfo, err := inspectDirectory(layout.Home, uid, false)
+	homeInfo, err := inspectDirectory(layout.Home, uid, false, nil)
 	if err != nil {
 		return fmt.Errorf("validate native WSL home: %w", err)
 	}
@@ -91,7 +109,7 @@ func Prepare(layout hostenv.WSLLayout) (err error) {
 		{layout.ShimDir, shimDirMode, false},
 	}
 	for _, directory := range directories {
-		made, makeErr := ensureDirectory(directory.path, uid, directory.createMode, directory.private)
+		made, makeErr := ensureDirectory(directory.path, uid, rootDevice, directory.createMode, directory.private)
 		if made {
 			created = append(created, directory.path)
 		}
@@ -109,11 +127,11 @@ func Prepare(layout hostenv.WSLLayout) (err error) {
 		{layout.LockPath, privateFileMode, "lockfile"},
 		{layout.BinaryPath, binaryFileMode, "managed binary"},
 	} {
-		if err := validateManagedFile(file.path, uid, file.mode, file.name); err != nil {
+		if err := validateManagedFile(file.path, uid, rootDevice, file.mode, file.name); err != nil {
 			return err
 		}
 	}
-	if err := validateManagementShim(layout, uid); err != nil {
+	if err := validateManagementShim(layout, uid, rootDevice); err != nil {
 		return err
 	}
 	return nil
@@ -147,33 +165,29 @@ func validateLayout(layout hostenv.WSLLayout) error {
 			return fmt.Errorf("native WSL %s path %q does not match fixed layout %q", name, value, want[name])
 		}
 	}
-	if !strings.HasPrefix(layout.StateNamespace, "wsl2-") || len(layout.StateNamespace) != len("wsl2-")+32 {
-		return errors.New("native WSL state namespace is not canonical")
-	}
-	namespaceDigest := strings.TrimPrefix(layout.StateNamespace, "wsl2-")
-	if namespaceDigest != strings.ToLower(namespaceDigest) {
-		return errors.New("native WSL state namespace is not canonical")
-	}
-	if _, err := hex.DecodeString(namespaceDigest); err != nil {
-		return errors.New("native WSL state namespace is not canonical")
+	if layout.Distro == "" || layout.StateNamespace == "" {
+		return errors.New("native WSL filesystem layout is missing its state identity")
 	}
 	return nil
 }
 
-func ensureDirectory(path string, uid uint32, createMode os.FileMode, private bool) (bool, error) {
+func ensureDirectory(path string, uid uint32, rootDevice uint64, createMode os.FileMode, private bool) (bool, error) {
 	created := false
 	if err := os.Mkdir(path, createMode); err == nil {
 		created = true
+		if err := os.Chmod(path, createMode); err != nil {
+			return true, fmt.Errorf("set native WSL directory mode on %s: %w", path, err)
+		}
 	} else if !errors.Is(err, os.ErrExist) {
 		return false, fmt.Errorf("create native WSL directory %s: %w", path, err)
 	}
-	if _, err := inspectDirectory(path, uid, private); err != nil {
+	if _, err := inspectDirectory(path, uid, private, &rootDevice); err != nil {
 		return created, fmt.Errorf("validate native WSL directory %s: %w", path, err)
 	}
 	return created, nil
 }
 
-func inspectDirectory(path string, uid uint32, private bool) (os.FileInfo, error) {
+func inspectDirectory(path string, uid uint32, private bool, rootDevice *uint64) (os.FileInfo, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
 		return nil, err
@@ -184,18 +198,26 @@ func inspectDirectory(path string, uid uint32, private bool) (os.FileInfo, error
 	if err := requireOwner(info, uid); err != nil {
 		return nil, err
 	}
-	perm := info.Mode().Perm()
+	if rootDevice != nil {
+		if err := requireDevice(info, *rootDevice); err != nil {
+			return nil, err
+		}
+	}
+	perm, err := exactMode(info)
+	if err != nil {
+		return nil, err
+	}
 	if private {
 		if perm != privateDirMode {
 			return nil, fmt.Errorf("must have mode 0700, got %04o", perm)
 		}
-	} else if perm&0o700 != 0o700 || perm&0o022 != 0 {
+	} else if perm&0o700 != 0o700 || perm&0o7022 != 0 {
 		return nil, fmt.Errorf("must be owner-accessible and not writable by group or other, got %04o", perm)
 	}
 	return info, nil
 }
 
-func validateManagedFile(path string, uid uint32, wantMode os.FileMode, name string) error {
+func validateManagedFile(path string, uid uint32, rootDevice uint64, wantMode os.FileMode, name string) error {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -209,13 +231,20 @@ func validateManagedFile(path string, uid uint32, wantMode os.FileMode, name str
 	if err := requireOwner(info, uid); err != nil {
 		return fmt.Errorf("native WSL %s %s: %w", name, path, err)
 	}
-	if info.Mode().Perm() != wantMode {
-		return fmt.Errorf("native WSL %s %s must have mode %04o, got %04o", name, path, wantMode, info.Mode().Perm())
+	if err := requireDevice(info, rootDevice); err != nil {
+		return fmt.Errorf("native WSL %s %s: %w", name, path, err)
+	}
+	mode, err := exactMode(info)
+	if err != nil {
+		return fmt.Errorf("native WSL %s %s: %w", name, path, err)
+	}
+	if mode != wantMode {
+		return fmt.Errorf("native WSL %s %s must have mode %04o, got %04o", name, path, wantMode, mode)
 	}
 	return nil
 }
 
-func validateManagementShim(layout hostenv.WSLLayout, uid uint32) error {
+func validateManagementShim(layout hostenv.WSLLayout, uid uint32, rootDevice uint64) error {
 	info, err := os.Lstat(layout.ManagementShim)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -227,6 +256,9 @@ func validateManagementShim(layout hostenv.WSLLayout, uid uint32) error {
 		return fmt.Errorf("native WSL management shim %s collides with a non-symlink object", layout.ManagementShim)
 	}
 	if err := requireOwner(info, uid); err != nil {
+		return fmt.Errorf("native WSL management shim %s: %w", layout.ManagementShim, err)
+	}
+	if err := requireDevice(info, rootDevice); err != nil {
 		return fmt.Errorf("native WSL management shim %s: %w", layout.ManagementShim, err)
 	}
 	target, err := os.Readlink(layout.ManagementShim)
@@ -259,4 +291,23 @@ func filesystemDevice(info os.FileInfo) (uint64, error) {
 		return 0, errors.New("filesystem device could not be determined")
 	}
 	return uint64(stat.Dev), nil
+}
+
+func requireDevice(info os.FileInfo, rootDevice uint64) error {
+	device, err := filesystemDevice(info)
+	if err != nil {
+		return err
+	}
+	if device != rootDevice {
+		return fmt.Errorf("is on filesystem device %d, not distribution root device %d", device, rootDevice)
+	}
+	return nil
+}
+
+func exactMode(info os.FileInfo) (os.FileMode, error) {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0, errors.New("file mode could not be determined")
+	}
+	return os.FileMode(stat.Mode & 0o7777), nil
 }

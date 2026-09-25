@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/AviBackToBlack/container-bin/internal/hostenv"
@@ -19,6 +20,25 @@ func testLayout(t *testing.T) hostenv.WSLLayout {
 	if err := os.Chmod(home, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	homeInfo, err := os.Stat(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootInfo, err := os.Stat(string(filepath.Separator))
+	if err != nil {
+		t.Fatal(err)
+	}
+	homeDevice, err := filesystemDevice(homeInfo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootDevice, err := filesystemDevice(rootInfo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if homeDevice != rootDevice {
+		t.Skipf("temporary directory device %d differs from distribution root device %d", homeDevice, rootDevice)
+	}
 	layout, err := (hostenv.Runtime{Kind: hostenv.WSL2Native, Distro: "Ubuntu-24.04"}).NativeWSLLayout(home, uint32(os.Getuid()), testMachineID)
 	if err != nil {
 		t.Fatal(err)
@@ -26,9 +46,13 @@ func testLayout(t *testing.T) hostenv.WSLLayout {
 	return layout
 }
 
+func prepareTest(layout hostenv.WSLLayout) error {
+	return prepare(layout, hostenv.Runtime{Kind: hostenv.WSL2Native, Distro: layout.Distro}, testMachineID)
+}
+
 func TestPrepareCreatesFixedDirectoriesAndIsIdempotent(t *testing.T) {
 	layout := testLayout(t)
-	if err := Prepare(layout); err != nil {
+	if err := prepareTest(layout); err != nil {
 		t.Fatal(err)
 	}
 	for path, wantMode := range map[string]os.FileMode{
@@ -45,14 +69,39 @@ func TestPrepareCreatesFixedDirectoriesAndIsIdempotent(t *testing.T) {
 			t.Errorf("directory %s mode = %v, want %04o", path, info.Mode(), wantMode)
 		}
 	}
-	if err := Prepare(layout); err != nil {
+	if err := prepareTest(layout); err != nil {
 		t.Fatalf("idempotent Prepare() error = %v", err)
+	}
+}
+
+func TestPrepareCreatesExactModesDespiteRestrictiveUmask(t *testing.T) {
+	layout := testLayout(t)
+	oldUmask := syscall.Umask(0o277)
+	t.Cleanup(func() { syscall.Umask(oldUmask) })
+	if err := prepareTest(layout); err != nil {
+		t.Fatal(err)
+	}
+	for path, wantMode := range map[string]os.FileMode{
+		layout.ConfigDir: 0o700,
+		layout.ShimDir:   0o755,
+	} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mode, err := exactMode(info)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if mode != wantMode {
+			t.Errorf("directory %s mode = %04o, want %04o", path, mode, wantMode)
+		}
 	}
 }
 
 func TestPrepareValidatesManagedFilesAndManagementShim(t *testing.T) {
 	layout := testLayout(t)
-	if err := Prepare(layout); err != nil {
+	if err := prepareTest(layout); err != nil {
 		t.Fatal(err)
 	}
 	for path, mode := range map[string]os.FileMode{
@@ -70,7 +119,7 @@ func TestPrepareValidatesManagedFilesAndManagementShim(t *testing.T) {
 	if err := os.Symlink(filepath.Join("..", "lib", "container-bin", "cb"), layout.ManagementShim); err != nil {
 		t.Fatal(err)
 	}
-	if err := Prepare(layout); err != nil {
+	if err := prepareTest(layout); err != nil {
 		t.Fatalf("Prepare() rejected valid managed endpoints: %v", err)
 	}
 	if err := os.Remove(layout.ManagementShim); err != nil {
@@ -79,7 +128,7 @@ func TestPrepareValidatesManagedFilesAndManagementShim(t *testing.T) {
 	if err := os.Symlink("unrelated", layout.ManagementShim); err != nil {
 		t.Fatal(err)
 	}
-	if err := Prepare(layout); err == nil || !strings.Contains(err.Error(), "targets") {
+	if err := prepareTest(layout); err == nil || !strings.Contains(err.Error(), "targets") {
 		t.Fatalf("wrong-target shim Prepare() error = %v", err)
 	}
 }
@@ -99,20 +148,20 @@ func TestPrepareRejectsUnsafeObjectsWithoutRepairingThem(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := Prepare(layout); err == nil || !strings.Contains(err.Error(), "not a symlink") {
+		if err := prepareTest(layout); err == nil || !strings.Contains(err.Error(), "not a symlink") {
 			t.Fatalf("symlinked-home Prepare() error = %v", err)
 		}
 	})
 
 	t.Run("private directory mode", func(t *testing.T) {
 		layout := testLayout(t)
-		if err := Prepare(layout); err != nil {
+		if err := prepareTest(layout); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.Chmod(layout.ConfigDir, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := Prepare(layout); err == nil || !strings.Contains(err.Error(), "mode 0700") {
+		if err := prepareTest(layout); err == nil || !strings.Contains(err.Error(), "mode 0700") {
 			t.Fatalf("insecure config Prepare() error = %v", err)
 		}
 		info, err := os.Stat(layout.ConfigDir)
@@ -124,15 +173,28 @@ func TestPrepareRejectsUnsafeObjectsWithoutRepairingThem(t *testing.T) {
 		}
 	})
 
+	t.Run("private directory special mode", func(t *testing.T) {
+		layout := testLayout(t)
+		if err := prepareTest(layout); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(layout.ConfigDir, os.ModeSticky|0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := prepareTest(layout); err == nil || !strings.Contains(err.Error(), "mode 0700") {
+			t.Fatalf("special-mode config Prepare() error = %v", err)
+		}
+	})
+
 	t.Run("writable shim directory", func(t *testing.T) {
 		layout := testLayout(t)
-		if err := Prepare(layout); err != nil {
+		if err := prepareTest(layout); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.Chmod(layout.ShimDir, 0o777); err != nil {
 			t.Fatal(err)
 		}
-		if err := Prepare(layout); err == nil || !strings.Contains(err.Error(), "writable by group or other") {
+		if err := prepareTest(layout); err == nil || !strings.Contains(err.Error(), "writable by group or other") {
 			t.Fatalf("writable shim directory Prepare() error = %v", err)
 		}
 		info, err := os.Stat(layout.ShimDir)
@@ -152,7 +214,7 @@ func TestPrepareRejectsUnsafeObjectsWithoutRepairingThem(t *testing.T) {
 		if err := os.Symlink(t.TempDir(), layout.ConfigDir); err != nil {
 			t.Fatal(err)
 		}
-		if err := Prepare(layout); err == nil || !strings.Contains(err.Error(), "not a symlink") {
+		if err := prepareTest(layout); err == nil || !strings.Contains(err.Error(), "not a symlink") {
 			t.Fatalf("symlinked config Prepare() error = %v", err)
 		}
 	})
@@ -160,7 +222,7 @@ func TestPrepareRejectsUnsafeObjectsWithoutRepairingThem(t *testing.T) {
 	t.Run("wrong current user", func(t *testing.T) {
 		layout := testLayout(t)
 		layout.UID++
-		if err := Prepare(layout); err == nil || !strings.Contains(err.Error(), "does not match current user") {
+		if err := prepareTest(layout); err == nil || !strings.Contains(err.Error(), "does not match current user") {
 			t.Fatalf("wrong-UID Prepare() error = %v", err)
 		}
 		if _, err := os.Stat(layout.ConfigDir); !os.IsNotExist(err) {
@@ -207,8 +269,34 @@ func TestPrepareRejectsHomeOnDifferentFilesystem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := Prepare(layout); err == nil || !strings.Contains(err.Error(), "not distribution root device") {
+	if err := prepareTest(layout); err == nil || !strings.Contains(err.Error(), "not distribution root device") {
 		t.Fatalf("cross-filesystem Prepare() error = %v", err)
+	}
+}
+
+func TestInspectDirectoryRejectsNestedDifferentFilesystem(t *testing.T) {
+	const sharedMemoryRoot = "/dev/shm"
+	info, err := os.Stat(sharedMemoryRoot)
+	if err != nil {
+		t.Skipf("shared-memory filesystem unavailable: %v", err)
+	}
+	rootInfo, err := os.Stat(string(filepath.Separator))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootDevice, err := filesystemDevice(rootInfo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	device, err := filesystemDevice(info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if device == rootDevice {
+		t.Skip("fixture shares the distribution root filesystem device")
+	}
+	if _, err := inspectDirectory(sharedMemoryRoot, uint32(os.Getuid()), false, &rootDevice); err == nil || !strings.Contains(err.Error(), "not distribution root device") {
+		t.Fatalf("nested cross-filesystem directory error = %v", err)
 	}
 }
 
@@ -223,7 +311,7 @@ func TestPrepareCleansOnlyDirectoriesCreatedByFailedAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := Prepare(layout); err == nil || !strings.Contains(err.Error(), "collides") {
+	if err := prepareTest(layout); err == nil || !strings.Contains(err.Error(), "collides") {
 		t.Fatalf("collision Prepare() error = %v", err)
 	}
 	for _, path := range []string{layout.ConfigDir, layout.StateDir, filepath.Dir(layout.BinaryPath)} {
@@ -236,20 +324,20 @@ func TestPrepareCleansOnlyDirectoriesCreatedByFailedAttempt(t *testing.T) {
 	}
 }
 
-func TestPrepareRejectsNonCanonicalLayoutBeforeMutation(t *testing.T) {
+func TestPrepareRejectsForeignStateNamespaceBeforeMutation(t *testing.T) {
 	layout := testLayout(t)
-	layout.StateNamespace = "wsl2-0123456789ABCDEF0123456789ABCDEF"
-	if err := Prepare(layout); err == nil || !strings.Contains(err.Error(), "namespace is not canonical") {
-		t.Fatalf("non-canonical namespace Prepare() error = %v", err)
+	layout.StateNamespace = "wsl2-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	if err := prepareTest(layout); err == nil || !strings.Contains(err.Error(), "does not match current distribution") {
+		t.Fatalf("foreign namespace Prepare() error = %v", err)
 	}
 	if _, err := os.Stat(layout.ConfigDir); !os.IsNotExist(err) {
-		t.Fatalf("invalid layout Prepare() mutated layout: %v", err)
+		t.Fatalf("foreign namespace Prepare() mutated layout: %v", err)
 	}
 }
 
 func TestPrepareRejectsExistingManagedFileModeAndCollision(t *testing.T) {
 	layout := testLayout(t)
-	if err := Prepare(layout); err != nil {
+	if err := prepareTest(layout); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(layout.RegistryPath, []byte("fixture"), 0o644); err != nil {
@@ -258,7 +346,7 @@ func TestPrepareRejectsExistingManagedFileModeAndCollision(t *testing.T) {
 	if err := os.Chmod(layout.RegistryPath, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := Prepare(layout); err == nil || !strings.Contains(err.Error(), "mode 0600") {
+	if err := prepareTest(layout); err == nil || !strings.Contains(err.Error(), "mode 0600") {
 		t.Fatalf("insecure registry Prepare() error = %v", err)
 	}
 	if err := os.Remove(layout.RegistryPath); err != nil {
@@ -267,7 +355,7 @@ func TestPrepareRejectsExistingManagedFileModeAndCollision(t *testing.T) {
 	if err := os.WriteFile(layout.ManagementShim, []byte("unrelated"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := Prepare(layout); err == nil || !strings.Contains(err.Error(), "collides") {
+	if err := prepareTest(layout); err == nil || !strings.Contains(err.Error(), "collides") {
 		t.Fatalf("management-shim collision Prepare() error = %v", err)
 	}
 }
