@@ -211,6 +211,11 @@ type applyFixture struct {
 func newApplyFixture(t *testing.T) applyFixture {
 	t.Helper()
 	dir := t.TempDir()
+	var err error
+	dir, err = filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	oldBytes := []byte("old signed ContainerBin executable")
 	newBytes := []byte("new attested ContainerBin executable")
 	installed := filepath.Join(dir, "cb.exe")

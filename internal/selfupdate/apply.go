@@ -298,10 +298,14 @@ func canonicalApplyFile(path, label string) (string, os.FileInfo, error) {
 	if err != nil {
 		return "", nil, fmt.Errorf("make resolved %s absolute: %w", label, err)
 	}
-	if !strings.EqualFold(resolved, path) {
-		return "", nil, fmt.Errorf("%s path resolves to %q instead of itself", label, resolved)
+	resolvedInfo, err := os.Stat(resolved)
+	if err != nil {
+		return "", nil, fmt.Errorf("inspect resolved %s: %w", label, err)
 	}
-	return path, info, nil
+	if !resolvedInfo.Mode().IsRegular() || !os.SameFile(info, resolvedInfo) {
+		return "", nil, fmt.Errorf("%s changed while resolving its canonical path", label)
+	}
+	return resolved, resolvedInfo, nil
 }
 
 func applyFileDigest(path string) (string, error) {
