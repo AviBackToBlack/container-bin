@@ -46,7 +46,7 @@ type attestationRunner interface {
 
 type verifier struct {
 	runner       attestationRunner
-	authenticate func(string) (string, error)
+	authenticate func(context.Context, string) (string, error)
 }
 
 // Verify checks the release checksum and GitHub build-provenance attestation
@@ -93,7 +93,7 @@ func (v verifier) Verify(ctx context.Context, plan Plan, binaryPath, checksumsPa
 	if err != nil {
 		return Verified{}, err
 	}
-	ghDigest, err := v.authenticate(ghExecutable)
+	ghDigest, err := v.authenticate(ctx, ghExecutable)
 	if err != nil {
 		return Verified{}, fmt.Errorf("authenticate GitHub CLI executable: %w", err)
 	}
@@ -114,7 +114,7 @@ func (v verifier) Verify(ctx context.Context, plan Plan, binaryPath, checksumsPa
 		"attestation", "verify", binaryPath,
 		"--hostname", "github.com",
 		"--repo", plan.ExpectedRepo,
-		"--signer-workflow", plan.ExpectedRepo + "/" + plan.Workflow,
+		"--cert-identity", "https://github.com/" + plan.ExpectedRepo + "/" + plan.Workflow + "@" + plan.ExpectedRef,
 		"--source-ref", plan.ExpectedRef,
 		"--cert-oidc-issuer", "https://token.actions.githubusercontent.com",
 		"--digest-alg", "sha256",
@@ -143,7 +143,7 @@ func (v verifier) Verify(ctx context.Context, plan Plan, binaryPath, checksumsPa
 	if err := validateAttestationResult(stdout, digest); err != nil {
 		return Verified{}, err
 	}
-	postGHDigest, err := v.authenticate(ghExecutable)
+	postGHDigest, err := v.authenticate(ctx, ghExecutable)
 	if err != nil {
 		return Verified{}, fmt.Errorf("re-authenticate GitHub CLI executable: %w", err)
 	}

@@ -2,9 +2,12 @@
 
 package selfupdate
 
-import "errors"
+import (
+	"context"
+	"errors"
+)
 
-func authenticateGitHubCLI(string) (string, error) {
+func authenticateGitHubCLI(context.Context, string) (string, error) {
 	return "", errors.New("GitHub CLI authentication requires native Windows")
 }
 

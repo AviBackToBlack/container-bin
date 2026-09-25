@@ -36,7 +36,7 @@ func TestVerifyRequiresChecksumAndExactAttestationPolicy(t *testing.T) {
 		"attestation", "verify", resolvedBinary,
 		"--hostname", "github.com",
 		"--repo", expectedReleaseRepo,
-		"--signer-workflow", expectedReleaseRepo + "/" + expectedReleaseWorkflow,
+		"--cert-identity", "https://github.com/" + expectedReleaseRepo + "/" + expectedReleaseWorkflow + "@refs/tags/v1.2.0",
 		"--source-ref", "refs/tags/v1.2.0",
 		"--cert-oidc-issuer", "https://token.actions.githubusercontent.com",
 		"--digest-alg", "sha256",
@@ -212,7 +212,7 @@ func TestVerifyRejectsGitHubCLIAuthenticationFailureOrMutation(t *testing.T) {
 				called = true
 				return nil, nil, nil
 			}),
-			authenticate: func(string) (string, error) {
+			authenticate: func(context.Context, string) (string, error) {
 				return "", errors.New("untrusted publisher")
 			},
 		}
@@ -229,7 +229,7 @@ func TestVerifyRejectsGitHubCLIAuthenticationFailureOrMutation(t *testing.T) {
 			runner: attestationRunnerFunc(func(context.Context, string, []string) ([]byte, []byte, error) {
 				return attestationJSON(fixture.digest), nil, nil
 			}),
-			authenticate: func(string) (string, error) {
+			authenticate: func(context.Context, string) (string, error) {
 				authentications++
 				return fmt.Sprintf("digest-%d", authentications), nil
 			},
@@ -264,6 +264,28 @@ func TestHashVerificationFileRejectsSizeChangeAfterInspection(t *testing.T) {
 	_, _, err = hashVerificationFile(path, info)
 	if err == nil || !strings.Contains(err.Error(), "changed size while hashing") {
 		t.Fatalf("hashVerificationFile error = %v", err)
+	}
+}
+
+func TestVerifyPropagatesCancellationToGitHubCLIAuthentication(t *testing.T) {
+	fixture := newVerificationFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	authenticated := false
+	runnerCalled := false
+	v := verifier{
+		runner: attestationRunnerFunc(func(context.Context, string, []string) ([]byte, []byte, error) {
+			runnerCalled = true
+			return nil, nil, nil
+		}),
+		authenticate: func(ctx context.Context, _ string) (string, error) {
+			authenticated = true
+			return "", ctx.Err()
+		},
+	}
+	_, err := v.Verify(ctx, fixture.plan, fixture.binary, fixture.checksums, fixture.gh)
+	if err == nil || !strings.Contains(err.Error(), "context canceled") || !authenticated || runnerCalled {
+		t.Fatalf("Verify() error = %v, authenticated=%t, runnerCalled=%t", err, authenticated, runnerCalled)
 	}
 }
 
@@ -410,7 +432,7 @@ func (f attestationRunnerFunc) Run(ctx context.Context, executable string, args 
 func testVerifier(runner attestationRunner) verifier {
 	return verifier{
 		runner: runner,
-		authenticate: func(string) (string, error) {
+		authenticate: func(context.Context, string) (string, error) {
 			return "authenticated-test-gh", nil
 		},
 	}

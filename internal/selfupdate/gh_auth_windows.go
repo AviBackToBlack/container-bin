@@ -3,6 +3,7 @@
 package selfupdate
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -10,10 +11,12 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
 const githubCLIPublisher = "GitHub, Inc."
+const authenticodeTimeout = 2 * time.Minute
 
 var (
 	getSystemWindowsDirectoryW = syscall.NewLazyDLL("kernel32.dll").NewProc("GetSystemWindowsDirectoryW")
@@ -22,7 +25,7 @@ var (
 
 const csidlLocalAppData = 0x001c
 
-func authenticateGitHubCLI(path string) (string, error) {
+func authenticateGitHubCLI(ctx context.Context, path string) (string, error) {
 	canonical, beforeInfo, err := canonicalVerificationFile(path, "GitHub CLI executable")
 	if err != nil {
 		return "", err
@@ -46,7 +49,10 @@ func authenticateGitHubCLI(path string) (string, error) {
 	}
 
 	const script = `$ErrorActionPreference = 'Stop'; $signature = Get-AuthenticodeSignature -LiteralPath $env:CB_GH_EXECUTABLE; if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or $null -eq $signature.SignerCertificate) { throw 'GitHub CLI Authenticode signature is not valid' }; $publisher = $signature.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false); [Console]::Out.Write($signature.Status.ToString() + '|' + $publisher)`
-	cmd := exec.Command(powerShell, "-NoProfile", "-NonInteractive", "-Command", script)
+	authCtx, cancel := context.WithTimeout(ctx, authenticodeTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(authCtx, powerShell, "-NoProfile", "-NonInteractive", "-Command", script)
+	cmd.Dir = windowsDirectory
 	cmd.Env = []string{
 		"SystemRoot=" + windowsDirectory,
 		"WINDIR=" + windowsDirectory,
@@ -58,6 +64,12 @@ func authenticateGitHubCLI(path string) (string, error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		if contextErr := authCtx.Err(); contextErr != nil {
+			if errors.Is(contextErr, context.DeadlineExceeded) {
+				return "", errors.New("GitHub CLI Authenticode verification timed out")
+			}
+			return "", fmt.Errorf("GitHub CLI Authenticode verification canceled: %w", contextErr)
+		}
 		message := strings.TrimSpace(string(stderr.data))
 		if message != "" {
 			return "", fmt.Errorf("verify GitHub CLI Authenticode signature: %w: %s", err, message)

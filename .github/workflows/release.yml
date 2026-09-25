@@ -57,27 +57,48 @@ jobs:
           else
             VERSION="v0.0.0-dev.${GITHUB_SHA:0:12}"
           fi
-          ARCHIVE="container-bin-${VERSION}-windows-amd64.zip"
-          mkdir -p dist
+          AMD64_ARCHIVE="container-bin-${VERSION}-windows-amd64.zip"
+          ARM64_ARCHIVE="container-bin-${VERSION}-windows-arm64.zip"
+          mkdir -p dist/package-amd64 dist/package-arm64
 
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
             go build -trimpath -buildvcs=false \
               -ldflags "-s -w -X main.version=${VERSION}" \
               -o dist/cb.exe .
+          GOOS=windows GOARCH=arm64 CGO_ENABLED=0 \
+            go build -trimpath -buildvcs=false \
+              -ldflags "-s -w -X main.version=${VERSION}" \
+              -o dist/package-arm64/cb.exe .
 
-          cp LICENSE README.md dist/
+          cp dist/cb.exe dist/package-amd64/cb.exe
+          cp LICENSE README.md dist/package-amd64/
+          cp LICENSE README.md dist/package-arm64/
           # ZIP stores DOS timestamps. Normalize them and strip extra metadata so
           # separate runners/checkouts produce byte-identical archives.
-          touch -d '1980-01-01 00:00:00 UTC' dist/cb.exe dist/LICENSE dist/README.md
+          touch -d '1980-01-01 00:00:00 UTC' \
+            dist/cb.exe \
+            dist/package-amd64/cb.exe dist/package-amd64/LICENSE dist/package-amd64/README.md \
+            dist/package-arm64/cb.exe dist/package-arm64/LICENSE dist/package-arm64/README.md
+          (
+            cd dist/package-amd64
+            zip -X "../${AMD64_ARCHIVE}" cb.exe LICENSE README.md
+          )
+          (
+            cd dist/package-arm64
+            zip -X "../${ARM64_ARCHIVE}" cb.exe LICENSE README.md
+          )
           (
             cd dist
-            zip -X "${ARCHIVE}" cb.exe LICENSE README.md
-            sha256sum cb.exe "${ARCHIVE}" > SHA256SUMS
+            sha256sum \
+              cb.exe \
+              "${AMD64_ARCHIVE}" \
+              "${ARM64_ARCHIVE}" > SHA256SUMS
           )
-          rm dist/LICENSE dist/README.md
+          rm -rf dist/package-amd64 dist/package-arm64
           cat dist/SHA256SUMS
           echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
-          echo "ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
+          echo "AMD64_ARCHIVE=${AMD64_ARCHIVE}" >> "$GITHUB_ENV"
+          echo "ARM64_ARCHIVE=${ARM64_ARCHIVE}" >> "$GITHUB_ENV"
 
       - name: Verify checksums
         shell: bash
@@ -89,25 +110,46 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/repro"
+          mkdir -p "$RUNNER_TEMP/repro/package-amd64" "$RUNNER_TEMP/repro/package-arm64"
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
             go build -trimpath -buildvcs=false \
               -ldflags "-s -w -X main.version=${VERSION}" \
               -o "$RUNNER_TEMP/repro/cb.exe" .
-          cp LICENSE README.md "$RUNNER_TEMP/repro/"
+          GOOS=windows GOARCH=arm64 CGO_ENABLED=0 \
+            go build -trimpath -buildvcs=false \
+              -ldflags "-s -w -X main.version=${VERSION}" \
+              -o "$RUNNER_TEMP/repro/package-arm64/cb.exe" .
+          cp "$RUNNER_TEMP/repro/cb.exe" "$RUNNER_TEMP/repro/package-amd64/cb.exe"
+          cp LICENSE README.md "$RUNNER_TEMP/repro/package-amd64/"
+          cp LICENSE README.md "$RUNNER_TEMP/repro/package-arm64/"
           touch -d '1980-01-01 00:00:00 UTC' \
             "$RUNNER_TEMP/repro/cb.exe" \
-            "$RUNNER_TEMP/repro/LICENSE" \
-            "$RUNNER_TEMP/repro/README.md"
+            "$RUNNER_TEMP/repro/package-amd64/cb.exe" \
+            "$RUNNER_TEMP/repro/package-amd64/LICENSE" \
+            "$RUNNER_TEMP/repro/package-amd64/README.md" \
+            "$RUNNER_TEMP/repro/package-arm64/cb.exe" \
+            "$RUNNER_TEMP/repro/package-arm64/LICENSE" \
+            "$RUNNER_TEMP/repro/package-arm64/README.md"
+          (
+            cd "$RUNNER_TEMP/repro/package-amd64"
+            zip -X "../${AMD64_ARCHIVE}" cb.exe LICENSE README.md >/dev/null
+          )
+          (
+            cd "$RUNNER_TEMP/repro/package-arm64"
+            zip -X "../${ARM64_ARCHIVE}" cb.exe LICENSE README.md >/dev/null
+          )
           (
             cd "$RUNNER_TEMP/repro"
-            zip -X "${ARCHIVE}" cb.exe LICENSE README.md >/dev/null
+            sha256sum \
+              cb.exe \
+              "${AMD64_ARCHIVE}" \
+              "${ARM64_ARCHIVE}" > SHA256SUMS
           )
-          sha256sum dist/cb.exe "$RUNNER_TEMP/repro/cb.exe"
-          sha256sum "dist/${ARCHIVE}" "$RUNNER_TEMP/repro/${ARCHIVE}"
-          cmp dist/cb.exe "$RUNNER_TEMP/repro/cb.exe"
-          cmp "dist/${ARCHIVE}" "$RUNNER_TEMP/repro/${ARCHIVE}"
-          echo 'binary and archive are reproducible'
+          for artifact in cb.exe "${AMD64_ARCHIVE}" "${ARM64_ARCHIVE}" SHA256SUMS; do
+            sha256sum "dist/${artifact}" "$RUNNER_TEMP/repro/${artifact}"
+            cmp "dist/${artifact}" "$RUNNER_TEMP/repro/${artifact}"
+          done
+          echo 'amd64 and arm64 binaries, archives and checksum manifest are reproducible'
 
       - name: Upload verified release bundle
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -153,21 +195,43 @@ jobs:
           else
             VERSION="v0.0.0-dev.${GITHUB_SHA:0:12}"
           fi
-          ARCHIVE="container-bin-${VERSION}-windows-amd64.zip"
-          mkdir -p second
+          AMD64_ARCHIVE="container-bin-${VERSION}-windows-amd64.zip"
+          ARM64_ARCHIVE="container-bin-${VERSION}-windows-arm64.zip"
+          mkdir -p second/package-amd64 second/package-arm64
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
             go build -trimpath -buildvcs=false \
               -ldflags "-s -w -X main.version=${VERSION}" \
               -o second/cb.exe .
-          cp LICENSE README.md second/
-          touch -d '1980-01-01 00:00:00 UTC' second/cb.exe second/LICENSE second/README.md
+          GOOS=windows GOARCH=arm64 CGO_ENABLED=0 \
+            go build -trimpath -buildvcs=false \
+              -ldflags "-s -w -X main.version=${VERSION}" \
+              -o second/package-arm64/cb.exe .
+          cp second/cb.exe second/package-amd64/cb.exe
+          cp LICENSE README.md second/package-amd64/
+          cp LICENSE README.md second/package-arm64/
+          touch -d '1980-01-01 00:00:00 UTC' \
+            second/cb.exe \
+            second/package-amd64/cb.exe second/package-amd64/LICENSE second/package-amd64/README.md \
+            second/package-arm64/cb.exe second/package-arm64/LICENSE second/package-arm64/README.md
+          (
+            cd second/package-amd64
+            zip -X "../${AMD64_ARCHIVE}" cb.exe LICENSE README.md >/dev/null
+          )
+          (
+            cd second/package-arm64
+            zip -X "../${ARM64_ARCHIVE}" cb.exe LICENSE README.md >/dev/null
+          )
           (
             cd second
-            zip -X "${ARCHIVE}" cb.exe LICENSE README.md >/dev/null
+            sha256sum \
+              cb.exe \
+              "${AMD64_ARCHIVE}" \
+              "${ARM64_ARCHIVE}" > SHA256SUMS
           )
-          cmp first/cb.exe second/cb.exe
-          cmp "first/${ARCHIVE}" "second/${ARCHIVE}"
-          echo 'independent runner reproduced binary and archive byte-for-byte'
+          for artifact in cb.exe "${AMD64_ARCHIVE}" "${ARM64_ARCHIVE}" SHA256SUMS; do
+            cmp "first/${artifact}" "second/${artifact}"
+          done
+          echo 'independent runner reproduced binaries, archives and checksum manifest byte-for-byte'
 
   release:
     name: Draft release
@@ -190,8 +254,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(find dist -maxdepth 1 -type f -name '*.zip' | wc -l)" -eq 1
+          test "$(find dist -maxdepth 1 -type f -name '*.zip' | wc -l)" -eq 2
+          test "$(find dist -maxdepth 1 -type f -name '*.exe' | wc -l)" -eq 1
           test -f dist/cb.exe
+          test -f "dist/container-bin-${GITHUB_REF_NAME}-windows-amd64.zip"
+          test -f "dist/container-bin-${GITHUB_REF_NAME}-windows-arm64.zip"
           test -f dist/SHA256SUMS
           (cd dist && sha256sum -c SHA256SUMS)
 

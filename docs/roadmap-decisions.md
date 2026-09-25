@@ -1,6 +1,6 @@
 # Roadmap decisions and implementation queue
 
-Status date: **2026-09-19**
+Status date: **2026-09-25**
 
 This document records maintainer decisions for the remaining roadmap items in
 issue #2. These decisions are authoritative scope for implementation work unless
@@ -14,16 +14,16 @@ items from being repeatedly rediscovered as if they were immediately actionable.
 | Item | Decision | Implementation status / trigger |
 |---|---|---|
 | RM-24 Python / uv | **Keep both** | Decision complete. Built-in `python`/`pip` keep the dedicated Python provider; `uv`/`uvx` remain separate opt-in stateful profiles. |
-| RM-26 Python global CLI exposure | **pipx yes; plain pip expose no** | Ready. Add a separate stateful pipx profile and managed pipx tool store; do not globally expose project/compat `/venv/bin` from plain pip. Generic shared-volume exposure already shipped. |
+| RM-26 Python global CLI exposure | **pipx yes; plain pip expose no** | Completed in PR #74. The separate stateful pipx profile and managed store shipped; project/compat `/venv/bin` remains intentionally unexposed. |
 | RM-34 Cargo expose enhancement | **Intentionally deferred** | Existing expose-all and explicit binary selection are sufficient. Reopen only for a concrete unmet use case. |
-| WSL2 | **Native WSL frontend** | Ready for design/implementation slices. Native Linux `cb`/shims inside WSL use Docker Desktop WSL integration. No Windows↔WSL path/state guessing. |
-| Enterprise policy | **Machine-owned constraint layer** | Ready. Separate administrator policy validates the resolved user/project/CLI request and can only restrict, never be weakened by lower layers. |
-| Image trust | **Policy-driven Sigstore/cosign at lock time** | Ready after enterprise-policy foundation. Digest locking remains default where policy permits. Required trust never silently falls back to digest-only. |
-| Per-project overlays | **Explicit digest-bound, add-only trust model** | Ready after enterprise-policy foundation. Initial overlays exclude host mounts, env prefixes and shared cross-project volumes. |
+| WSL2 | **Native WSL frontend** | Host boundary shipped in PR #77. Native layout, Docker Desktop WSL integration and real WSL qualification remain. No Windows↔WSL path/state guessing. |
+| Enterprise policy | **Machine-owned constraint layer** | Foundation shipped in PR #75. Authenticated registry and image-trust follow-ups must extend this boundary and cannot be weakened by lower layers. |
+| Image trust | **Policy-driven Sigstore/cosign at lock time** | Ready after signed-registry policy. Digest locking remains default where policy permits. Required trust never silently falls back to digest-only. |
+| Per-project overlays | **Explicit digest-bound, add-only trust model** | Implementation-ready on the merged policy foundation. Initial overlays exclude host mounts, env prefixes and shared cross-project volumes. |
 | Plugin/provider architecture | **Intentionally deferred** | Reopen only after at least two concrete integrations cannot be expressed safely by the declarative model. |
-| RM-31 self-update | **Explicit transactional, attestation-verifying update** | Ready after command/API slicing. Initial provenance verifier is `gh attestation verify`; Windows apply uses a post-exit helper and complete managed-set rollback. |
+| RM-31 self-update | **Explicit transactional, attestation-verifying update** | Selection/check foundation shipped in PR #76. Staging, `gh attestation verify`, Windows apply, complete managed-set rollback and E2E remain. |
 | RM-30 Authenticode | **Design accepted; externally blocked** | Implement only after a real code-signing certificate and protected signing mechanism exist. Stable and prerelease release artifacts are both signed. |
-| RM-29 Windows ARM64 | **Lowest priority** | Native GitHub Windows ARM64 CI may be added later. Full support remains blocked on real Windows-on-Arm + Docker Desktop qualification. Do not delay other roadmap work. |
+| RM-29 Windows ARM64 | **Lowest priority** | Native GitHub Windows ARM64 CI shipped in PR #78 and reproducible release packaging in PR #86. ARM64 self-update selection and real Windows-on-Arm + Docker Desktop qualification remain. Do not delay other roadmap work. |
 | Standalone Linux/macOS | **Demand-gated** | No support claim yet. WSL should create reusable narrow Linux host abstractions, but standalone hosts require their own contract and real Docker qualification. |
 | RM-23 8.3 mount alias | **Intentionally deferred** | Current comma-path rejection remains supported behavior. Reopen only on demonstrated user demand. |
 | RM-19 reserved-name migration | **Conditionally deferred** | Implement only when a future release actually proposes reserving a previously legal name. |
@@ -81,6 +81,20 @@ Windows and WSL installations have separate config, lockfiles, shim layouts,
 project identities and ContainerBin state namespaces. ContainerBin does not
 infer identity equivalence between `C:\x`, `/mnt/c/x` or `\\wsl$\...`.
 Native Linux path, permission, symlink, case, TTY and signal semantics apply.
+
+The accepted native layout is fixed rather than XDG-configurable: the managed
+binary is `~/.local/lib/container-bin/cb`; management and tool shims are under
+`~/.local/bin`; the registry and lockfile are under
+`~/.config/container-bin`; and private state is under
+`~/.local/state/container-bin`. The home must be a canonical distribution-local
+Linux path, never `/mnt/*`.
+
+Docker state identity is the exact case-sensitive WSL distribution name,
+canonical `/etc/machine-id` and numeric Linux UID, hashed under a versioned
+domain into an opaque namespace. Every managed WSL volume must carry that
+namespace in both its name and ownership labels, and all lifecycle operations
+must filter by exact namespace. ContainerBin does not normalize identities or
+silently adopt state across distributions, reinstalls or users.
 
 ### Enterprise policy — machine constraint layer
 
@@ -165,8 +179,9 @@ Downloads use the canonical repository and private same-volume staging.
 
 GitHub build-provenance attestation is the authentication gate. The initial
 verifier is `gh attestation verify`, enforcing the expected repository,
-release workflow, release ref and downloaded artifact digest. Checksums are
-additional consistency evidence and never an authentication fallback.
+exact certificate SAN (`repository/workflow@release-ref`) and downloaded
+artifact digest. Checksums are additional consistency evidence and never an
+authentication fallback.
 
 The verifier receives an explicit absolute path to a regular GitHub CLI
 executable and never searches `PATH`. Windows Authenticode must validate that
@@ -182,11 +197,13 @@ and exactly one explicit `GH_TOKEN` or `GITHUB_TOKEN`. These host paths come
 from Windows APIs rather than inherited variables. GitHub host, config-directory,
 proxy, custom-CA and other inherited settings are not passed through. It
 requires the canonical two-entry `SHA256SUMS` layout, invokes
-`gh attestation verify` with the repository, workflow, tag ref and SLSA
-provenance predicate fixed in argv, validates the reported subject digest and
-re-hashes `cb.exe` after verification. Its opaque result binds the exact digest
-for the later replacement phase; any missing verifier, policy mismatch,
-malformed output or file change fails closed with no checksum-only fallback.
+`gh attestation verify` with the repository, exact workflow-and-tag certificate
+identity, tag ref and SLSA provenance predicate fixed in argv, validates the
+reported subject digest and re-hashes `cb.exe` after verification. Authenticode
+checks run from the Windows directory with bounded, cancelable subprocesses.
+Its opaque result binds the exact digest for the later replacement phase; any
+missing verifier, policy mismatch, malformed output or file change fails closed
+with no checksum-only fallback.
 
 After verification, a narrowly scoped temporary helper waits for the parent
 process to exit, serializes with other ContainerBin mutations, proves ownership
@@ -216,9 +233,13 @@ and protected signing mechanism.
 
 ### RM-29 — Windows ARM64 is last priority
 
-Native Windows ARM64 CI may use GitHub-hosted Windows 11 ARM64 runners for
-build, native management-command execution, filesystem/shim behavior and other
-non-Docker qualification.
+PR #78 added native Windows ARM64 CI on GitHub-hosted Windows 11 ARM64 runners
+for build, native management-command execution, filesystem/shim behavior and
+other non-Docker qualification.
+
+PR #86 added an architecture-specific ARM64 release archive with checksums,
+independent byte-for-byte reproduction and GitHub build provenance while
+preserving the existing amd64 raw executable and archive names.
 
 x64-host ARM emulation is not accepted as Docker Desktop support evidence.
 Full support still requires real Windows-on-Arm hardware running a supported
@@ -271,57 +292,52 @@ exception, expiry and outage policy.
 
 This is priority/order guidance, not permission to merge.
 
-1. **RM-26 pipx support**
-   - add a stateful pipx profile with explicit ContainerBin-owned home/bin state;
-   - add `cb expose pipx BINARY...`;
-   - add positive/negative Windows + Docker Desktop E2E;
-   - document the pip vs pipx vs uv-tool contract.
+Merged foundations are removed from the remaining queue: RM-26 shipped in PR
+#74, enterprise-policy foundation in PR #75, RM-31 selection/check in PR #76,
+the WSL host boundary in PR #77, native Windows ARM64 CI in PR #78, and
+reproducible ARM64 release packaging in PR #86. Unmerged pull-request coverage
+is not completion.
 
-2. **Enterprise policy foundation**
-   - fixed machine policy location + ownership validation;
-   - policy schema/versioning and stable diagnostics;
-   - effective-request authorization boundary;
-   - repository-origin allowlisting and mandatory-lock enforcement;
-   - diagnostics/inspect visibility.
-
-3. **Per-project overlay trust foundation**
+1. **Per-project overlay trust foundation**
    - project overlay parsing independent of global registry;
    - add-only collision rules;
    - external trust store bound to canonical root + overlay digest;
    - `cb trust` / `cb untrust` / inspect/doctor;
    - initial restricted capability set.
 
-4. **Registry-signature enterprise policy**
+2. **Registry-signature enterprise policy**
    - detached Ed25519 signature envelope over exact registry bytes;
    - trusted-key rotation/revocation policy;
    - verify before parsing/acting on registry content.
 
-5. **Image trust**
+3. **Image trust**
    - cosign verifier configuration and verifier hash validation;
    - per-repository trust policy;
    - lock schema/evidence migration;
    - online/offline verification and stale-evidence behavior.
 
-6. **RM-31 self-update**
-   - selection/check/dry-run API;
+4. **Remaining RM-31 self-update**
+   - selection/check/dry-run API is merged in PR #76;
    - bounded canonical GitHub release download/staging;
    - `gh attestation verify` policy integration;
    - Windows helper transaction, managed-shim reconciliation and rollback;
    - release/self-test E2E.
 
-7. **WSL2**
-   - narrow reusable Linux host interfaces;
+5. **Remaining WSL2**
+   - narrow reusable Linux host interfaces and fail-closed boundary are merged in PR #77;
    - native WSL config/shim/state layout;
    - Docker Desktop WSL integration;
    - project identity and cross-boundary rejection tests;
    - real WSL Docker E2E.
 
-8. **RM-30 Authenticode**
+6. **RM-30 Authenticode**
    - only after certificate/protected signing prerequisites exist.
 
-9. **RM-29 Windows ARM64**
+7. **RM-29 Windows ARM64**
    - **lowest priority**;
-   - native hosted ARM64 CI may precede real Docker qualification;
+   - native hosted ARM64 CI is merged in PR #78;
+   - architecture-specific release packaging is merged in PR #86;
+   - ARM64 self-update selection remains;
    - support claim only after real Windows-on-Arm + Docker Desktop E2E.
 
 ## Dormant / recurring items

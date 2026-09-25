@@ -8,6 +8,53 @@ import (
 	"testing"
 )
 
+func TestLoadAtAuthenticatesExactBytesBeforeParsing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "container-bin.toml")
+	raw := []byte("this is not registry TOML\n")
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	wantErr := errors.New("registry signature rejected")
+	_, gotPath, err := loadAt(path, func(gotPath string, got []byte) error {
+		if gotPath != path || string(got) != string(raw) {
+			t.Fatalf("authenticator received (%q, %q), want (%q, %q)", gotPath, got, path, raw)
+		}
+		return wantErr
+	})
+	if gotPath != path || !errors.Is(err, wantErr) {
+		t.Fatalf("loadAt = path %q, error %v; want %q and authenticator error", gotPath, err, path)
+	}
+}
+
+func TestLoadAtSignedMissingRegistryDoesNotRecoverBackup(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "container-bin.toml")
+	if err := os.WriteFile(path+".bak", []byte(DefaultTOML), 0600); err != nil {
+		t.Fatal(err)
+	}
+	wantErr := errors.New("signed registry missing")
+	_, _, err := loadAt(path, func(gotPath string, got []byte) error {
+		if gotPath != path || got != nil {
+			t.Fatalf("missing authenticator input = (%q, %v)", gotPath, got)
+		}
+		return wantErr
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("loadAt error = %v, want authenticator error", err)
+	}
+	if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("unauthenticated backup was restored: %v", statErr)
+	}
+	if _, statErr := os.Stat(path + ".bak"); statErr != nil {
+		t.Fatalf("backup was changed: %v", statErr)
+	}
+}
+
+func TestLoadAtRequiresAuthenticator(t *testing.T) {
+	if _, _, err := loadAt(filepath.Join(t.TempDir(), "container-bin.toml"), nil); err == nil || !strings.Contains(err.Error(), "authenticator") {
+		t.Fatalf("loadAt nil authenticator error = %v", err)
+	}
+}
+
 func TestInstallShimCopyFailurePreservesExistingShim(t *testing.T) {
 	dir := t.TempDir()
 	exe := filepath.Join(dir, "container-bin.exe")
