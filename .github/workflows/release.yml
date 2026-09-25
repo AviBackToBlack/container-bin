@@ -68,16 +68,15 @@ jobs:
           GOOS=windows GOARCH=arm64 CGO_ENABLED=0 \
             go build -trimpath -buildvcs=false \
               -ldflags "-s -w -X main.version=${VERSION}" \
-              -o dist/cb-windows-arm64.exe .
+              -o dist/package-arm64/cb.exe .
 
           cp dist/cb.exe dist/package-amd64/cb.exe
-          cp dist/cb-windows-arm64.exe dist/package-arm64/cb.exe
           cp LICENSE README.md dist/package-amd64/
           cp LICENSE README.md dist/package-arm64/
           # ZIP stores DOS timestamps. Normalize them and strip extra metadata so
           # separate runners/checkouts produce byte-identical archives.
           touch -d '1980-01-01 00:00:00 UTC' \
-            dist/cb.exe dist/cb-windows-arm64.exe \
+            dist/cb.exe \
             dist/package-amd64/cb.exe dist/package-amd64/LICENSE dist/package-amd64/README.md \
             dist/package-arm64/cb.exe dist/package-arm64/LICENSE dist/package-arm64/README.md
           (
@@ -92,7 +91,6 @@ jobs:
             cd dist
             sha256sum \
               cb.exe \
-              cb-windows-arm64.exe \
               "${AMD64_ARCHIVE}" \
               "${ARM64_ARCHIVE}" > SHA256SUMS
           )
@@ -120,14 +118,12 @@ jobs:
           GOOS=windows GOARCH=arm64 CGO_ENABLED=0 \
             go build -trimpath -buildvcs=false \
               -ldflags "-s -w -X main.version=${VERSION}" \
-              -o "$RUNNER_TEMP/repro/cb-windows-arm64.exe" .
+              -o "$RUNNER_TEMP/repro/package-arm64/cb.exe" .
           cp "$RUNNER_TEMP/repro/cb.exe" "$RUNNER_TEMP/repro/package-amd64/cb.exe"
-          cp "$RUNNER_TEMP/repro/cb-windows-arm64.exe" "$RUNNER_TEMP/repro/package-arm64/cb.exe"
           cp LICENSE README.md "$RUNNER_TEMP/repro/package-amd64/"
           cp LICENSE README.md "$RUNNER_TEMP/repro/package-arm64/"
           touch -d '1980-01-01 00:00:00 UTC' \
             "$RUNNER_TEMP/repro/cb.exe" \
-            "$RUNNER_TEMP/repro/cb-windows-arm64.exe" \
             "$RUNNER_TEMP/repro/package-amd64/cb.exe" \
             "$RUNNER_TEMP/repro/package-amd64/LICENSE" \
             "$RUNNER_TEMP/repro/package-amd64/README.md" \
@@ -146,11 +142,10 @@ jobs:
             cd "$RUNNER_TEMP/repro"
             sha256sum \
               cb.exe \
-              cb-windows-arm64.exe \
               "${AMD64_ARCHIVE}" \
               "${ARM64_ARCHIVE}" > SHA256SUMS
           )
-          for artifact in cb.exe cb-windows-arm64.exe "${AMD64_ARCHIVE}" "${ARM64_ARCHIVE}" SHA256SUMS; do
+          for artifact in cb.exe "${AMD64_ARCHIVE}" "${ARM64_ARCHIVE}" SHA256SUMS; do
             sha256sum "dist/${artifact}" "$RUNNER_TEMP/repro/${artifact}"
             cmp "dist/${artifact}" "$RUNNER_TEMP/repro/${artifact}"
           done
@@ -161,7 +156,7 @@ jobs:
         with:
           name: container-bin-release-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            dist/*.exe
+            dist/cb.exe
             dist/*.zip
             dist/SHA256SUMS
           if-no-files-found: error
@@ -210,13 +205,12 @@ jobs:
           GOOS=windows GOARCH=arm64 CGO_ENABLED=0 \
             go build -trimpath -buildvcs=false \
               -ldflags "-s -w -X main.version=${VERSION}" \
-              -o second/cb-windows-arm64.exe .
+              -o second/package-arm64/cb.exe .
           cp second/cb.exe second/package-amd64/cb.exe
-          cp second/cb-windows-arm64.exe second/package-arm64/cb.exe
           cp LICENSE README.md second/package-amd64/
           cp LICENSE README.md second/package-arm64/
           touch -d '1980-01-01 00:00:00 UTC' \
-            second/cb.exe second/cb-windows-arm64.exe \
+            second/cb.exe \
             second/package-amd64/cb.exe second/package-amd64/LICENSE second/package-amd64/README.md \
             second/package-arm64/cb.exe second/package-arm64/LICENSE second/package-arm64/README.md
           (
@@ -231,11 +225,10 @@ jobs:
             cd second
             sha256sum \
               cb.exe \
-              cb-windows-arm64.exe \
               "${AMD64_ARCHIVE}" \
               "${ARM64_ARCHIVE}" > SHA256SUMS
           )
-          for artifact in cb.exe cb-windows-arm64.exe "${AMD64_ARCHIVE}" "${ARM64_ARCHIVE}" SHA256SUMS; do
+          for artifact in cb.exe "${AMD64_ARCHIVE}" "${ARM64_ARCHIVE}" SHA256SUMS; do
             cmp "first/${artifact}" "second/${artifact}"
           done
           echo 'independent runner reproduced binaries, archives and checksum manifest byte-for-byte'
@@ -262,9 +255,8 @@ jobs:
         run: |
           set -euo pipefail
           test "$(find dist -maxdepth 1 -type f -name '*.zip' | wc -l)" -eq 2
-          test "$(find dist -maxdepth 1 -type f -name '*.exe' | wc -l)" -eq 2
+          test "$(find dist -maxdepth 1 -type f -name '*.exe' | wc -l)" -eq 1
           test -f dist/cb.exe
-          test -f dist/cb-windows-arm64.exe
           test -f "dist/container-bin-${GITHUB_REF_NAME}-windows-amd64.zip"
           test -f "dist/container-bin-${GITHUB_REF_NAME}-windows-arm64.zip"
           test -f dist/SHA256SUMS
@@ -318,7 +310,7 @@ jobs:
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-path: |
-            dist/*.exe
+            dist/cb.exe
             dist/*.zip
 
       - name: Create immutable-ready draft release
@@ -362,4 +354,4 @@ jobs:
           fi
           gh release create "${GITHUB_REF_NAME}" \
             "${RELEASE_ARGS[@]}" \
-            dist/*.exe dist/*.zip dist/SHA256SUMS
+            dist/cb.exe dist/*.zip dist/SHA256SUMS
