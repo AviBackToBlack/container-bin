@@ -185,6 +185,14 @@ This preserves the precedence boundary: user/project/CLI layers may choose a
 request, but only the machine layer can authorize it. Full schema and ownership
 rules are in [enterprise-policy.md](enterprise-policy.md).
 
+When policy schema 2 requires registry authentication, `registry.Load` passes
+the exact file bytes to the policy verifier before parsing. The verifier accepts
+only a strict detached Ed25519 envelope beside the registry and a currently
+active, non-revoked machine-policy key. Missing signed files do not trigger the
+built-in default or `.bak` recovery. Registry-mutating commands are disabled in
+this mode because ContainerBin never possesses the administrator's signing key;
+lockfile-only operations remain separate.
+
 ## Atomic writes
 
 Registry and lock mutations (add, expose, unexpose, uninstall, lock, update,
@@ -196,7 +204,9 @@ The next `cb` load automatically recovers `container-bin.toml` or
 `container-bin.lock` from its `.bak` if the live file is missing, after
 validating the backup. If the backup is unreadable or otherwise unusable,
 loading stops with a hard error rather than falling back to defaults or an
-unlocked state.
+unlocked state. Required signed-registry mode is the intentional exception: a
+missing live registry is never restored from an unauthenticated `.bak`; the
+administrator must provision the registry/signature pair.
 
 Atomic replacement protects file integrity, but it does not protect against
 lost updates when two `cb` processes read, modify and write the same file.

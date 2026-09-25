@@ -694,7 +694,11 @@ insufficiently protected policy fails closed before non-bootstrap work.
 
 Schema 1 can require an exact image lock, reject local image-ID locks unless
 explicitly allowed, and allowlist canonical registry/repository boundaries.
-Lower-precedence registry or command-line choices cannot weaken it. See
+Policy schema 2 can also require a strict detached Ed25519 signature over the
+exact `container-bin.toml` bytes, with machine-owned key validity, revocation
+and overlap rotation. Signed registries are read-only to `cb`; updates must be
+provisioned with a matching signature by the administrator. Lower-precedence
+registry or command-line choices cannot weaken policy. See
 [enterprise machine policy](docs/enterprise-policy.md) for the schema,
 ownership rules, normalization behavior and stable diagnostic codes.
 
@@ -750,6 +754,10 @@ configuration, or host project files. Output archives are created exclusively:
 choose a new filename instead of overwriting an existing backup. Volume data can
 itself contain package credentials or other secrets, so store and transfer the
 archive as sensitive data even though ContainerBin requests owner-only file mode.
+When valid and bounded, the detached `container-bin.toml.sig` envelope is
+included; a required signed-registry snapshot is re-authenticated before
+backup. An invalid optional envelope is skipped with a warning in unmanaged
+mode.
 
 See [proxies, private registries, and air-gapped operation](docs/proxy-airgap.md)
 for mirror identity rules, disconnected image preparation, and the complete

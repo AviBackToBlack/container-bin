@@ -32,13 +32,15 @@ import (
 )
 
 func Setup(cfgPath, version string, machinePolicy policy.Policy) error {
-	if err := registry.EnsureFile(cfgPath); err != nil {
-		return err
+	if !machinePolicy.RequireRegistrySignature {
+		if err := registry.EnsureFile(cfgPath); err != nil {
+			return err
+		}
+		if err := registry.AppendMissingDefaultTools(cfgPath, version); err != nil {
+			return err
+		}
 	}
-	if err := registry.AppendMissingDefaultTools(cfgPath, version); err != nil {
-		return err
-	}
-	reg, _, err := registry.Load()
+	reg, _, err := registry.Load(machinePolicy.AuthenticateRegistry)
 	if err != nil {
 		return err
 	}
@@ -64,6 +66,9 @@ func add(reg registry.Registry, cfgPath string, args []string, install func(regi
 	local := len(args) == 4 && args[3] == "--local"
 	if (len(args) != 3 && !local) || args[1] != "--image" || args[0] == "" || args[2] == "" {
 		return errors.New("usage: cb add TOOL --image IMAGE [--local]")
+	}
+	if err := machinePolicy.AuthorizeRegistryMutation("cb add"); err != nil {
+		return err
 	}
 	name := strings.ToLower(args[0])
 	image := args[2]
@@ -285,6 +290,9 @@ func Default(reg registry.Registry, cfgPath string, args []string, machinePolicy
 	}
 	if len(args) != 3 || args[0] != "set" {
 		return errors.New("usage: cb default | cb default set FAMILY VERSION")
+	}
+	if err := machinePolicy.AuthorizeRegistryMutation("cb default set"); err != nil {
+		return err
 	}
 	family, version := strings.ToLower(args[1]), strings.ToLower(args[2])
 	if machinePolicy.Managed() {
@@ -765,7 +773,7 @@ func exposeSharedVolumeFile(reg registry.Registry, cfgPath string, args []string
 	if err := atomicio.WriteFile(cfgPath, combined, 0644); err != nil {
 		return err
 	}
-	newReg, _, err := registry.Load()
+	newReg, _, err := registry.Load(machinePolicy.AuthenticateRegistry)
 	if err != nil {
 		return fmt.Errorf("reload registry: %w", err)
 	}
@@ -778,6 +786,9 @@ func exposeSharedVolumeFile(reg registry.Registry, cfgPath string, args []string
 
 func Expose(reg registry.Registry, cfgPath string, args []string, machinePolicy policy.Policy) error {
 	const usage = "usage: cb expose TOOL [BINARY ...] | cb expose --shared-file TOOL VOLUME /absolute/container/file"
+	if err := machinePolicy.AuthorizeRegistryMutation("cb expose"); err != nil {
+		return err
+	}
 	if len(args) > 0 && args[0] == "--shared-file" {
 		return exposeSharedVolumeFile(reg, cfgPath, args[1:], machinePolicy)
 	}
@@ -852,7 +863,7 @@ func Expose(reg registry.Registry, cfgPath string, args []string, machinePolicy 
 	if err := atomicio.WriteFile(cfgPath, combined, 0644); err != nil {
 		return err
 	}
-	newReg, _, err := registry.Load()
+	newReg, _, err := registry.Load(machinePolicy.AuthenticateRegistry)
 	if err != nil {
 		return fmt.Errorf("reload registry: %w", err)
 	}
@@ -1004,9 +1015,12 @@ func Inspect(reg registry.Registry, args []string, machinePolicy policy.Policy) 
 	return nil
 }
 
-func Unexpose(reg registry.Registry, cfgPath string, args []string) error {
+func Unexpose(reg registry.Registry, cfgPath string, args []string, machinePolicy policy.Policy) error {
 	if len(args) == 0 {
 		return errors.New("usage: cb unexpose TOOL [TOOL...]")
+	}
+	if err := machinePolicy.AuthorizeRegistryMutation("cb unexpose"); err != nil {
+		return err
 	}
 	remove := map[string]bool{}
 	for _, a := range args {
@@ -1034,9 +1048,12 @@ func Unexpose(reg registry.Registry, cfgPath string, args []string) error {
 	return nil
 }
 
-func Uninstall(reg registry.Registry, cfgPath string, args []string) error {
+func Uninstall(reg registry.Registry, cfgPath string, args []string, machinePolicy policy.Policy) error {
 	if len(args) == 0 {
 		return errors.New("usage: cb uninstall TOOL [TOOL...]")
+	}
+	if err := machinePolicy.AuthorizeRegistryMutation("cb uninstall"); err != nil {
+		return err
 	}
 	remove := map[string]bool{}
 	builtins := registry.Default().Tools
@@ -1070,10 +1087,22 @@ func Uninstall(reg registry.Registry, cfgPath string, args []string) error {
 
 // --- v0.9 image locking ----------------------------------------------------
 
-func Backup(cfgPath string, args []string, version string) error {
+func Backup(cfgPath string, args []string, version string, machinePolicy policy.Policy) error {
 	pathArg, stateNames, err := parseBackupArgs(args)
 	if err != nil {
 		return err
+	}
+	registryBytes, err := os.ReadFile(cfgPath)
+	if err != nil {
+		return err
+	}
+	signatureBytes, err := machinePolicy.LoadRegistrySignature(cfgPath, registryBytes)
+	if err != nil {
+		if machinePolicy.RequireRegistrySignature {
+			return fmt.Errorf("authenticate registry backup snapshot: %w", err)
+		}
+		fmt.Printf("warning: detached registry signature not archived: %v\n", err)
+		signatureBytes = nil
 	}
 	dir := filepath.Dir(cfgPath)
 	created := time.Now()
@@ -1101,7 +1130,7 @@ func Backup(cfgPath string, args []string, version string) error {
 		}
 	}()
 	zw := zip.NewWriter(f)
-	add := func(src, name string, required bool) error {
+	addFile := func(src, name string, required bool) error {
 		b, err := os.ReadFile(src)
 		if errors.Is(err, os.ErrNotExist) && !required {
 			return nil
@@ -1116,12 +1145,27 @@ func Backup(cfgPath string, args []string, version string) error {
 		_, err = w.Write(b)
 		return err
 	}
-	if err := add(cfgPath, "container-bin.toml", true); err != nil {
+	addBytes := func(name string, b []byte) error {
+		w, err := zw.Create(name)
+		if err != nil {
+			return err
+		}
+		_, err = w.Write(b)
+		return err
+	}
+	if err := addBytes("container-bin.toml", registryBytes); err != nil {
 		zw.Close()
 		f.Close()
 		return err
 	}
-	if err := add(lockfile.PathFor(cfgPath), "container-bin.lock", false); err != nil {
+	if signatureBytes != nil {
+		if err := addBytes("container-bin.toml.sig", signatureBytes); err != nil {
+			zw.Close()
+			f.Close()
+			return err
+		}
+	}
+	if err := addFile(lockfile.PathFor(cfgPath), "container-bin.lock", false); err != nil {
 		zw.Close()
 		f.Close()
 		return err
@@ -1205,6 +1249,11 @@ func Restore(cfgPath string, args []string, machinePolicy policy.Policy) error {
 	if err != nil {
 		return err
 	}
+	if apply {
+		if err := machinePolicy.AuthorizeRegistryMutation("cb restore --apply"); err != nil {
+			return err
+		}
+	}
 	zr, err := zip.OpenReader(backupPath)
 	if err != nil {
 		return err
@@ -1212,7 +1261,7 @@ func Restore(cfgPath string, args []string, machinePolicy policy.Policy) error {
 	defer zr.Close()
 	files := map[string][]byte{}
 	for _, f := range zr.File {
-		if f.Name != "container-bin.toml" && f.Name != "container-bin.lock" {
+		if f.Name != "container-bin.toml" && f.Name != "container-bin.toml.sig" && f.Name != "container-bin.lock" {
 			continue
 		}
 		if _, duplicate := files[f.Name]; duplicate {
@@ -1232,6 +1281,9 @@ func Restore(cfgPath string, args []string, machinePolicy policy.Policy) error {
 	cfg, ok := files["container-bin.toml"]
 	if !ok {
 		return errors.New("backup does not contain container-bin.toml")
+	}
+	if err := machinePolicy.AuthenticateRegistrySnapshot(cfgPath, cfg, files["container-bin.toml.sig"]); err != nil {
+		return fmt.Errorf("backup registry authentication failed: %w", err)
 	}
 	restoredRegistry, err := registry.ParseTOML(string(cfg))
 	if err != nil {
@@ -1271,6 +1323,11 @@ func Restore(cfgPath string, args []string, machinePolicy policy.Policy) error {
 	}
 	fmt.Printf("restore source: %s\n", backupPath)
 	fmt.Printf("  container-bin.toml: %d bytes\n", len(cfg))
+	if b, ok := files["container-bin.toml.sig"]; ok {
+		fmt.Printf("  container-bin.toml.sig: %d bytes\n", len(b))
+	} else {
+		fmt.Println("  container-bin.toml.sig: absent")
+	}
 	if b, ok := files["container-bin.lock"]; ok {
 		fmt.Printf("  container-bin.lock: %d bytes\n", len(b))
 	} else {
@@ -1290,7 +1347,11 @@ func Restore(cfgPath string, args []string, machinePolicy policy.Policy) error {
 		}
 	}
 	if !apply {
-		fmt.Println("\nDry run only. Re-run with --apply to perform the reported restore.")
+		if machinePolicy.RequireRegistrySignature {
+			fmt.Println("\nDry run only. Signed registry policy forbids `cb restore --apply`; have an administrator provision the archived registry/signature pair.")
+		} else {
+			fmt.Println("\nDry run only. Re-run with --apply to perform the reported restore.")
+		}
 		return nil
 	}
 	if restoreState {
@@ -1298,8 +1359,20 @@ func Restore(cfgPath string, args []string, machinePolicy policy.Policy) error {
 			return err
 		}
 	}
+	if _, signed := files["container-bin.toml.sig"]; !signed {
+		for _, stale := range []string{cfgPath + ".sig", cfgPath + ".sig.bak"} {
+			if err := os.Remove(stale); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("remove stale detached registry signature %s: %w", stale, err)
+			}
+		}
+	}
 	if err := atomicio.WriteFile(cfgPath, cfg, 0644); err != nil {
 		return err
+	}
+	if b, ok := files["container-bin.toml.sig"]; ok {
+		if err := atomicio.WriteFile(cfgPath+".sig", b, 0644); err != nil {
+			return err
+		}
 	}
 	lockPath := lockfile.PathFor(cfgPath)
 	if b, ok := files["container-bin.lock"]; ok {
@@ -1561,15 +1634,17 @@ func parseUpdateArgs(args []string) (target, mode string, err error) {
 // Install creates or upgrades the registry file and reconciles the shim set
 // from it. It reloads the registry after the upgrade because EnsureFile or
 // AppendMissingDefaultTools may have just created or extended the file.
-func Install(cfgPath, version string) error {
-	if err := registry.EnsureFile(cfgPath); err != nil {
-		return err
-	}
-	if err := registry.AppendMissingDefaultTools(cfgPath, version); err != nil {
-		return err
+func Install(cfgPath, version string, machinePolicy policy.Policy) error {
+	if !machinePolicy.RequireRegistrySignature {
+		if err := registry.EnsureFile(cfgPath); err != nil {
+			return err
+		}
+		if err := registry.AppendMissingDefaultTools(cfgPath, version); err != nil {
+			return err
+		}
 	}
 	// Reload in case the file was just created or upgraded.
-	reg, _, err := registry.Load()
+	reg, _, err := registry.Load(machinePolicy.AuthenticateRegistry)
 	if err != nil {
 		return err
 	}
