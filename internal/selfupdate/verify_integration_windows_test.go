@@ -24,17 +24,18 @@ func TestVerifyRealGitHubCLIRelease(t *testing.T) {
 		t.Fatal(err)
 	}
 	plan := Plan{
-		Current:      "v1.0.0",
-		Target:       "v1.1.0",
-		OS:           "windows",
-		Arch:         "amd64",
-		ReleaseURL:   releaseWebRoot + "/tag/v1.1.0",
-		Binary:       Asset{Name: "cb.exe", URL: releaseWebRoot + "/download/v1.1.0/cb.exe", Size: binaryInfo.Size()},
-		Archive:      Asset{Name: "container-bin-v1.1.0-windows-amd64.zip", URL: releaseWebRoot + "/download/v1.1.0/container-bin-v1.1.0-windows-amd64.zip", Size: 1},
-		Checksums:    Asset{Name: "SHA256SUMS", URL: releaseWebRoot + "/download/v1.1.0/SHA256SUMS", Size: checksumsInfo.Size()},
-		ExpectedRepo: expectedReleaseRepo,
-		ExpectedRef:  "refs/tags/v1.1.0",
-		Workflow:     expectedReleaseWorkflow,
+		Current:        "v1.0.0",
+		Target:         "v1.1.0",
+		OS:             "windows",
+		Arch:           "amd64",
+		ReleaseURL:     releaseWebRoot + "/tag/v1.1.0",
+		Binary:         Asset{Name: "cb.exe", URL: releaseWebRoot + "/download/v1.1.0/cb.exe", Size: binaryInfo.Size()},
+		Archive:        Asset{Name: "container-bin-v1.1.0-windows-amd64.zip", URL: releaseWebRoot + "/download/v1.1.0/container-bin-v1.1.0-windows-amd64.zip", Size: 1},
+		Checksums:      Asset{Name: "SHA256SUMS", URL: releaseWebRoot + "/download/v1.1.0/SHA256SUMS", Size: checksumsInfo.Size()},
+		ExpectedRepo:   expectedReleaseRepo,
+		ExpectedRef:    "refs/tags/v1.1.0",
+		Workflow:       expectedReleaseWorkflow,
+		checksumLayout: checksumLayoutLegacyAMD64,
 	}
 	verified, err := Verify(context.Background(), plan, binary, checksums, gh)
 	if err != nil {

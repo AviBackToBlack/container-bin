@@ -36,8 +36,10 @@ func (s Staged) Cleanup() error {
 		return nil
 	}
 	dir := filepath.Clean(s.Dir)
+	binaryName := filepath.Base(filepath.Clean(s.BinaryPath))
+	validBinaryName := binaryName == "cb.exe" || binaryName == fmt.Sprintf("container-bin-%s-windows-arm64.zip", s.Target)
 	if !s.owned || !filepath.IsAbs(dir) || !strings.HasPrefix(filepath.Base(dir), stagingPrefix) ||
-		filepath.Clean(s.BinaryPath) != filepath.Join(dir, "cb.exe") ||
+		!validBinaryName || filepath.Clean(s.BinaryPath) != filepath.Join(dir, binaryName) ||
 		filepath.Clean(s.ChecksumsPath) != filepath.Join(dir, "SHA256SUMS") {
 		return errors.New("refusing to remove an invalid self-update staging layout")
 	}
@@ -53,10 +55,11 @@ type stager struct {
 	removeAll    func(string) error
 }
 
-// Stage downloads the directly attested executable and its checksum manifest
+// Stage downloads the selected attested artifact and its checksum manifest
 // into a private temporary directory beside the installed management
-// executable. The caller must still authenticate and verify both inputs before
-// any replacement.
+// executable. The artifact is cb.exe on amd64 and the architecture-specific
+// archive on arm64. The caller must authenticate and verify both inputs before
+// any extraction or replacement.
 func Stage(ctx context.Context, plan Plan, installedExecutable string) (Staged, error) {
 	return (stager{doer: newDownloadClient()}).Stage(ctx, plan, installedExecutable)
 }
@@ -215,7 +218,7 @@ func validateStagingPlan(plan Plan) error {
 	case comparison < 0 && plan.downgradeAuthorization != (downgradeAuthorization{}):
 		return errors.New("self-update staging plan has inconsistent downgrade authorization")
 	}
-	if plan.OS != "windows" || plan.Arch != "amd64" {
+	if plan.OS != "windows" || (plan.Arch != "amd64" && plan.Arch != "arm64") {
 		return fmt.Errorf("self-update staging has no qualified artifact for %s/%s", plan.OS, plan.Arch)
 	}
 	if plan.ReleaseURL != releaseWebRoot+"/tag/"+target.raw {
@@ -224,13 +227,29 @@ func validateStagingPlan(plan Plan) error {
 	if plan.ExpectedRepo != "AviBackToBlack/container-bin" || plan.ExpectedRef != "refs/tags/"+target.raw || plan.Workflow != ".github/workflows/release.yml" {
 		return errors.New("self-update staging plan has an unexpected provenance policy")
 	}
-	archiveName := fmt.Sprintf("container-bin-%s-windows-amd64.zip", target.raw)
+	amd64Archive := fmt.Sprintf("container-bin-%s-windows-amd64.zip", target.raw)
+	arm64Archive := fmt.Sprintf("container-bin-%s-windows-arm64.zip", target.raw)
+	binaryName := "cb.exe"
+	binaryLimit := int64(maxBinarySize)
+	archiveName := amd64Archive
+	wantLayout := checksumLayoutLegacyAMD64
+	if plan.Arch == "arm64" {
+		binaryName = arm64Archive
+		binaryLimit = maxArchiveSize
+		archiveName = arm64Archive
+		wantLayout = checksumLayoutDualArch
+	} else if plan.checksumLayout == checksumLayoutDualArch {
+		wantLayout = checksumLayoutDualArch
+	}
+	if plan.checksumLayout != wantLayout {
+		return errors.New("self-update staging plan has an unexpected checksum layout")
+	}
 	for _, expected := range []struct {
 		asset Asset
 		name  string
 		limit int64
 	}{
-		{plan.Binary, "cb.exe", maxBinarySize},
+		{plan.Binary, binaryName, binaryLimit},
 		{plan.Archive, archiveName, maxArchiveSize},
 		{plan.Checksums, "SHA256SUMS", maxChecksumSize},
 	} {

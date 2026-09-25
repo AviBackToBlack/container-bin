@@ -315,12 +315,14 @@ Desktop in Linux-container mode.
 PR #78 shipped native hosted ARM64 CI for non-Docker qualification. PR #86
 shipped the architecture-specific ARM64 archive, checksum coverage, independent
 byte-for-byte reproduction and release provenance while preserving existing
-amd64 asset names. PR #76's self-update foundation still deliberately rejects
-architectures other than Windows/amd64. ARM64 install/update selection and real
-Windows-on-Arm + Docker Desktop qualification therefore remain; CI and a
-provenanced archive alone are not a full support claim. The first three bullets
-below are the shipped PR #86 contract. Install/update selection and the
-hardware-backed qualification record remain.
+amd64 asset names. PR #76's self-update foundation originally rejected
+architectures other than Windows/amd64. The update pipeline now selects the
+ARM64 archive from native `GOARCH`, verifies its checksum and provenance before
+exact extraction, and preserves legacy amd64 release compatibility. Real
+Windows-on-Arm + Docker Desktop qualification remains; CI, update selection and
+a provenanced archive are not a full support claim. The first three bullets
+below are the shipped PR #86 contract. The hardware-backed qualification record
+remains.
 
 ### Shipped release contract and remaining implementation
 

@@ -196,10 +196,14 @@ known folder needed for GitHub CLI's signed-root cache, noninteractive settings,
 and exactly one explicit `GH_TOKEN` or `GITHUB_TOKEN`. These host paths come
 from Windows APIs rather than inherited variables. GitHub host, config-directory,
 proxy, custom-CA and other inherited settings are not passed through. It
-requires the canonical two-entry `SHA256SUMS` layout, invokes
+accepts the legacy two-entry `SHA256SUMS` layout for pre-ARM64 amd64 releases
+and requires the canonical three-entry layout for dual-architecture releases,
+invokes
 `gh attestation verify` with the repository, exact workflow-and-tag certificate
 identity, tag ref and SLSA provenance predicate fixed in argv, validates the
-reported subject digest and re-hashes `cb.exe` after verification. Authenticode
+reported subject digest and re-hashes the selected artifact after verification.
+For ARM64, it then extracts and hashes only the exact `cb.exe` entry.
+Authenticode
 checks run from the Windows directory with bounded, cancelable subprocesses.
 Its opaque result binds the exact digest for the later replacement phase; any
 missing verifier, policy mismatch, malformed output or file change fails closed
@@ -337,7 +341,7 @@ is not completion.
    - **lowest priority**;
    - native hosted ARM64 CI is merged in PR #78;
    - architecture-specific release packaging is merged in PR #86;
-   - ARM64 self-update selection remains;
+   - self-update selects and verifies the ARM64 archive from native `GOARCH`;
    - support claim only after real Windows-on-Arm + Docker Desktop E2E.
 
 ## Dormant / recurring items

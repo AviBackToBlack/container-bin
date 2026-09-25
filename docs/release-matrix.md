@@ -173,12 +173,18 @@ ARM64, runs the full unit suite, builds a release-style `cb.exe`, and dispatches
 a copied `jq.exe` shim to a controlled, compiled `docker.exe` stub. That proves native
 management execution, argv[0] shim dispatch and tool exit-code propagation on
 ARM64 hardware. It still has no Docker Desktop engine, so it does not qualify
-bind mounts, volumes, providers or self-update. The release workflow separately
+bind mounts, volumes or providers. The release workflow separately
 cross-builds an architecture-specific ARM64 executable and archive, reproduces
 both byte-for-byte on an
 independent runner, checksums them and includes them in release provenance.
 That supply-chain coverage is not a Windows ARM64 support claim. Support remains
 gated on real Windows ARM64 + Docker Desktop E2E evidence.
+
+The self-update pipeline selects the ARM64 archive from native `GOARCH`,
+verifies its canonical three-entry checksum manifest and GitHub provenance,
+then extracts only the exact `cb.exe` entry inside the private staging
+directory. This qualifies architecture selection and artifact handling, not
+Docker-backed runtime behavior or the final user-facing apply/helper flow.
 
 So CI validates compilation and pure/unit logic on a GitHub-hosted Windows
 runner. The matrix is what validates the `docs/shell-contract.md` semantics on a

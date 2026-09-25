@@ -85,6 +85,35 @@ func TestStagedCleanupRejectsUnrelatedPaths(t *testing.T) {
 	}
 }
 
+func TestStageDownloadsARM64ArchiveSelectedByPlan(t *testing.T) {
+	plan := arm64StagingPlan()
+	archive := bytes.Repeat([]byte("a"), int(plan.Binary.Size))
+	checksums := bytes.Repeat([]byte("s"), int(plan.Checksums.Size))
+	doer := doerFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.String() {
+		case plan.Checksums.URL:
+			return assetResponse(req, checksums), nil
+		case plan.Binary.URL:
+			return assetResponse(req, archive), nil
+		default:
+			t.Fatalf("unexpected download URL: %s", req.URL)
+			return nil, nil
+		}
+	})
+	_, installed := testInstallation(t)
+	staged, err := (stager{doer: doer}).Stage(context.Background(), plan, installed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(staged.BinaryPath) != plan.Binary.Name {
+		t.Fatalf("staged artifact = %q, want %q", staged.BinaryPath, plan.Binary.Name)
+	}
+	assertFile(t, staged.BinaryPath, archive)
+	if err := staged.Cleanup(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestStageCleansUpEveryPartialFailure(t *testing.T) {
 	cases := []struct {
 		name string
@@ -204,7 +233,7 @@ func TestStageRejectsInvalidInputsBeforeCreatingFilesOrCallingNetwork(t *testing
 		{name: "inconsistent downgrade authorization", mutate: func(p *Plan) {
 			p.downgradeAuthorization = downgradeAuthorization{current: p.Current, target: "v1.0.0"}
 		}, want: "inconsistent"},
-		{name: "wrong platform", mutate: func(p *Plan) { p.Arch = "arm64" }, want: "no qualified artifact"},
+		{name: "wrong platform", mutate: func(p *Plan) { p.Arch = "386" }, want: "no qualified artifact"},
 		{name: "wrong release", mutate: func(p *Plan) { p.ReleaseURL = "https://evil.example/release" }, want: "non-canonical release URL"},
 		{name: "wrong provenance", mutate: func(p *Plan) { p.ExpectedRepo = "other/repo" }, want: "unexpected provenance policy"},
 		{name: "wrong binary name", mutate: func(p *Plan) { p.Binary.Name = "other.exe" }, want: "expected asset"},
@@ -329,20 +358,32 @@ func TestDownloadAcceptsOnlyCanonicalOrSingleGitHubAssetRedirect(t *testing.T) {
 
 func stagingPlan() Plan {
 	return Plan{
-		Current:      "v1.1.0",
-		Target:       "v1.2.0",
-		Channel:      "stable",
-		Status:       "UPDATE AVAILABLE",
-		OS:           "windows",
-		Arch:         "amd64",
-		ReleaseURL:   releaseWebRoot + "/tag/v1.2.0",
-		Binary:       Asset{Name: "cb.exe", URL: releaseWebRoot + "/download/v1.2.0/cb.exe", Size: 16},
-		Archive:      Asset{Name: "container-bin-v1.2.0-windows-amd64.zip", URL: releaseWebRoot + "/download/v1.2.0/container-bin-v1.2.0-windows-amd64.zip", Size: 32},
-		Checksums:    Asset{Name: "SHA256SUMS", URL: releaseWebRoot + "/download/v1.2.0/SHA256SUMS", Size: 64},
-		ExpectedRepo: "AviBackToBlack/container-bin",
-		ExpectedRef:  "refs/tags/v1.2.0",
-		Workflow:     ".github/workflows/release.yml",
+		Current:        "v1.1.0",
+		Target:         "v1.2.0",
+		Channel:        "stable",
+		Status:         "UPDATE AVAILABLE",
+		OS:             "windows",
+		Arch:           "amd64",
+		ReleaseURL:     releaseWebRoot + "/tag/v1.2.0",
+		Binary:         Asset{Name: "cb.exe", URL: releaseWebRoot + "/download/v1.2.0/cb.exe", Size: 16},
+		Archive:        Asset{Name: "container-bin-v1.2.0-windows-amd64.zip", URL: releaseWebRoot + "/download/v1.2.0/container-bin-v1.2.0-windows-amd64.zip", Size: 32},
+		Checksums:      Asset{Name: "SHA256SUMS", URL: releaseWebRoot + "/download/v1.2.0/SHA256SUMS", Size: 64},
+		ExpectedRepo:   "AviBackToBlack/container-bin",
+		ExpectedRef:    "refs/tags/v1.2.0",
+		Workflow:       ".github/workflows/release.yml",
+		checksumLayout: checksumLayoutLegacyAMD64,
 	}
+}
+
+func arm64StagingPlan() Plan {
+	plan := stagingPlan()
+	plan.Arch = "arm64"
+	name := "container-bin-v1.2.0-windows-arm64.zip"
+	asset := Asset{Name: name, URL: releaseWebRoot + "/download/v1.2.0/" + name, Size: 32}
+	plan.Binary = asset
+	plan.Archive = asset
+	plan.checksumLayout = checksumLayoutDualArch
+	return plan
 }
 
 func retargetStagingPlan(plan Plan, target string) Plan {

@@ -1,6 +1,8 @@
 package selfupdate
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -108,7 +110,7 @@ func TestVerifyRejectsInvalidPolicyLayoutAndPathsBeforeAttestation(t *testing.T)
 		{name: "wrong repository", mutate: func(f *verificationFixture) { f.plan.ExpectedRepo = "other/repo" }, want: "unexpected provenance policy"},
 		{name: "wrong workflow", mutate: func(f *verificationFixture) { f.plan.Workflow = ".github/workflows/other.yml" }, want: "unexpected provenance policy"},
 		{name: "wrong ref", mutate: func(f *verificationFixture) { f.plan.ExpectedRef = "refs/heads/main" }, want: "unexpected provenance policy"},
-		{name: "wrong architecture", mutate: func(f *verificationFixture) { f.plan.Arch = "arm64" }, want: "no qualified artifact"},
+		{name: "wrong architecture", mutate: func(f *verificationFixture) { f.plan.Arch = "386" }, want: "no qualified artifact"},
 		{name: "wrong binary name", mutate: func(f *verificationFixture) { f.plan.Binary.Name = "other.exe" }, want: "unexpected asset layout"},
 		{name: "wrong archive name", mutate: func(f *verificationFixture) { f.plan.Archive.Name = "other.zip" }, want: "unexpected asset layout"},
 		{name: "wrong release URL", mutate: func(f *verificationFixture) { f.plan.ReleaseURL = "https://evil.example/release" }, want: "non-canonical release URL"},
@@ -200,6 +202,67 @@ func TestVerifyDetectsExecutableMutationDuringAttestation(t *testing.T) {
 	})).Verify(context.Background(), fixture.plan, fixture.binary, fixture.checksums, fixture.gh)
 	if err == nil || !strings.Contains(err.Error(), "changed during verification") {
 		t.Fatalf("mutation Verify = %v", err)
+	}
+}
+
+func TestVerifyARM64AuthenticatesArchiveBeforeExactExtraction(t *testing.T) {
+	fixture := newARM64VerificationFixture(t, nil)
+	called := false
+	verified, err := testVerifier(attestationRunnerFunc(func(_ context.Context, _ string, args []string) ([]byte, []byte, error) {
+		called = true
+		if args[2] != mustResolveTestPath(t, fixture.binary) {
+			t.Fatalf("attested path = %q", args[2])
+		}
+		return attestationJSON(fixture.digest), nil, nil
+	})).Verify(context.Background(), fixture.plan, fixture.binary, fixture.checksums, fixture.gh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !called || filepath.Base(verified.BinaryPath()) != "cb.exe" {
+		t.Fatalf("unexpected ARM64 verification result: called=%t verified=%+v", called, verified)
+	}
+	data, err := os.ReadFile(verified.BinaryPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []byte("verified ARM64 ContainerBin executable")
+	sum := sha256.Sum256(want)
+	if !bytes.Equal(data, want) || verified.SHA256() != hex.EncodeToString(sum[:]) || verified.Size() != int64(len(want)) {
+		t.Fatalf("unexpected extracted ARM64 executable: bytes=%q verified=%+v", data, verified)
+	}
+}
+
+func TestVerifyAMD64AcceptsCanonicalDualArchitectureManifest(t *testing.T) {
+	fixture := newVerificationFixture(t)
+	manifest, err := os.ReadFile(fixture.checksums)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest = append(manifest, []byte(strings.Repeat("b", 64)+"  container-bin-v1.2.0-windows-arm64.zip\n")...)
+	if err := os.WriteFile(fixture.checksums, manifest, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fixture.plan.Checksums.Size = int64(len(manifest))
+	fixture.plan.checksumLayout = checksumLayoutDualArch
+	if _, err := testVerifier(attestationRunnerFunc(func(context.Context, string, []string) ([]byte, []byte, error) {
+		return attestationJSON(fixture.digest), nil, nil
+	})).Verify(context.Background(), fixture.plan, fixture.binary, fixture.checksums, fixture.gh); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestVerifyARM64RejectsUnexpectedArchiveEntryAfterAuthentication(t *testing.T) {
+	fixture := newARM64VerificationFixture(t, map[string][]byte{"../escape": []byte("unsafe")})
+	called := false
+	_, err := testVerifier(attestationRunnerFunc(func(context.Context, string, []string) ([]byte, []byte, error) {
+		called = true
+		return attestationJSON(fixture.digest), nil, nil
+	})).Verify(context.Background(), fixture.plan, fixture.binary, fixture.checksums, fixture.gh)
+	if err == nil || !strings.Contains(err.Error(), "unexpected entry") || !called {
+		t.Fatalf("ARM64 unsafe archive Verify = %v, called=%t", err, called)
+	}
+	if _, statErr := os.Stat(filepath.Join(filepath.Dir(fixture.binary), "cb.exe")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("unsafe archive left extracted executable: %v", statErr)
 	}
 }
 
@@ -386,17 +449,18 @@ func newVerificationFixture(t *testing.T) verificationFixture {
 	}
 	return verificationFixture{
 		plan: Plan{
-			Current:      "v1.1.0",
-			Target:       "v1.2.0",
-			OS:           "windows",
-			Arch:         "amd64",
-			ReleaseURL:   releaseWebRoot + "/tag/v1.2.0",
-			Binary:       Asset{Name: "cb.exe", URL: releaseWebRoot + "/download/v1.2.0/cb.exe", Size: int64(len(binaryBytes))},
-			Archive:      Asset{Name: archiveName, URL: releaseWebRoot + "/download/v1.2.0/" + archiveName, Size: 1},
-			Checksums:    Asset{Name: "SHA256SUMS", URL: releaseWebRoot + "/download/v1.2.0/SHA256SUMS", Size: int64(len(manifest))},
-			ExpectedRepo: expectedReleaseRepo,
-			ExpectedRef:  "refs/tags/v1.2.0",
-			Workflow:     expectedReleaseWorkflow,
+			Current:        "v1.1.0",
+			Target:         "v1.2.0",
+			OS:             "windows",
+			Arch:           "amd64",
+			ReleaseURL:     releaseWebRoot + "/tag/v1.2.0",
+			Binary:         Asset{Name: "cb.exe", URL: releaseWebRoot + "/download/v1.2.0/cb.exe", Size: int64(len(binaryBytes))},
+			Archive:        Asset{Name: archiveName, URL: releaseWebRoot + "/download/v1.2.0/" + archiveName, Size: 1},
+			Checksums:      Asset{Name: "SHA256SUMS", URL: releaseWebRoot + "/download/v1.2.0/SHA256SUMS", Size: int64(len(manifest))},
+			ExpectedRepo:   expectedReleaseRepo,
+			ExpectedRef:    "refs/tags/v1.2.0",
+			Workflow:       expectedReleaseWorkflow,
+			checksumLayout: checksumLayoutLegacyAMD64,
 		},
 		binary:      binary,
 		checksums:   checksums,
@@ -404,6 +468,83 @@ func newVerificationFixture(t *testing.T) verificationFixture {
 		binaryBytes: binaryBytes,
 		digest:      digest,
 	}
+}
+
+func newARM64VerificationFixture(t *testing.T, extras map[string][]byte) verificationFixture {
+	t.Helper()
+	dir := t.TempDir()
+	archiveName := "container-bin-v1.2.0-windows-arm64.zip"
+	archiveBytes := arm64TestArchive(t, extras)
+	sum := sha256.Sum256(archiveBytes)
+	digest := hex.EncodeToString(sum[:])
+	manifest := strings.Repeat("a", 64) + "  cb.exe\n" +
+		strings.Repeat("b", 64) + "  container-bin-v1.2.0-windows-amd64.zip\n" +
+		digest + "  " + archiveName + "\n"
+	archive := filepath.Join(dir, archiveName)
+	checksums := filepath.Join(dir, "SHA256SUMS")
+	gh := filepath.Join(t.TempDir(), "gh.exe")
+	for path, data := range map[string][]byte{
+		archive:   archiveBytes,
+		checksums: []byte(manifest),
+		gh:        []byte("trusted GitHub CLI test executable"),
+	} {
+		if err := os.WriteFile(path, data, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	asset := Asset{Name: archiveName, URL: releaseWebRoot + "/download/v1.2.0/" + archiveName, Size: int64(len(archiveBytes))}
+	return verificationFixture{
+		plan: Plan{
+			Current:        "v1.1.0",
+			Target:         "v1.2.0",
+			OS:             "windows",
+			Arch:           "arm64",
+			ReleaseURL:     releaseWebRoot + "/tag/v1.2.0",
+			Binary:         asset,
+			Archive:        asset,
+			Checksums:      Asset{Name: "SHA256SUMS", URL: releaseWebRoot + "/download/v1.2.0/SHA256SUMS", Size: int64(len(manifest))},
+			ExpectedRepo:   expectedReleaseRepo,
+			ExpectedRef:    "refs/tags/v1.2.0",
+			Workflow:       expectedReleaseWorkflow,
+			checksumLayout: checksumLayoutDualArch,
+		},
+		binary:      archive,
+		checksums:   checksums,
+		gh:          gh,
+		binaryBytes: archiveBytes,
+		digest:      digest,
+	}
+}
+
+func arm64TestArchive(t *testing.T, extras map[string][]byte) []byte {
+	t.Helper()
+	var buffer bytes.Buffer
+	writer := zip.NewWriter(&buffer)
+	entries := map[string][]byte{
+		"cb.exe":    []byte("verified ARM64 ContainerBin executable"),
+		"LICENSE":   []byte("license"),
+		"README.md": []byte("readme"),
+	}
+	for name, data := range extras {
+		entries[name] = data
+	}
+	for _, name := range []string{"cb.exe", "LICENSE", "README.md", "../escape"} {
+		data, ok := entries[name]
+		if !ok {
+			continue
+		}
+		entry, err := writer.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := entry.Write(data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buffer.Bytes()
 }
 
 func attestationJSON(digest string) []byte {
