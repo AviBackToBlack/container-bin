@@ -91,6 +91,18 @@ func (tx applyTransaction) apply(ctx context.Context, verified Verified, install
 	if installedInfo.Size() <= 0 || installedInfo.Size() > maxBinarySize {
 		return fmt.Errorf("installed management executable size %d is outside the self-update safety limit", installedInfo.Size())
 	}
+	if !strings.EqualFold(installedExecutable, verified.installedPath) ||
+		installedInfo.Size() != verified.installedSize ||
+		oldDigest != verified.installedDigest {
+		return errors.New("installed management executable changed after update verification")
+	}
+	current, err := currentVersion(verified.installedVersion)
+	if err != nil {
+		return fmt.Errorf("verified installed version: %w", err)
+	}
+	if current.compare(target) == 0 {
+		return errors.New("verified self-update target is already installed")
+	}
 	if oldDigest == stagedDigest {
 		return errors.New("verified update bytes are identical to the installed management executable")
 	}
@@ -328,13 +340,13 @@ func replaceManagedFile(source, destination string, preferHardlink bool) error {
 	defer os.Remove(tmpPath)
 	if preferHardlink {
 		if err := os.Link(source, tmpPath); err == nil {
-			return os.Rename(tmpPath, destination)
+			return replaceExistingFile(tmpPath, destination)
 		}
 	}
 	if err := copyApplyFile(source, tmpPath); err != nil {
 		return err
 	}
-	return os.Rename(tmpPath, destination)
+	return replaceExistingFile(tmpPath, destination)
 }
 
 func copyApplyFile(source, destination string) error {

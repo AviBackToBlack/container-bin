@@ -133,6 +133,43 @@ func TestApplyTransactionRejectsChangedVerifiedBytesBeforeInstalledMutation(t *t
 	assertNoApplyRecoveryArtifacts(t, fixture.dir)
 }
 
+func TestApplyTransactionRejectsInstalledExecutableChangedAfterVerification(t *testing.T) {
+	fixture := newApplyFixture(t)
+	writeApplyFileReplace(t, fixture.installed, []byte("newer independently installed ContainerBin executable"))
+	replaced := false
+	tx := applyTransaction{
+		replace: func(string, string, bool) error {
+			replaced = true
+			return nil
+		},
+		smoke: func(context.Context, string, string) error {
+			t.Fatal("stale update reached smoke test")
+			return nil
+		},
+	}
+	err := tx.apply(context.Background(), fixture.verified, fixture.installed)
+	if err == nil || !strings.Contains(err.Error(), "changed after update verification") {
+		t.Fatalf("apply error = %v", err)
+	}
+	if replaced {
+		t.Fatal("stale update attempted an installed-file replacement")
+	}
+	assertNoApplyRecoveryArtifacts(t, fixture.dir)
+}
+
+func TestReplaceManagedFileReplacesExistingDestination(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source.exe")
+	destination := filepath.Join(dir, "destination.exe")
+	writeApplyFile(t, source, []byte("new bytes"))
+	writeApplyFile(t, destination, []byte("old bytes"))
+	if err := replaceManagedFile(source, destination, false); err != nil {
+		t.Fatal(err)
+	}
+	assertApplyBytes(t, source, []byte("new bytes"))
+	assertApplyBytes(t, destination, []byte("new bytes"))
+}
+
 func TestApplyTransactionPreservesRecoveryArtifactWhenRollbackFails(t *testing.T) {
 	fixture := newApplyFixture(t)
 	replacements := 0
@@ -189,15 +226,20 @@ func newApplyFixture(t *testing.T) applyFixture {
 	staged := filepath.Join(stageDir, "cb.exe")
 	writeApplyFile(t, staged, newBytes)
 	sum := sha256.Sum256(newBytes)
+	oldSum := sha256.Sum256(oldBytes)
 	return applyFixture{
 		dir:          dir,
 		installed:    installed,
 		hardlinkShim: hardlinkShim,
 		verified: Verified{
-			binaryPath: staged,
-			target:     "v1.1.0",
-			digest:     hex.EncodeToString(sum[:]),
-			size:       int64(len(newBytes)),
+			binaryPath:       staged,
+			target:           "v1.1.0",
+			digest:           hex.EncodeToString(sum[:]),
+			size:             int64(len(newBytes)),
+			installedPath:    installed,
+			installedVersion: "v1.0.0",
+			installedDigest:  hex.EncodeToString(oldSum[:]),
+			installedSize:    int64(len(oldBytes)),
 		},
 		oldBytes: oldBytes,
 		newBytes: newBytes,

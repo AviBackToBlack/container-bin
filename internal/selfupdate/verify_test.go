@@ -23,7 +23,7 @@ func TestVerifyRequiresChecksumAndExactAttestationPolicy(t *testing.T) {
 		gotArgs = append([]string(nil), args...)
 		return attestationJSON(fixture.digest), nil, nil
 	})
-	verified, err := testVerifier(runner).Verify(context.Background(), fixture.plan, fixture.binary, fixture.checksums, fixture.gh)
+	verified, err := testVerifier(runner).Verify(context.Background(), fixture.plan, fixture.binary, fixture.checksums, fixture.installed, fixture.gh)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestVerifyRejectsChecksumFailuresBeforeAttestation(t *testing.T) {
 			_, err := testVerifier(attestationRunnerFunc(func(context.Context, string, []string) ([]byte, []byte, error) {
 				called = true
 				return nil, nil, nil
-			})).Verify(context.Background(), fixture.plan, fixture.binary, fixture.checksums, fixture.gh)
+			})).Verify(context.Background(), fixture.plan, fixture.binary, fixture.checksums, fixture.installed, fixture.gh)
 			if err == nil || !strings.Contains(err.Error(), tc.want) || called {
 				t.Fatalf("Verify = %v, called=%v, want %q before attestation", err, called, tc.want)
 			}
@@ -126,7 +126,7 @@ func TestVerifyRejectsInvalidPolicyLayoutAndPathsBeforeAttestation(t *testing.T)
 			_, err := testVerifier(attestationRunnerFunc(func(context.Context, string, []string) ([]byte, []byte, error) {
 				called = true
 				return nil, nil, nil
-			})).Verify(context.Background(), fixture.plan, fixture.binary, fixture.checksums, fixture.gh)
+			})).Verify(context.Background(), fixture.plan, fixture.binary, fixture.checksums, fixture.installed, fixture.gh)
 			if err == nil || !strings.Contains(err.Error(), tc.want) || called {
 				t.Fatalf("Verify = %v, called=%v, want %q before attestation", err, called, tc.want)
 			}
@@ -145,9 +145,44 @@ func TestVerifyRejectsInvalidPolicyLayoutAndPathsBeforeAttestation(t *testing.T)
 		}
 		_, err = testVerifier(attestationRunnerFunc(func(context.Context, string, []string) ([]byte, []byte, error) {
 			return nil, nil, errors.New("unexpected")
-		})).Verify(context.Background(), fixture.plan, fixture.binary, other, fixture.gh)
+		})).Verify(context.Background(), fixture.plan, fixture.binary, other, fixture.installed, fixture.gh)
 		if err == nil || !strings.Contains(err.Error(), "exact staged layout") {
 			t.Fatalf("separate-directory Verify = %v", err)
+		}
+	})
+}
+
+func TestValidateVerificationPlanRequiresAuthorizedVersionTransition(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*Plan)
+		want   string
+	}{
+		{name: "already installed", mutate: func(plan *Plan) { plan.Current = plan.Target }, want: "already installed"},
+		{name: "unauthorized downgrade", mutate: func(plan *Plan) {
+			plan.Current = "v1.3.0"
+		}, want: "does not authorize"},
+		{name: "inconsistent upgrade authorization", mutate: func(plan *Plan) {
+			plan.downgradeAuthorization = downgradeAuthorization{current: "v1.1.0", target: "v1.2.0"}
+		}, want: "inconsistent"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			plan := newVerificationFixture(t).plan
+			tc.mutate(&plan)
+			_, err := validateVerificationPlan(plan)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("validateVerificationPlan = %v, want %q", err, tc.want)
+			}
+		})
+	}
+
+	t.Run("authorized downgrade", func(t *testing.T) {
+		plan := newVerificationFixture(t).plan
+		plan.Current = "v1.3.0"
+		plan.downgradeAuthorization = downgradeAuthorization{current: "v1.3.0", target: "v1.2.0"}
+		if _, err := validateVerificationPlan(plan); err != nil {
+			t.Fatal(err)
 		}
 	})
 }
@@ -180,7 +215,7 @@ func TestVerifyRejectsAttestationFailureOrInvalidResult(t *testing.T) {
 			}
 			_, err := testVerifier(attestationRunnerFunc(func(context.Context, string, []string) ([]byte, []byte, error) {
 				return stdout, tc.stderr, tc.err
-			})).Verify(context.Background(), fixture.plan, fixture.binary, fixture.checksums, fixture.gh)
+			})).Verify(context.Background(), fixture.plan, fixture.binary, fixture.checksums, fixture.installed, fixture.gh)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("Verify = %v, want %q", err, tc.want)
 			}
@@ -197,7 +232,7 @@ func TestVerifyDetectsExecutableMutationDuringAttestation(t *testing.T) {
 			t.Fatal(writeErr)
 		}
 		return attestationJSON(fixture.digest), nil, nil
-	})).Verify(context.Background(), fixture.plan, fixture.binary, fixture.checksums, fixture.gh)
+	})).Verify(context.Background(), fixture.plan, fixture.binary, fixture.checksums, fixture.installed, fixture.gh)
 	if err == nil || !strings.Contains(err.Error(), "changed during verification") {
 		t.Fatalf("mutation Verify = %v", err)
 	}
@@ -215,8 +250,9 @@ func TestVerifyRejectsGitHubCLIAuthenticationFailureOrMutation(t *testing.T) {
 			authenticate: func(context.Context, string) (string, error) {
 				return "", errors.New("untrusted publisher")
 			},
+			bindInstalled: testInstalledBinder,
 		}
-		_, err := v.Verify(context.Background(), fixture.plan, fixture.binary, fixture.checksums, fixture.gh)
+		_, err := v.Verify(context.Background(), fixture.plan, fixture.binary, fixture.checksums, fixture.installed, fixture.gh)
 		if err == nil || !strings.Contains(err.Error(), "untrusted publisher") || called {
 			t.Fatalf("Verify = %v, called=%v", err, called)
 		}
@@ -233,8 +269,9 @@ func TestVerifyRejectsGitHubCLIAuthenticationFailureOrMutation(t *testing.T) {
 				authentications++
 				return fmt.Sprintf("digest-%d", authentications), nil
 			},
+			bindInstalled: testInstalledBinder,
 		}
-		_, err := v.Verify(context.Background(), fixture.plan, fixture.binary, fixture.checksums, fixture.gh)
+		_, err := v.Verify(context.Background(), fixture.plan, fixture.binary, fixture.checksums, fixture.installed, fixture.gh)
 		if err == nil || !strings.Contains(err.Error(), "GitHub CLI executable changed") || authentications != 2 {
 			t.Fatalf("Verify = %v, authentications=%d", err, authentications)
 		}
@@ -282,8 +319,9 @@ func TestVerifyPropagatesCancellationToGitHubCLIAuthentication(t *testing.T) {
 			authenticated = true
 			return "", ctx.Err()
 		},
+		bindInstalled: testInstalledBinder,
 	}
-	_, err := v.Verify(ctx, fixture.plan, fixture.binary, fixture.checksums, fixture.gh)
+	_, err := v.Verify(ctx, fixture.plan, fixture.binary, fixture.checksums, fixture.installed, fixture.gh)
 	if err == nil || !strings.Contains(err.Error(), "context canceled") || !authenticated || runnerCalled {
 		t.Fatalf("Verify() error = %v, authenticated=%t, runnerCalled=%t", err, authenticated, runnerCalled)
 	}
@@ -349,7 +387,7 @@ func TestVerifyRejectsSymlinkInputs(t *testing.T) {
 	}
 	_, err := testVerifier(attestationRunnerFunc(func(context.Context, string, []string) ([]byte, []byte, error) {
 		return nil, nil, errors.New("unexpected")
-	})).Verify(context.Background(), fixture.plan, link, fixture.checksums, fixture.gh)
+	})).Verify(context.Background(), fixture.plan, link, fixture.checksums, fixture.installed, fixture.gh)
 	if err == nil || !strings.Contains(err.Error(), "regular non-symlink") {
 		t.Fatalf("symlink Verify = %v", err)
 	}
@@ -359,6 +397,7 @@ type verificationFixture struct {
 	plan        Plan
 	binary      string
 	checksums   string
+	installed   string
 	gh          string
 	binaryBytes []byte
 	digest      string
@@ -374,10 +413,12 @@ func newVerificationFixture(t *testing.T) verificationFixture {
 	manifest := digest + "  cb.exe\n" + strings.Repeat("a", 64) + "  " + archiveName + "\n"
 	binary := filepath.Join(dir, "cb.exe")
 	checksums := filepath.Join(dir, "SHA256SUMS")
+	installed := filepath.Join(t.TempDir(), "cb.exe")
 	gh := filepath.Join(t.TempDir(), "gh.exe")
 	for path, data := range map[string][]byte{
 		binary:    binaryBytes,
 		checksums: []byte(manifest),
+		installed: []byte("installed ContainerBin test executable"),
 		gh:        []byte("trusted GitHub CLI test executable"),
 	} {
 		if err := os.WriteFile(path, data, 0o700); err != nil {
@@ -400,6 +441,7 @@ func newVerificationFixture(t *testing.T) verificationFixture {
 		},
 		binary:      binary,
 		checksums:   checksums,
+		installed:   installed,
 		gh:          gh,
 		binaryBytes: binaryBytes,
 		digest:      digest,
@@ -435,5 +477,18 @@ func testVerifier(runner attestationRunner) verifier {
 		authenticate: func(context.Context, string) (string, error) {
 			return "authenticated-test-gh", nil
 		},
+		bindInstalled: testInstalledBinder,
 	}
+}
+
+func testInstalledBinder(_ context.Context, path, version string) (installedIdentity, error) {
+	clean, info, err := canonicalApplyFile(path, "installed management executable")
+	if err != nil {
+		return installedIdentity{}, err
+	}
+	digest, size, err := hashRegularFile(clean, info, "installed management executable")
+	if err != nil {
+		return installedIdentity{}, err
+	}
+	return installedIdentity{path: clean, version: version, digest: digest, size: size}, nil
 }

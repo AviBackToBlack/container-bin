@@ -25,14 +25,18 @@ const (
 )
 
 // Verified is an opaque result binding a successful checksum and provenance
-// verification to the exact staged executable digest. A later replacement
-// phase must re-hash the file and match this result before changing installed
-// bytes.
+// verification to both the exact staged executable and the installed binary
+// identity/version that selected the update. A later replacement phase must
+// re-hash both identities before changing installed bytes.
 type Verified struct {
-	binaryPath string
-	target     string
-	digest     string
-	size       int64
+	binaryPath       string
+	target           string
+	digest           string
+	size             int64
+	installedPath    string
+	installedVersion string
+	installedDigest  string
+	installedSize    int64
 }
 
 func (v Verified) BinaryPath() string { return v.binaryPath }
@@ -45,8 +49,16 @@ type attestationRunner interface {
 }
 
 type verifier struct {
-	runner       attestationRunner
-	authenticate func(context.Context, string) (string, error)
+	runner        attestationRunner
+	authenticate  func(context.Context, string) (string, error)
+	bindInstalled func(context.Context, string, string) (installedIdentity, error)
+}
+
+type installedIdentity struct {
+	path    string
+	version string
+	digest  string
+	size    int64
 }
 
 // Verify checks the release checksum and GitHub build-provenance attestation
@@ -54,19 +66,23 @@ type verifier struct {
 // regular executable with a valid GitHub, Inc. Authenticode signature. Verify
 // never searches PATH, passes inherited verifier configuration, or falls back
 // to checksum-only acceptance.
-func Verify(ctx context.Context, plan Plan, binaryPath, checksumsPath, ghExecutable string) (Verified, error) {
+func Verify(ctx context.Context, plan Plan, binaryPath, checksumsPath, installedExecutable, ghExecutable string) (Verified, error) {
 	return (verifier{
-		runner:       commandAttestationRunner{},
-		authenticate: authenticateGitHubCLI,
-	}).Verify(ctx, plan, binaryPath, checksumsPath, ghExecutable)
+		runner:        commandAttestationRunner{},
+		authenticate:  authenticateGitHubCLI,
+		bindInstalled: bindInstalledExecutable,
+	}).Verify(ctx, plan, binaryPath, checksumsPath, installedExecutable, ghExecutable)
 }
 
-func (v verifier) Verify(ctx context.Context, plan Plan, binaryPath, checksumsPath, ghExecutable string) (Verified, error) {
+func (v verifier) Verify(ctx context.Context, plan Plan, binaryPath, checksumsPath, installedExecutable, ghExecutable string) (Verified, error) {
 	if v.runner == nil {
 		return Verified{}, errors.New("self-update verifier has no attestation runner")
 	}
 	if v.authenticate == nil {
 		return Verified{}, errors.New("self-update verifier has no GitHub CLI authenticator")
+	}
+	if v.bindInstalled == nil {
+		return Verified{}, errors.New("self-update verifier has no installed-executable binder")
 	}
 	target, err := validateVerificationPlan(plan)
 	if err != nil {
@@ -162,11 +178,25 @@ func (v verifier) Verify(ctx context.Context, plan Plan, binaryPath, checksumsPa
 	if postPath != binaryPath || postSize != size || postDigest != digest {
 		return Verified{}, errors.New("staged executable changed during verification")
 	}
-	return Verified{binaryPath: binaryPath, target: target.raw, digest: digest, size: size}, nil
+	installed, err := v.bindInstalled(ctx, installedExecutable, plan.Current)
+	if err != nil {
+		return Verified{}, fmt.Errorf("bind installed management executable: %w", err)
+	}
+	return Verified{
+		binaryPath:       binaryPath,
+		target:           target.raw,
+		digest:           digest,
+		size:             size,
+		installedPath:    installed.path,
+		installedVersion: installed.version,
+		installedDigest:  installed.digest,
+		installedSize:    installed.size,
+	}, nil
 }
 
 func validateVerificationPlan(plan Plan) (semanticVersion, error) {
-	if _, err := currentVersion(plan.Current); err != nil {
+	current, err := currentVersion(plan.Current)
+	if err != nil {
 		return semanticVersion{}, fmt.Errorf("invalid self-update verification plan: %w", err)
 	}
 	target, err := parseVersion(plan.Target)
@@ -192,7 +222,47 @@ func validateVerificationPlan(plan Plan) (semanticVersion, error) {
 	if plan.Binary.Size <= 0 || plan.Binary.Size > maxBinarySize || plan.Archive.Size <= 0 || plan.Archive.Size > maxArchiveSize || plan.Checksums.Size <= 0 || plan.Checksums.Size > maxChecksumSize {
 		return semanticVersion{}, errors.New("self-update verification plan has an invalid asset size")
 	}
+	switch comparison := current.compare(target); {
+	case comparison == 0:
+		return semanticVersion{}, errors.New("self-update verification target is already installed")
+	case comparison > 0 && (plan.downgradeAuthorization.current != current.raw || plan.downgradeAuthorization.target != target.raw):
+		return semanticVersion{}, errors.New("self-update verification plan does not authorize the requested downgrade")
+	case comparison < 0 && plan.downgradeAuthorization != (downgradeAuthorization{}):
+		return semanticVersion{}, errors.New("self-update verification plan has inconsistent downgrade authorization")
+	}
 	return target, nil
+}
+
+func bindInstalledExecutable(ctx context.Context, path, version string) (installedIdentity, error) {
+	clean, info, err := canonicalApplyFile(path, "installed management executable")
+	if err != nil {
+		return installedIdentity{}, err
+	}
+	if !strings.EqualFold(filepath.Base(clean), "cb.exe") {
+		return installedIdentity{}, fmt.Errorf("installed management executable must be named cb.exe, got %q", filepath.Base(clean))
+	}
+	if info.Size() <= 0 || info.Size() > maxBinarySize {
+		return installedIdentity{}, fmt.Errorf("installed management executable size %d is outside the self-update safety limit", info.Size())
+	}
+	digest, size, err := hashRegularFile(clean, info, "installed management executable")
+	if err != nil {
+		return installedIdentity{}, err
+	}
+	if err := smokeUpdatedBinary(ctx, clean, version); err != nil {
+		return installedIdentity{}, fmt.Errorf("confirm installed management executable version: %w", err)
+	}
+	postPath, postInfo, err := canonicalApplyFile(clean, "installed management executable")
+	if err != nil {
+		return installedIdentity{}, err
+	}
+	postDigest, postSize, err := hashRegularFile(postPath, postInfo, "installed management executable")
+	if err != nil {
+		return installedIdentity{}, err
+	}
+	if postPath != clean || postSize != size || postDigest != digest {
+		return installedIdentity{}, errors.New("installed management executable changed while binding the update")
+	}
+	return installedIdentity{path: clean, version: version, digest: digest, size: size}, nil
 }
 
 func canonicalVerificationFile(path, label string) (string, os.FileInfo, error) {

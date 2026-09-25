@@ -12,8 +12,9 @@ func TestVerifyRealGitHubCLIRelease(t *testing.T) {
 	gh := os.Getenv("CB_TEST_REAL_GH")
 	binary := os.Getenv("CB_TEST_RELEASE_CB")
 	checksums := os.Getenv("CB_TEST_RELEASE_SUMS")
-	if gh == "" || binary == "" || checksums == "" {
-		t.Skip("set CB_TEST_REAL_GH, CB_TEST_RELEASE_CB and CB_TEST_RELEASE_SUMS to run the live release verification")
+	installed := os.Getenv("CB_TEST_INSTALLED_CB")
+	if gh == "" || binary == "" || checksums == "" || installed == "" {
+		t.Skip("set CB_TEST_REAL_GH, CB_TEST_RELEASE_CB, CB_TEST_RELEASE_SUMS and CB_TEST_INSTALLED_CB to run the live release verification")
 	}
 	binaryInfo, err := os.Stat(binary)
 	if err != nil {
@@ -36,7 +37,7 @@ func TestVerifyRealGitHubCLIRelease(t *testing.T) {
 		ExpectedRef:  "refs/tags/v1.1.0",
 		Workflow:     expectedReleaseWorkflow,
 	}
-	verified, err := Verify(context.Background(), plan, binary, checksums, gh)
+	verified, err := Verify(context.Background(), plan, binary, checksums, installed, gh)
 	if err != nil {
 		t.Fatal(err)
 	}
