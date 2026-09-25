@@ -1000,3 +1000,11 @@ attestation:
 ```powershell
 gh attestation verify cb.exe --repo AviBackToBlack/container-bin
 ```
+
+The release keeps the existing raw `cb.exe` asset for Windows amd64 and adds
+`cb-windows-arm64.exe` for Windows ARM64. Architecture-specific ZIP archives
+are named `container-bin-VERSION-windows-amd64.zip` and
+`container-bin-VERSION-windows-arm64.zip`; each archive contains its target
+binary as `cb.exe`. Verify the exact raw executable or archive you download.
+The ARM64 artifact is release-provenance coverage, not a support claim: full
+Windows ARM64 support still requires real Docker Desktop qualification.
