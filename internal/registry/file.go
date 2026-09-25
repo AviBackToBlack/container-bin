@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -222,10 +223,25 @@ func Load(authenticate Authenticator) (Registry, string, error) {
 	if err != nil {
 		return Registry{}, "", err
 	}
-	return loadAt(path, authenticate)
+	return loadPath(path, true, authenticate)
 }
 
 func loadAt(path string, authenticate Authenticator) (Registry, string, error) {
+	return loadPath(path, true, authenticate)
+}
+
+// LoadReadOnly reads a valid backup in place when the primary registry is
+// missing. Unlike Load, it never renames recovery state and is safe for
+// commands whose contract forbids filesystem mutation.
+func LoadReadOnly(authenticate Authenticator) (Registry, string, error) {
+	path, err := Path()
+	if err != nil {
+		return Registry{}, "", err
+	}
+	return loadPath(path, false, authenticate)
+}
+
+func loadPath(path string, recoverBackup bool, authenticate Authenticator) (Registry, string, error) {
 	if authenticate == nil {
 		return Registry{}, "", errors.New("registry authenticator is required")
 	}
@@ -234,18 +250,23 @@ func loadAt(path string, authenticate Authenticator) (Registry, string, error) {
 		if err := authenticate(path, nil); err != nil {
 			return Registry{}, path, err
 		}
-		rec, err := atomicio.RecoverFromBackup(path, validateBackup)
-		if err != nil {
-			return Registry{}, path, err
+		if recoverBackup {
+			recovered, recoverErr := atomicio.RecoverFromBackup(path, validateBackup)
+			if recoverErr != nil {
+				return Registry{}, path, recoverErr
+			}
+			if !recovered {
+				return Default(), path, nil
+			}
+			data, err = os.ReadFile(path)
+		} else {
+			data, err = os.ReadFile(path + ".bak")
+			if os.IsNotExist(err) {
+				return Default(), path, nil
+			}
 		}
-		if !rec {
-			return Default(), path, nil
-		}
-		data, err = os.ReadFile(path)
-		if err != nil {
-			return Registry{}, path, err
-		}
-	} else if err != nil {
+	}
+	if err != nil {
 		return Registry{}, path, err
 	}
 	if err := authenticate(path, data); err != nil {
@@ -255,7 +276,7 @@ func loadAt(path string, authenticate Authenticator) (Registry, string, error) {
 	return reg, path, err
 }
 
-func SetDefaultVersion(path, family, version string) error {
+func SetDefaultVersion(path, family, version string, validators ...func(Registry) error) error {
 	family, version = strings.ToLower(family), strings.ToLower(version)
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -315,8 +336,16 @@ func SetDefaultVersion(path, family, version string) error {
 	if !replaced {
 		return fmt.Errorf("default family %q has no writable version key", family)
 	}
-	if _, err := ParseTOML(out.String()); err != nil {
+	updated, err := ParseTOML(out.String())
+	if err != nil {
 		return fmt.Errorf("refusing default update: %w", err)
+	}
+	for _, validate := range validators {
+		if validate != nil {
+			if err := validate(updated); err != nil {
+				return fmt.Errorf("refusing default update: %w", err)
+			}
+		}
 	}
 	return atomicio.WriteFile(path, []byte(out.String()), 0644)
 }
@@ -415,6 +444,9 @@ func exposedProvenanceLines(lines []string, remove map[string]bool) (keep, drop 
 }
 
 func InstallShims(reg Registry) error {
+	if err := installShimNames(reg.ToolNames(), false); err != nil {
+		return err
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		return err
@@ -424,8 +456,43 @@ func InstallShims(reg Registry) error {
 		return err
 	}
 	dir := filepath.Dir(exe)
-	names := reg.ToolNames()
+	fmt.Printf("\nRegistry:\n  %s\n\nAdd this directory near the front of PATH:\n  %s\n", filepath.Join(dir, "container-bin.toml"), dir)
+	return nil
+}
+
+// InstallAdditionalShimNames installs project-overlay shims without replacing
+// an unrelated existing executable. Existing current ContainerBin hardlinks or
+// byte-identical copy-fallback shims are safe to refresh.
+func InstallAdditionalShimNames(names []string) error {
+	return installShimNames(names, true)
+}
+
+func installShimNames(names []string, refuseUnrelated bool) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	exe, err = filepath.Abs(exe)
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(exe)
+	names, err = normalizedShimNames(names)
+	if err != nil {
+		return err
+	}
+	if refuseUnrelated {
+		for _, name := range names {
+			dst := filepath.Join(dir, name+".exe")
+			if err := verifyExistingManagedShim(exe, dst); err != nil {
+				return err
+			}
+		}
+	}
 	for _, name := range names {
+		if !ValidToolName(name) || ReservedToolName(name) {
+			return fmt.Errorf("refusing to install invalid or reserved shim name %q", name)
+		}
 		dst := filepath.Join(dir, name+".exe")
 		mode, err := installShim(exe, dst, os.Link, copyFile, os.Rename)
 		if err != nil {
@@ -437,8 +504,69 @@ func InstallShims(reg Registry) error {
 			fmt.Printf("installed %-10s (copy fallback) -> %s\n", name, dst)
 		}
 	}
-	fmt.Printf("\nRegistry:\n  %s\n\nAdd this directory near the front of PATH:\n  %s\n", filepath.Join(dir, "container-bin.toml"), dir)
 	return nil
+}
+
+func normalizedShimNames(names []string) ([]string, error) {
+	normalized := make([]string, len(names))
+	for i, name := range names {
+		normalized[i] = strings.ToLower(name)
+	}
+	sort.Strings(normalized)
+	for i, name := range normalized {
+		if !ValidToolName(name) || ReservedToolName(name) {
+			return nil, fmt.Errorf("refusing to install invalid or reserved shim name %q", name)
+		}
+		if i > 0 && normalized[i-1] == name {
+			return nil, fmt.Errorf("refusing duplicate shim name %q", name)
+		}
+	}
+	return normalized, nil
+}
+
+func verifyExistingManagedShim(exe, shim string) error {
+	shimInfo, err := os.Stat(shim)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect existing shim %s: %w", shim, err)
+	}
+	exeInfo, err := os.Stat(exe)
+	if err != nil {
+		return err
+	}
+	if os.SameFile(exeInfo, shimInfo) {
+		return nil
+	}
+	exeDigest, err := fileSHA256(exe)
+	if err != nil {
+		return err
+	}
+	shimDigest, err := fileSHA256(shim)
+	if err != nil {
+		return err
+	}
+	if exeDigest != shimDigest {
+		return fmt.Errorf("refusing to replace existing %s because it is not the current ContainerBin executable; verify and remove or rename that file before retrying", shim)
+	}
+	return nil
+}
+
+func fileSHA256(path string) ([sha256.Size]byte, error) {
+	var zero [sha256.Size]byte
+	f, err := os.Open(path)
+	if err != nil {
+		return zero, err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return zero, err
+	}
+	var digest [sha256.Size]byte
+	copy(digest[:], h.Sum(nil))
+	return digest, nil
 }
 
 type fileOperation func(string, string) error

@@ -271,24 +271,32 @@ func Doctor(reg registry.Registry, cfgPath string, machinePolicy policy.Policy) 
 		fail("shim directory is not in PATH: %s", dir)
 	}
 
-	shimProblems := 0
+	globalShimProblems, projectShimProblems := 0, 0
 	shimNames := reg.ToolNames()
 	for _, name := range shimNames {
 		shim := filepath.Join(dir, name+".exe")
 		a, e1 := os.Stat(exe)
 		b, e2 := os.Stat(shim)
 		if e1 != nil || e2 != nil {
-			shimProblems++
+			if isProjectShim(reg, name) {
+				projectShimProblems++
+			} else {
+				globalShimProblems++
+			}
 			continue
 		}
 		if !os.SameFile(a, b) {
 			warn("shim %s is a copy, not a hardlink", name)
 		}
 	}
-	if shimProblems == 0 {
+	if globalShimProblems == 0 && projectShimProblems == 0 {
 		ok("all %d registry shims exist", len(shimNames))
-	} else {
-		fail("%d registry shim(s) missing; run `cb install`", shimProblems)
+	}
+	if globalShimProblems > 0 {
+		fail("%d global registry shim(s) missing; run `cb install`", globalShimProblems)
+	}
+	if projectShimProblems > 0 {
+		fail("%d trusted project shim(s) missing; rerun `cb trust` interactively or `cb trust --yes` after review", projectShimProblems)
 	}
 
 	// NTFS ACLs and PowerShell's Get-Acl are Windows-specific concepts, unlike the
@@ -449,6 +457,11 @@ func Doctor(reg registry.Registry, cfgPath string, machinePolicy policy.Policy) 
 		return fmt.Errorf("%d critical check(s) failed", failures)
 	}
 	return nil
+}
+
+func isProjectShim(reg registry.Registry, name string) bool {
+	tool, _, ok := reg.Resolve(name)
+	return ok && tool.TrustedProjectRoot != ""
 }
 
 // captureStdout redirects the process's real os.Stdout to a temp file for

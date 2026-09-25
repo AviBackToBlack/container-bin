@@ -16,6 +16,11 @@ Inside the boundary (whoever controls these controls execution):
   `rw` access hand the image write access to those host paths.
 - `container-bin.lock` — pins image digests. Whoever can rewrite it can pin a
   malicious digest.
+- A trusted project `.container-bin.toml` — names additional project-local
+  images, exact environment variables, commands and project state. Trust is
+  stored outside the repository and bound to the canonical root plus the
+  SHA-256 digest of the exact overlay bytes; cloned or changed overlays are not
+  active by themselves.
 - The shim directory on `PATH` — whoever can write executables there doesn't
   need ContainerBin to attack you.
 - Docker Desktop itself, and every image you configure or `docker pull`.
@@ -50,6 +55,20 @@ readable, and dangerous to let others edit.
 - **Fail-closed configuration.** Unknown registry keys, duplicate tool
   sections, newer schema versions, incomplete lock entries, and
   registry-image-not-in-lock all refuse to run rather than guess.
+- **Digest-bound, add-only project configuration.** A project overlay cannot
+  replace a global tool or alias, define defaults, request host mounts or
+  environment prefixes, or use shared cross-project volumes. First use needs
+  explicit interactive trust (or explicit `--yes` pre-provisioning), stored
+  outside the project. A moved project, changed byte or invalid trust store
+  fails before Docker or registry mutation. A discovered overlay with an
+  unresolvable project-root reparse chain also fails because canonical identity
+  cannot be proven. The legacy `python` provider is excluded because its
+  implicit pip-cache mount is shared across projects. Exact environment names
+  and project-volume requests are included in the review output; every
+  project-controlled value is quoted so control characters cannot spoof review
+  labels. Runtime workspace mounts and project-volume IDs for overlay tools are
+  fixed to the approved overlay root; an ancestor marker cannot silently widen
+  that boundary.
 - **Fail-closed host boundary.** Non-bootstrap work currently runs only in a
   native Windows process. Windows binaries launched through detected WSL
   interoperability, WSL1, recognized-but-not-yet-enabled native WSL2,

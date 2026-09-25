@@ -43,6 +43,9 @@ type Tool struct {
 	SharedVolumes   []string // NAME:CONTAINER_PATH, shared named volumes
 	HostMounts      []string // SOURCE:/CONTAINER_PATH:ro|rw, explicit host bind mounts
 	CwdMode         string   // "project" or "isolated"; empty means "project"
+	// TrustedProjectRoot is runtime-only provenance set by the project-overlay
+	// merge. It is never accepted from either registry file.
+	TrustedProjectRoot string
 }
 
 type Registry struct {

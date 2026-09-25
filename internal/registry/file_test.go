@@ -172,6 +172,44 @@ func TestInstallShimReplacementFailurePreservesExistingShim(t *testing.T) {
 	}
 }
 
+func TestNormalizedShimNamesRejectsCaseDuplicates(t *testing.T) {
+	if _, err := normalizedShimNames([]string{"Acme", "acme"}); err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("normalizedShimNames() error = %v, want duplicate rejection", err)
+	}
+	got, err := normalizedShimNames([]string{"zeta", "Acme"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, ",") != "acme,zeta" {
+		t.Fatalf("normalized names = %v", got)
+	}
+}
+
+func TestVerifyExistingManagedShim(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "cb.exe")
+	same := filepath.Join(dir, "same.exe")
+	other := filepath.Join(dir, "other.exe")
+	if err := os.WriteFile(exe, []byte("container-bin"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(same, []byte("container-bin"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(other, []byte("unrelated"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyExistingManagedShim(exe, filepath.Join(dir, "missing.exe")); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyExistingManagedShim(exe, same); err != nil {
+		t.Fatalf("byte-identical shim rejected: %v", err)
+	}
+	if err := verifyExistingManagedShim(exe, other); err == nil || !strings.Contains(err.Error(), "not the current ContainerBin executable") {
+		t.Fatalf("unrelated shim error = %v", err)
+	}
+}
+
 func TestAppendMissingDefaultToolsPreservesCustom(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/container-bin.toml"
@@ -552,6 +590,54 @@ func TestSetDefaultVersionRewritesOnlySelection(t *testing.T) {
 	}
 }
 
+func TestLoadPathReadOnlyUsesBackupWithoutRecovering(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "container-bin.toml")
+	backup := path + ".bak"
+	const config = "schema_version = 1\n[tools.demo]\nimage = \"demo:1\"\nprovider = \"stateless\"\n"
+	if err := os.WriteFile(backup, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var authenticated [][]byte
+	authenticate := func(gotPath string, exactBytes []byte) error {
+		if gotPath != path {
+			t.Fatalf("authenticated path = %q, want %q", gotPath, path)
+		}
+		authenticated = append(authenticated, append([]byte(nil), exactBytes...))
+		return nil
+	}
+	reg, gotPath, err := loadPath(path, false, authenticate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != path {
+		t.Fatalf("load path = %q, want %q", gotPath, path)
+	}
+	if _, ok := reg.Tools["demo"]; !ok {
+		t.Fatal("read-only backup load lost tool")
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("read-only load created primary registry: %v", err)
+	}
+	if _, err := os.Stat(backup); err != nil {
+		t.Fatalf("read-only load removed backup: %v", err)
+	}
+	if len(authenticated) != 2 || authenticated[0] != nil || string(authenticated[1]) != config {
+		t.Fatalf("read-only authentication inputs = %q, want missing primary then exact backup bytes", authenticated)
+	}
+
+	authenticated = nil
+	if _, _, err := loadPath(path, true, authenticate); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("mutation-time load did not recover primary: %v", err)
+	}
+	if _, err := os.Stat(backup); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("mutation-time load left backup behind: %v", err)
+	}
+}
+
 func TestSetDefaultVersionRecognizesCommentedSectionHeader(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "container-bin.toml")
 	const defaultNode = "[defaults.node]\nversion = \"24\""
@@ -572,6 +658,36 @@ func TestSetDefaultVersionRecognizesCommentedSectionHeader(t *testing.T) {
 	want := strings.Replace(src, "  version = \"24\" # pinned for prod", "  version = \"22\" # pinned for prod", 1)
 	if string(after) != want {
 		t.Fatal("commented default update changed content beyond the selected version line")
+	}
+}
+
+func TestSetDefaultVersionRunsValidatorOnExactCandidateBeforeWrite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "container-bin.toml")
+	if err := os.WriteFile(path, []byte(DefaultTOML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantErr := errors.New("project overlay collision")
+	validated := false
+	err = SetDefaultVersion(path, "node", "22", func(candidate Registry) error {
+		validated = true
+		if _, resolved, ok := candidate.Resolve("node"); !ok || resolved != "node22" {
+			t.Fatalf("validator saw node resolve to %q, ok=%v", resolved, ok)
+		}
+		return wantErr
+	})
+	if !errors.Is(err, wantErr) || !validated {
+		t.Fatalf("SetDefaultVersion() error = %v, validated=%t", err, validated)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("rejected default candidate changed the registry")
 	}
 }
 

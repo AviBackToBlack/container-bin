@@ -405,6 +405,41 @@ func TestParseLockArgs(t *testing.T) {
 	}
 }
 
+func TestProjectOverlayLockRefreshPreservesOnlyOtherValidatedEntries(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	current := "ghcr.io/acme/current:1"
+	other := "ghcr.io/acme/other:1"
+	path := filepath.Join(t.TempDir(), "container-bin.lock")
+	lf := &lockfile.LockFile{Version: 1, Images: map[string]lockfile.LockEntry{
+		current: {Configured: current, Resolved: "ghcr.io/acme/current@" + digest, Digest: digest},
+		other:   {Configured: other, Resolved: "ghcr.io/acme/other@" + digest, Digest: digest},
+	}}
+	if err := lockfile.Write(path, lf); err != nil {
+		t.Fatal(err)
+	}
+
+	seed, preserved, err := lockFileForRefresh(path, []string{current}, true, policy.Policy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preserved != 1 || len(seed.Images) != 1 || seed.Images[other].Configured != other {
+		t.Fatalf("preserved seed = %+v, count=%d", seed.Images, preserved)
+	}
+	if _, exists := seed.Images[current]; exists {
+		t.Fatal("current effective image was preserved instead of being refreshed")
+	}
+
+	full, preserved, err := lockFileForRefresh(path, []string{current}, false, policy.Policy{})
+	if err != nil || preserved != 0 || len(full.Images) != 0 {
+		t.Fatalf("global full-refresh seed = %+v, count=%d, err=%v", full.Images, preserved, err)
+	}
+
+	denied := policy.Policy{SchemaVersion: 1, AllowedRepositories: []string{"ghcr.io/allowed"}}
+	if _, _, err := lockFileForRefresh(path, []string{current}, true, denied); err == nil || !strings.Contains(err.Error(), "cannot preserve") {
+		t.Fatalf("policy-denied preserved entry error = %v", err)
+	}
+}
+
 func TestCheckLockReportsEveryStatusAfterPolicyPreflight(t *testing.T) {
 	reg := registry.Registry{Tools: map[string]registry.Tool{
 		"present": {Image: "ghcr.io/acme/present:1"},
@@ -1512,6 +1547,29 @@ provider = "stateless"
 	}
 	if strings.Contains(out, "cwd_mode") {
 		t.Fatalf("default trace output should not contain cwd_mode:\n%s", out)
+	}
+}
+
+func TestTraceRejectsOutsideTrustedProjectRoot(t *testing.T) {
+	trustedRoot := t.TempDir()
+	outside := t.TempDir()
+	old, _ := os.Getwd()
+	if err := os.Chdir(outside); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(old)
+
+	reg := registry.Registry{Tools: map[string]registry.Tool{
+		"demo": {
+			Name:               "demo",
+			Image:              "demo:1",
+			Provider:           "stateless",
+			TrustedProjectRoot: trustedRoot,
+		},
+	}}
+	err := Trace(reg, []string{"demo"}, policy.Policy{})
+	if err == nil || !strings.Contains(err.Error(), "outside trusted project overlay root") {
+		t.Fatalf("Trace() error = %v, want trusted-root refusal", err)
 	}
 }
 

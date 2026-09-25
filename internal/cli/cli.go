@@ -162,6 +162,9 @@ func Trace(reg registry.Registry, args []string, machinePolicy policy.Policy) er
 		found = false
 	} else {
 		root, found = pathmap.FindProjectRootForTool(cwd, t)
+		if t.TrustedProjectRoot != "" && !found {
+			return fmt.Errorf("current directory %q is outside trusted project overlay root %q", cwd, t.TrustedProjectRoot)
+		}
 		if !found {
 			root = cwd
 		}
@@ -269,7 +272,7 @@ func Env(reg registry.Registry) error {
 	return nil
 }
 
-func Default(reg registry.Registry, cfgPath string, args []string, machinePolicy policy.Policy) error {
+func Default(reg registry.Registry, cfgPath string, args []string, machinePolicy policy.Policy, validators ...func(registry.Registry) error) error {
 	if reg.SchemaVersion < 2 {
 		return errors.New("runtime defaults require registry schema 2; run `cb install` to upgrade")
 	}
@@ -304,7 +307,7 @@ func Default(reg registry.Registry, cfgPath string, args []string, machinePolicy
 			}
 		}
 	}
-	if err := registry.SetDefaultVersion(cfgPath, family, version); err != nil {
+	if err := registry.SetDefaultVersion(cfgPath, family, version, validators...); err != nil {
 		return err
 	}
 	info, _ := reg.DefaultInfo(family)
@@ -1443,6 +1446,17 @@ func parseRestoreArgs(args []string) (path string, apply, state bool, err error)
 }
 
 func Lock(reg registry.Registry, cfgPath string, args []string, machinePolicy policy.Policy) error {
+	return lockRegistry(reg, cfgPath, args, machinePolicy, false)
+}
+
+// LockPreservingUnconfigured refreshes the effective registry while retaining
+// validated entries owned by other trusted project overlays in the shared
+// lockfile. Plain Lock deliberately keeps its complete-global refresh behavior.
+func LockPreservingUnconfigured(reg registry.Registry, cfgPath string, args []string, machinePolicy policy.Policy) error {
+	return lockRegistry(reg, cfgPath, args, machinePolicy, true)
+}
+
+func lockRegistry(reg registry.Registry, cfgPath string, args []string, machinePolicy policy.Policy, preserveUnconfigured bool) error {
 	path := lockfile.PathFor(cfgPath)
 	check, localTools, err := parseLockArgs(args)
 	if err != nil {
@@ -1467,7 +1481,17 @@ func Lock(reg registry.Registry, cfgPath string, args []string, machinePolicy po
 			return err
 		}
 	}
-	lf := &lockfile.LockFile{Version: 1, Images: map[string]lockfile.LockEntry{}}
+	lf, preserved, err := lockFileForRefresh(path, images, preserveUnconfigured, machinePolicy)
+	if err != nil {
+		return err
+	}
+	if preserved > 0 {
+		label := "entry"
+		if preserved != 1 {
+			label = "entries"
+		}
+		fmt.Printf("preserving %d validated image lock %s from other project overlays\n", preserved, label)
+	}
 	for _, image := range images {
 		fmt.Printf("locking  %s\n", image)
 		var e lockfile.LockEntry
@@ -1487,6 +1511,34 @@ func Lock(reg registry.Registry, cfgPath string, args []string, machinePolicy po
 	}
 	fmt.Printf("\nlockfile: %s\n", path)
 	return nil
+}
+
+func lockFileForRefresh(path string, refreshed []string, preserve bool, machinePolicy policy.Policy) (*lockfile.LockFile, int, error) {
+	result := &lockfile.LockFile{Version: 1, Images: map[string]lockfile.LockEntry{}}
+	if !preserve {
+		return result, 0, nil
+	}
+	existing, err := lockfile.Load(path)
+	if err != nil {
+		return nil, 0, err
+	}
+	if existing == nil {
+		return result, 0, nil
+	}
+	refreshSet := make(map[string]bool, len(refreshed))
+	for _, image := range refreshed {
+		refreshSet[image] = true
+	}
+	for image, entry := range existing.Images {
+		if refreshSet[image] {
+			continue
+		}
+		if err := machinePolicy.AuthorizeResolvedImage(image, entry.Resolved, lockfile.IsLocalResolved(entry.Resolved)); err != nil {
+			return nil, 0, fmt.Errorf("cannot preserve image lock entry %q from another project overlay: %w", image, err)
+		}
+		result.Images[image] = entry
+	}
+	return result, len(result.Images), nil
 }
 
 func checkLock(reg registry.Registry, path string, machinePolicy policy.Policy, inspect func(string) error) error {
