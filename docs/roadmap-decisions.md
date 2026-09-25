@@ -23,7 +23,7 @@ items from being repeatedly rediscovered as if they were immediately actionable.
 | Plugin/provider architecture | **Intentionally deferred** | Reopen only after at least two concrete integrations cannot be expressed safely by the declarative model. |
 | RM-31 self-update | **Explicit transactional, attestation-verifying update** | Selection/check foundation shipped in PR #76. Staging, `gh attestation verify`, Windows apply, complete managed-set rollback and E2E remain. |
 | RM-30 Authenticode | **Design accepted; externally blocked** | Implement only after a real code-signing certificate and protected signing mechanism exist. Stable and prerelease release artifacts are both signed. |
-| RM-29 Windows ARM64 | **Lowest priority** | Native GitHub Windows ARM64 CI and release plumbing shipped in PR #78. Full support remains blocked on real Windows-on-Arm + Docker Desktop qualification. Do not delay other roadmap work. |
+| RM-29 Windows ARM64 | **Lowest priority** | Native GitHub Windows ARM64 CI shipped in PR #78. Release packaging, ARM64 self-update selection and real Windows-on-Arm + Docker Desktop qualification remain. Do not delay other roadmap work. |
 | Standalone Linux/macOS | **Demand-gated** | No support claim yet. WSL should create reusable narrow Linux host abstractions, but standalone hosts require their own contract and real Docker qualification. |
 | RM-23 8.3 mount alias | **Intentionally deferred** | Current comma-path rejection remains supported behavior. Reopen only on demonstrated user demand. |
 | RM-19 reserved-name migration | **Conditionally deferred** | Implement only when a future release actually proposes reserving a previously legal name. |
@@ -253,8 +253,8 @@ This is priority/order guidance, not permission to merge.
 
 Merged foundations are removed from the remaining queue: RM-26 shipped in PR
 #74, enterprise-policy foundation in PR #75, RM-31 selection/check in PR #76,
-the WSL host boundary in PR #77, and native Windows ARM64 CI/release plumbing in
-PR #78. Unmerged pull-request coverage is not completion.
+the WSL host boundary in PR #77, and native Windows ARM64 CI in PR #78.
+Unmerged pull-request coverage is not completion.
 
 1. **Per-project overlay trust foundation**
    - project overlay parsing independent of global registry;
@@ -293,7 +293,8 @@ PR #78. Unmerged pull-request coverage is not completion.
 
 7. **RM-29 Windows ARM64**
    - **lowest priority**;
-   - native hosted ARM64 CI and release plumbing are merged in PR #78;
+   - native hosted ARM64 CI is merged in PR #78;
+   - architecture-specific release packaging and self-update selection remain;
    - support claim only after real Windows-on-Arm + Docker Desktop E2E.
 
 ## Dormant / recurring items

@@ -69,7 +69,7 @@ The minimum delivery gate for a code change is:
 | RM-23 8.3 path alias | **Intentionally deferred** | Keep explicit comma-path rejection; reconsider only on demonstrated user demand |
 | RM-24 Python/uv provider choice | **Decision complete — keep both** | No provider migration; Python provider and uv/uvx remain separate |
 | RM-26 Python global CLI exposure | **Completed in PR #74** | Stateful pipx + `cb expose pipx` shipped; plain pip `/venv/bin` remains intentionally unexposed |
-| RM-29 Windows ARM64 | **Native CI shipped / hardware-gated for full support** | PR #78 added native hosted ARM64 CI and release plumbing; official support still requires real Windows-on-Arm + Docker Desktop E2E |
+| RM-29 Windows ARM64 | **Native CI shipped / release and hardware work remain** | PR #78 added native hosted ARM64 CI; release packaging, ARM64 self-update selection, and real Windows-on-Arm + Docker Desktop E2E remain |
 | RM-30 Authenticode | **Design complete / externally blocked** | Provision real code-signing certificate and protected signing mechanism |
 | RM-31 self-update | **Selection/check foundation shipped** | PR #76 shipped selection/check behavior; staging, verification, transactional apply and E2E remain |
 | RM-34 Cargo expose enhancement | **Intentionally deferred** | Existing expose-all/explicit selection are sufficient; reopen only for concrete unmet use case |
@@ -311,11 +311,12 @@ Cross-compilation proves only that Go can emit a PE file. Support may be
 claimed only after qualification on real Windows ARM64 hardware running Docker
 Desktop in Linux-container mode.
 
-PR #78 shipped the native hosted ARM64 CI and release-architecture plumbing,
-and PR #76 shipped architecture-aware self-update asset selection. The
-remaining gate is real Windows-on-Arm + Docker Desktop qualification; the
-existence of an ARM64 artifact or passing native management-command CI is not a
-full support claim.
+PR #78 shipped native hosted ARM64 CI for non-Docker qualification. It did not
+add ARM64 release assets, and PR #76's self-update foundation deliberately
+rejects architectures other than Windows/amd64. The release matrix,
+architecture-specific packaging and update selection below therefore remain,
+along with real Windows-on-Arm + Docker Desktop qualification. Passing native
+management-command CI alone is not a full support claim.
 
 ### Required implementation
 
@@ -390,9 +391,10 @@ separate phases with explicit boundaries. GitHub documents both
 and [artifact-attestation verification](https://docs.github.com/en/actions/concepts/security/artifact-attestations).
 
 PR #76 shipped the command surface, release selection, check/dry-run behavior,
-architecture-aware asset selection and bounded metadata rules. Download
-staging, provenance verification, transactional Windows apply, rollback and
-release E2E remain incomplete until their implementations merge.
+strict Windows/amd64 asset selection and bounded metadata rules. Unsupported
+architectures still fail closed. Download staging, provenance verification,
+transactional Windows apply, rollback, broader architecture support and release
+E2E remain incomplete until their implementations merge.
 
 ### Command and selection requirements
 
@@ -475,12 +477,11 @@ matrix, backup/restore and release qualification exist for that host.
 PR #75 shipped the machine-owned policy foundation: fixed policy location and
 ownership checks, schema/versioning, stable diagnostics, effective-request
 authorization, repository/image allowlisting, mandatory lock enforcement, and
-restricted host-mount/environment controls. Lower-precedence configuration
-cannot weaken that policy.
+diagnostics. Lower-precedence configuration cannot weaken that policy.
 
-Authenticated registry files and image trust remain separate follow-up slices.
-They must extend the merged policy boundary rather than introducing a parallel
-precedence model.
+Authenticated registry files, project host-mount/environment restrictions and
+image trust remain separate follow-up slices. They must extend the merged
+policy boundary rather than introducing a parallel precedence model.
 
 ### Required policy model
 
@@ -647,8 +648,7 @@ implementation task in this roadmap document.
 
 Merged foundations are not remaining queue entries: RM-26 shipped in PR #74,
 enterprise-policy foundation in PR #75, RM-31 selection/check in PR #76, the
-WSL host boundary in PR #77, and native Windows ARM64 CI/release plumbing in
-PR #78.
+WSL host boundary in PR #77, and native Windows ARM64 CI in PR #78.
 
 1. Per-project overlay trust foundation.
 2. Signed-registry enterprise policy.
