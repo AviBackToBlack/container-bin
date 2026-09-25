@@ -875,12 +875,20 @@ a false failure; run `cb setup` to append the current default profiles.
 
 ### Self-update release selection
 
-`cb self-update --check` is the first, read-only phase of transactional
-self-update support. It compares a release-qualified Windows/amd64 build with
-the latest stable release and reports the exact binary, archive, checksum and
-provenance policy that later phases must verify. It does not download assets or
-change any files, and development builds fail closed because their installed
-version cannot be proved.
+`cb self-update --check` is the currently exposed, read-only command. It
+compares a release-qualified Windows/amd64 build with the latest stable release
+and reports the exact binary, archive, checksum and provenance policy. It does
+not download assets or change any files, and development builds fail closed
+because their installed version cannot be proved.
+
+The internal next phases use private same-volume staging, exact checksum plus
+GitHub build-provenance verification, and a rollback-safe Windows replacement
+transaction. That transaction re-hashes the verified bytes before mutation,
+serializes with registry/shim changes, discovers only shims proven to contain
+the installed ContainerBin bytes, replaces and checks the complete proven set,
+and restores the prior set after any smoke-test or identity failure. The helper
+that waits for the invoking process to exit and the user-facing apply command
+are not wired yet, so `--check` remains the only accepted command mode.
 
 Stable selection is the default. Use `--prerelease` to select the highest
 canonical prerelease among the 30 most recent published releases, or
