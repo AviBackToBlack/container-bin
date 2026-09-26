@@ -18,7 +18,7 @@ NAME.exe (hardlink to cb.exe)
   → host_mounts resolution      explicit registry-declared bind mounts, provider-agnostic
   → provider assembly           stateless | python | stateful volume/env setup
   → image lock resolution       container-bin.lock digest, fail-closed
-  → policy authorization        lock/local-origin/repository constraints
+  → policy authorization        lock/local-origin/repository/image-trust constraints
   → docker run --rm ...         stdio passthrough, exit code preserved
 ```
 
@@ -216,6 +216,15 @@ built-in default or `.bak` recovery. Registry-mutating commands are disabled in
 this mode because ContainerBin never possesses the administrator's signing key;
 lockfile-only operations remain separate.
 
+Policy schema 3 adds a canonical repository-bound image-trust rule set plus
+absolute SHA-256 pins for an external cosign verifier and any public-key files.
+Rule lookup reuses Docker Hub normalization and selects the most-specific
+repository boundary. The policy layer does not invoke external code. Until a
+later package verifies exact resolved digests and the lockfile can carry
+structured evidence, every covered image fails authorization with
+`policy.image_trust_unverified`; no existing digest-only path can silently
+bypass the new control.
+
 ## Atomic writes
 
 Registry and lock mutations (add, expose, unexpose, uninstall, lock, update,
@@ -294,6 +303,7 @@ internal/toml        the shared TOML subset lexer                    (leaf)
 internal/atomicio    crash-safe write + .bak recovery                (leaf)
 internal/mutationlock  the registry mutation lock primitive          (leaf)
 internal/hostenv       host classification and gated WSL layout       (leaf)
+internal/wslfs         native WSL filesystem ownership/mode preflight
 internal/selfupdate    canonical release selection and read-only plan (leaf)
 ```
 
@@ -312,6 +322,7 @@ lockfile     -> atomicio, policy, registry, toml
 pathmap      -> registry
 registry     -> atomicio, toml
 policy       -> toml
+wslfs       -> hostenv
 atomicio, dockervol, hostenv, mutationlock, selfupdate, toml -> (leaves)
 ```
 
@@ -337,6 +348,14 @@ Two boundaries are load-bearing rather than cosmetic:
 release workflow inject it with `-ldflags "-X main.version=..."`, so that symbol
 path is part of the release contract. Packages that need it take it as a
 parameter.
+
+`internal/wslfs` is an unexposed Linux-only preflight over the fixed layout
+derived by `internal/hostenv`. It accepts only a real current-user-owned home on
+the distribution root filesystem device, creates missing ContainerBin layout
+directories without repairing existing objects, and validates strict modes for
+managed registry, lock, binary and management-shim endpoints. The non-Linux
+build-tagged implementation always rejects the operation. Frontend wiring,
+registry-derived tool shims and Docker integration remain later WSL slices.
 
 After the host runtime boundary is enforced, `cb self-update --check` is
 dispatched before machine policy and registry loading. Release selection

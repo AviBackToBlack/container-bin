@@ -297,47 +297,37 @@ exception, expiry and outage policy.
 This is priority/order guidance, not permission to merge.
 
 Merged foundations are removed from the remaining queue: RM-26 shipped in PR
-#74, enterprise-policy foundation in PR #75, RM-31 selection/check in PR #76,
-the WSL host boundary in PR #77, native Windows ARM64 CI in PR #78, and
-reproducible ARM64 release packaging in PR #86. Unmerged pull-request coverage
-is not completion.
+#74, enterprise policy and signed registries in PRs #75 and #84, per-project
+overlay trust in PR #80, RM-31 selection/staging/verification in PRs #76, #81
+and #82, the WSL host boundary and native layout identity in PRs #77 and #83,
+native Windows ARM64 CI in PR #78, and reproducible ARM64 release packaging in
+PR #86. Unmerged pull-request coverage is not completion.
 
-1. **Per-project overlay trust foundation**
-   - project overlay parsing independent of global registry;
-   - add-only collision rules;
-   - external trust store bound to canonical root + overlay digest;
-   - `cb trust` / `cb untrust` / inspect/doctor;
-   - initial restricted capability set.
-
-2. **Registry-signature enterprise policy**
-   - detached Ed25519 signature envelope over exact registry bytes;
-   - trusted-key rotation/revocation policy;
-   - verify before parsing/acting on registry content.
-
-3. **Image trust**
+1. **Image trust**
    - cosign verifier configuration and verifier hash validation;
    - per-repository trust policy;
    - lock schema/evidence migration;
    - online/offline verification and stale-evidence behavior.
 
-4. **Remaining RM-31 self-update**
-   - selection/check/dry-run API is merged in PR #76;
-   - bounded canonical GitHub release download/staging;
-   - `gh attestation verify` policy integration;
+2. **Remaining RM-31 self-update**
+   - selection/check, bounded staging and `gh attestation verify` are merged in
+     PRs #76, #81 and #82;
    - Windows helper transaction, managed-shim reconciliation and rollback;
    - release/self-test E2E.
 
-5. **Remaining WSL2**
-   - narrow reusable Linux host interfaces and fail-closed boundary are merged in PR #77;
-   - native WSL config/shim/state layout;
+3. **Remaining WSL2**
+   - narrow reusable Linux host interfaces, fail-closed boundary and native
+     layout/state identity are merged in PRs #77 and #83;
+   - Linux ownership, permission and symlink preflight is implemented but not
+     yet wired into an enabled frontend;
    - Docker Desktop WSL integration;
    - project identity and cross-boundary rejection tests;
    - real WSL Docker E2E.
 
-6. **RM-30 Authenticode**
+4. **RM-30 Authenticode**
    - only after certificate/protected signing prerequisites exist.
 
-7. **RM-29 Windows ARM64**
+5. **RM-29 Windows ARM64**
    - **lowest priority**;
    - native hosted ARM64 CI is merged in PR #78;
    - architecture-specific release packaging is merged in PR #86;

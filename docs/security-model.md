@@ -28,9 +28,11 @@ Inside the boundary (whoever controls these controls execution):
 An optional administrator-owned machine policy sits above this user-controlled
 boundary. Its fixed path, owner and permissions are validated before use. It
 can require locking, restrict image origins and authenticate exact registry
-bytes through a detached Ed25519 signature. It cannot grant mounts, environment
-access or commands, and it does not yet authenticate image signatures. See
-[enterprise machine policy](enterprise-policy.md).
+bytes through a detached Ed25519 signature. Schema 3 can declare exact
+repository-bound image-signature requirements; covered images currently fail
+closed until the evidence-producing lock slice lands. Policy cannot grant
+mounts, environment access or commands. See [enterprise machine
+policy](enterprise-policy.md).
 
 Treat the registry and lockfile like your PowerShell `$PROFILE`: yours,
 readable, and dangerous to let others edit.
@@ -69,6 +71,13 @@ readable, and dangerous to let others edit.
   labels. Runtime workspace mounts and project-volume IDs for overlay tools are
   fixed to the approved overlay root; an ancestor marker cannot silently widen
   that boundary.
+- **Repository-bound image trust policy.** Schema 3 pins an external cosign
+  executable and declares exact keyless or public-key trust for canonical
+  repository boundaries. Covered repositories fail closed until structured
+  lock evidence can be produced and consumed; missing implementation is never
+  permission to fall back to digest-only locking. Transparency-log verification
+  is mandatory, and offline rules require bundled evidence rather than network
+  fallback.
 - **Fail-closed host boundary.** Non-bootstrap work currently runs only in a
   native Windows process. Windows binaries launched through detected WSL
   interoperability, WSL1, recognized-but-not-yet-enabled native WSL2,
