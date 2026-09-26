@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -280,7 +281,7 @@ func TestVerifyAMD64AcceptsCanonicalDualArchitectureManifest(t *testing.T) {
 }
 
 func TestVerifyARM64RejectsUnexpectedArchiveEntryAfterAuthentication(t *testing.T) {
-	fixture := newARM64VerificationFixture(t, map[string][]byte{"../escape": []byte("unsafe")})
+	fixture := newARM64VerificationFixture(t, map[string][]byte{"unexpected.bin": []byte("unsafe")})
 	called := false
 	_, err := testVerifier(attestationRunnerFunc(func(context.Context, string, []string) ([]byte, []byte, error) {
 		called = true
@@ -556,7 +557,16 @@ func arm64TestArchive(t *testing.T, extras map[string][]byte) []byte {
 	for name, data := range extras {
 		entries[name] = data
 	}
-	for _, name := range []string{"cb.exe", "LICENSE", "README.md", "../escape"} {
+	names := []string{"cb.exe", "LICENSE", "README.md"}
+	var extraNames []string
+	for name := range extras {
+		if name != "cb.exe" && name != "LICENSE" && name != "README.md" {
+			extraNames = append(extraNames, name)
+		}
+	}
+	sort.Strings(extraNames)
+	names = append(names, extraNames...)
+	for _, name := range names {
 		data, ok := entries[name]
 		if !ok {
 			continue
