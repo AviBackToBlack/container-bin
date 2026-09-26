@@ -1525,6 +1525,11 @@ func lockFileForRefresh(path string, refreshed []string, preserve bool, machineP
 	if existing == nil {
 		return result, 0, nil
 	}
+	// A project-scoped refresh is deliberately additive to the shared global
+	// lock. Preserve its schema as well as its unrelated entries so a schema-2
+	// evidence record is never copied into a schema-1 document or silently
+	// downgraded merely because another project refreshed its own images.
+	result.Version = existing.Version
 	refreshSet := make(map[string]bool, len(refreshed))
 	for _, image := range refreshed {
 		refreshSet[image] = true

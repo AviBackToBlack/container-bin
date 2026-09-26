@@ -723,11 +723,12 @@ signer/administrator-key SHA-256, keyless issuer where applicable, the
 authenticated bundle SHA-256, canonical UTC verification time, verifier
 identity/hash and the complete effective machine-policy fingerprint. Partial,
 duplicate, malformed, cross-repository or local-image evidence is rejected.
-Schema 2 storage is implemented before verifier execution on purpose: current
-`cb lock`/`cb update` operations continue writing schema 1 and covered policy
-schema 3 images still fail closed until the verification producer and runtime
-staleness check land. Old ContainerBin builds reject schema 2 as unsupported;
-there is no silent down-conversion.
+Schema 2 storage is implemented before verifier execution on purpose: new
+`cb lock`/`cb update` results continue using schema 1, while a project-scoped
+refresh preserves an existing shared schema-2 document and its unrelated
+evidence. Covered policy schema 3 images still fail closed until the
+verification producer and runtime staleness check land. Old ContainerBin builds
+reject schema 2 as unsupported; there is no silent down-conversion.
 
 Tools sharing an image share one lock entry. The Node 24 family
 (`node24`, `npm24`, `npx24`, its aliases when selected, and anything exposed
