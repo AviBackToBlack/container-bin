@@ -753,8 +753,10 @@ explicitly allowed, and allowlist canonical registry/repository boundaries.
 Policy schema 2 can also require a strict detached Ed25519 signature over the
 exact `container-bin.toml` bytes, with machine-owned key validity, revocation
 and overlap rotation. Signed registries are read-only to `cb`; updates must be
-provisioned with a matching signature by the administrator. Lower-precedence
-registry or command-line choices cannot weaken policy. See
+provisioned with a matching signature by the administrator. Policy schema 3 can
+add repository-bound image-signature requirements; covered images fail closed
+until `cb lock` records verification evidence from the pinned cosign verifier.
+Lower-precedence registry or command-line choices cannot weaken policy. See
 [enterprise machine policy](docs/enterprise-policy.md) for the schema,
 ownership rules, normalization behavior and stable diagnostic codes.
 
