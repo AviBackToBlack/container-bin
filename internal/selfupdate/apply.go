@@ -161,12 +161,27 @@ func (tx applyTransaction) apply(ctx context.Context, verified Verified, install
 	if err := requireApplyDigest(installedExecutable, oldDigest, "management executable immediately before replacement"); err != nil {
 		return err
 	}
-	if err := tx.replace(staged, installedExecutable, false); err != nil {
-		if digest, digestErr := applyFileDigest(installedExecutable); digestErr == nil && digest == stagedDigest {
+	if replaceErr := tx.replace(staged, installedExecutable, false); replaceErr != nil {
+		digest, digestErr := applyFileDigest(installedExecutable)
+		switch {
+		case digestErr == nil && digest == oldDigest:
+			return fmt.Errorf("replace installed management executable: %w", replaceErr)
+		case digestErr == nil && digest == stagedDigest:
 			changed = true
-			return fail(fmt.Errorf("replace installed management executable reported failure after changing bytes: %w", err))
+			return fail(fmt.Errorf("replace installed management executable reported failure after changing bytes: %w", replaceErr))
+		default:
+			// The replacement call may have changed the destination, but its state
+			// cannot be proved. Enter rollback so an unverifiable restoration keeps
+			// the private recovery executable instead of deleting it.
+			changed = true
+			cause := fmt.Errorf("replace installed management executable left an inconclusive destination state: %w", replaceErr)
+			if digestErr != nil {
+				cause = errors.Join(cause, fmt.Errorf("inspect installed management executable after reported replacement failure: %w", digestErr))
+			} else {
+				cause = errors.Join(cause, errors.New("installed management executable contains neither the previous nor verified update bytes"))
+			}
+			return fail(cause)
 		}
-		return fmt.Errorf("replace installed management executable: %w", err)
 	}
 	changed = true
 	if err := requireApplyDigest(installedExecutable, stagedDigest, "updated management executable"); err != nil {
@@ -196,13 +211,24 @@ func (tx applyTransaction) apply(ctx context.Context, verified Verified, install
 
 func (tx applyTransaction) rollback(installedExecutable, rollbackBinary string, shims []string, oldDigest, newDigest string) error {
 	var result error
+	managementRestored := false
 	if digest, err := applyFileDigest(installedExecutable); err != nil {
 		result = errors.Join(result, err)
 	} else if digest == newDigest {
-		if err := tx.replace(rollbackBinary, installedExecutable, false); err != nil {
-			result = errors.Join(result, fmt.Errorf("restore management executable: %w", err))
+		if replaceErr := tx.replace(rollbackBinary, installedExecutable, false); replaceErr != nil {
+			result = errors.Join(result, fmt.Errorf("restore management executable: %w", replaceErr))
 		}
-	} else if digest != oldDigest {
+		restoredDigest, verifyErr := applyFileDigest(installedExecutable)
+		if verifyErr != nil {
+			result = errors.Join(result, fmt.Errorf("verify restored management executable: %w", verifyErr))
+		} else if restoredDigest != oldDigest {
+			result = errors.Join(result, errors.New("restored management executable digest changed"))
+		} else {
+			managementRestored = true
+		}
+	} else if digest == oldDigest {
+		managementRestored = true
+	} else {
 		result = errors.Join(result, errors.New("management executable changed outside the update transaction; refusing to overwrite it during rollback"))
 	}
 	for _, shim := range shims {
@@ -218,10 +244,16 @@ func (tx applyTransaction) rollback(installedExecutable, rollbackBinary string, 
 			result = errors.Join(result, fmt.Errorf("managed shim %s changed outside the update transaction; refusing to overwrite it during rollback", shim))
 			continue
 		}
-		// The rollback copy has a protected owner-only DACL. Copy it through a
-		// fresh install-directory file so restored shims inherit the installation
-		// ACL instead of hardlinking that private security descriptor.
-		if err := tx.replace(rollbackBinary, shim, false); err != nil {
+		// Prefer the verified-restored management executable so the shim regains
+		// normal installation ACLs and hardlink identity. If that executable could
+		// not be proved restored, defensively copy the private recovery bytes.
+		source := rollbackBinary
+		preferHardlink := false
+		if managementRestored {
+			source = installedExecutable
+			preferHardlink = true
+		}
+		if err := tx.replace(source, shim, preferHardlink); err != nil {
 			result = errors.Join(result, fmt.Errorf("restore managed shim %s: %w", shim, err))
 		}
 	}

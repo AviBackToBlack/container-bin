@@ -890,6 +890,11 @@ and restores the prior set after any smoke-test or identity failure. The helper
 that waits for the invoking process to exit and the user-facing apply command
 are not wired yet, so `--check` remains the only accepted command mode.
 
+A hard process or host crash can leave a private `.container-bin-update-*`
+staging/rollback directory or `.cb.exe-update-*.tmp` file beside `cb.exe`.
+ContainerBin does not wildcard-delete these names on a later run because a name
+alone does not prove ownership; inspect the object before removing it manually.
+
 Stable selection is the default. Use `--prerelease` to select the highest
 canonical prerelease among the 30 most recent published releases, or
 `--version vX.Y.Z` to inspect one exact published release; those two selectors

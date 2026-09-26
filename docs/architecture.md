@@ -343,11 +343,11 @@ dispatched before machine policy and registry loading. Release selection
 therefore remains available when either local configuration source is missing
 or invalid without allowing unsupported frontends to perform network work.
 `internal/selfupdate` has no project imports. The CLI currently performs only
-bounded metadata queries and plan output. The package also has an unexposed
-same-volume staging phase that requires the installed executable path, then
-downloads the directly attested executable and checksum manifest into private,
-exact-size temporary files through a narrowly allowed GitHub release redirect.
-Windows staging replaces inherited permissions with a protected DACL granting
-access only to the current user. Attestation/checksum verification and
-installed-file replacement remain separate later phases, so no download path
-can yet mutate the installed binary.
+bounded metadata queries and plan output. The package also has unexposed phases
+for private same-volume staging, exact checksum and GitHub build-provenance
+verification, and rollback-safe replacement of the management executable plus
+the complete proven shim set. Windows staging and recovery files use protected
+current-user-only DACLs; installed replacements inherit installation-directory
+ACLs. The temporary helper that waits for the invoking process to exit and the
+user-facing apply command remain separate later work, so the exposed command
+still cannot mutate the installed binary.

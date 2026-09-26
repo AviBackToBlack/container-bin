@@ -88,8 +88,8 @@ func TestApplyTransactionRollsBackCompleteManagedSetAfterSmokeFailure(t *testing
 		if err != nil {
 			t.Fatal(err)
 		}
-		if os.SameFile(installedInfo, shimInfo) {
-			t.Errorf("rollback shim %s retained the private recovery-file hardlink identity", shim)
+		if !os.SameFile(installedInfo, shimInfo) {
+			t.Errorf("rollback shim %s was not reconciled to the restored management executable", shim)
 		}
 	}
 	assertNoApplyRecoveryArtifacts(t, fixture.dir)
@@ -121,6 +121,65 @@ func TestApplyTransactionRollsBackReplacementThatReportedFailureAfterChangingByt
 	assertApplyBytes(t, fixture.installed, fixture.oldBytes)
 	assertApplyBytes(t, fixture.hardlinkShim, fixture.oldBytes)
 	assertNoApplyRecoveryArtifacts(t, fixture.dir)
+}
+
+func TestApplyTransactionPreservesRecoveryAfterInconclusiveReplacementFailure(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*testing.T, string)
+		want   string
+	}{
+		{
+			name: "destination unreadable",
+			mutate: func(t *testing.T, destination string) {
+				t.Helper()
+				if err := os.Remove(destination); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "inspect installed management executable after reported replacement failure",
+		},
+		{
+			name: "destination has unknown bytes",
+			mutate: func(t *testing.T, destination string) {
+				t.Helper()
+				writeApplyFileReplace(t, destination, []byte("unknown post-replacement bytes"))
+			},
+			want: "neither the previous nor verified update bytes",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newApplyFixture(t)
+			first := true
+			tx := applyTransaction{
+				replace: func(_ string, destination string, _ bool) error {
+					if first {
+						first = false
+						tc.mutate(t, destination)
+						return errors.New("ambiguous replacement result")
+					}
+					return errors.New("unexpected rollback replacement")
+				},
+				smoke: func(context.Context, string, string) error {
+					t.Fatal("inconclusive replacement reached smoke test")
+					return nil
+				},
+			}
+			err := tx.apply(context.Background(), fixture.verified, fixture.installed)
+			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "recovery executable preserved") {
+				t.Fatalf("apply error = %v", err)
+			}
+			matches, globErr := filepath.Glob(filepath.Join(fixture.dir, rollbackPrefix+"*", "cb.exe"))
+			if globErr != nil {
+				t.Fatal(globErr)
+			}
+			if len(matches) != 1 {
+				t.Fatalf("recovery executables = %v, want one", matches)
+			}
+			assertApplyBytes(t, matches[0], fixture.oldBytes)
+		})
+	}
 }
 
 func TestApplyTransactionRejectsChangedVerifiedBytesBeforeInstalledMutation(t *testing.T) {

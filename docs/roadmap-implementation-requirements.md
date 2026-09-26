@@ -72,7 +72,7 @@ The minimum delivery gate for a code change is:
 | RM-26 Python global CLI exposure | **Completed in PR #74** | Stateful pipx + `cb expose pipx` shipped; plain pip `/venv/bin` remains intentionally unexposed |
 | RM-29 Windows ARM64 | **Native CI and release packaging shipped / update and hardware work remain** | PR #78 added native hosted ARM64 CI and PR #86 added reproducible release packaging; ARM64 self-update selection and real Windows-on-Arm + Docker Desktop E2E remain |
 | RM-30 Authenticode | **Design complete / externally blocked** | Provision real code-signing certificate and protected signing mechanism |
-| RM-31 self-update | **Selection/check foundation shipped** | PR #76 shipped selection/check behavior; staging, verification, transactional apply and E2E remain |
+| RM-31 self-update | **Selection/staging/verifier and transaction foundations implemented** | Temporary helper, user-facing apply wiring, broader architecture support and release E2E remain |
 | RM-34 Cargo expose enhancement | **Intentionally deferred** | Existing expose-all/explicit selection are sufficient; reopen only for concrete unmet use case |
 | Linux/macOS hosts | **Demand-gated** | WSL may factor reusable Linux host code; standalone support needs its own demand and qualification |
 | Enterprise policy | **Foundation shipped / signed registry remains** | PR #75 shipped the machine-owned constraint layer; authenticated registry and image-trust slices remain |
@@ -395,10 +395,11 @@ separate phases with explicit boundaries. GitHub documents both
 and [artifact-attestation verification](https://docs.github.com/en/actions/concepts/security/artifact-attestations).
 
 PR #76 shipped the command surface, release selection, check/dry-run behavior,
-strict Windows/amd64 asset selection and bounded metadata rules. Unsupported
-architectures still fail closed. Download staging, provenance verification,
-transactional Windows apply, rollback, broader architecture support and release
-E2E remain incomplete until their implementations merge.
+strict Windows/amd64 asset selection and bounded metadata rules. Private
+same-volume staging and provenance verification followed. This tree also
+implements the unexposed rollback-safe Windows replacement transaction and
+complete proven-shim reconciliation. The temporary helper, user-facing apply
+wiring, broader architecture support and release E2E remain incomplete.
 
 ### Command and selection requirements
 
@@ -659,7 +660,7 @@ reproducible ARM64 release packaging in PR #86.
 1. Per-project overlay trust foundation.
 2. Signed-registry enterprise policy.
 3. Image trust at lock time, after signed-registry policy merges.
-4. Remaining RM-31 staging, verification, transactional apply and E2E.
+4. Remaining RM-31 helper/user-facing apply wiring, broader architecture support and E2E.
 5. Remaining WSL2 native layout, Docker Desktop integration and real E2E.
 6. RM-30 Authenticode only after certificate/protected-signing prerequisites exist.
 7. RM-29 ARM64 self-update selection and real Windows-on-Arm + Docker Desktop

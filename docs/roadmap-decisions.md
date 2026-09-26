@@ -21,7 +21,7 @@ items from being repeatedly rediscovered as if they were immediately actionable.
 | Image trust | **Policy-driven Sigstore/cosign at lock time** | Ready after signed-registry policy. Digest locking remains default where policy permits. Required trust never silently falls back to digest-only. |
 | Per-project overlays | **Explicit digest-bound, add-only trust model** | Implementation-ready on the merged policy foundation. Initial overlays exclude host mounts, env prefixes and shared cross-project volumes. |
 | Plugin/provider architecture | **Intentionally deferred** | Reopen only after at least two concrete integrations cannot be expressed safely by the declarative model. |
-| RM-31 self-update | **Explicit transactional, attestation-verifying update** | Selection/check foundation shipped in PR #76. Staging, `gh attestation verify`, Windows apply, complete managed-set rollback and E2E remain. |
+| RM-31 self-update | **Explicit transactional, attestation-verifying update** | Selection/check, staging and verification are implemented; the internal Windows transaction now replaces and rolls back the complete proven managed set. Helper/user-facing apply wiring, broader architecture support and E2E remain. |
 | RM-30 Authenticode | **Design accepted; externally blocked** | Implement only after a real code-signing certificate and protected signing mechanism exist. Stable and prerelease release artifacts are both signed. |
 | RM-29 Windows ARM64 | **Lowest priority** | Native GitHub Windows ARM64 CI shipped in PR #78 and reproducible release packaging in PR #86. ARM64 self-update selection and real Windows-on-Arm + Docker Desktop qualification remain. Do not delay other roadmap work. |
 | Standalone Linux/macOS | **Demand-gated** | No support claim yet. WSL should create reusable narrow Linux host abstractions, but standalone hosts require their own contract and real Docker qualification. |
@@ -318,9 +318,10 @@ is not completion.
 
 4. **Remaining RM-31 self-update**
    - selection/check/dry-run API is merged in PR #76;
-   - bounded canonical GitHub release download/staging;
-   - `gh attestation verify` policy integration;
-   - Windows helper transaction, managed-shim reconciliation and rollback;
+   - bounded canonical GitHub release download/staging and `gh attestation verify` policy integration are implemented;
+   - rollback-safe Windows transaction and managed-shim reconciliation are implemented internally;
+   - temporary wait helper and user-facing apply wiring;
+   - broader architecture support;
    - release/self-test E2E.
 
 5. **Remaining WSL2**
