@@ -209,8 +209,9 @@ contents.
 ## Schema 3 — repository-bound image trust policy
 
 Schema 3 retains every earlier control and adds the fail-closed policy contract
-for Sigstore/cosign image verification. This foundation intentionally does not
-yet invoke cosign or change the lockfile schema. A repository covered by an
+for Sigstore/cosign image verification. ContainerBin can authenticate the exact
+configured cosign executable against its pin, but intentionally does not yet
+invoke it or change the lockfile schema. A repository covered by an
 `image_trust_rules` entry is therefore rejected with
 `policy.image_trust_unverified` until the later verification/evidence slice can
 prove and record the required evidence. It never falls back to a digest-only
@@ -231,8 +232,10 @@ image_trust_rules = [
 
 The verifier path must be clean and absolute, and its pin is exactly 64
 lowercase hexadecimal SHA-256 characters. ContainerBin never searches `PATH`.
-The later invocation layer must authenticate the exact regular non-symlink
-executable before and after use; a hash mismatch or replacement is fatal.
+`internal/policy` authenticates that exact path as a bounded, non-empty regular
+non-symlink file and rejects identity, size or digest changes. The later
+invocation layer must perform this authentication immediately before and after
+every use; a successful earlier check is not a durable grant.
 
 Each rule has five pipe-delimited fields:
 
@@ -270,6 +273,7 @@ print paths, hashes, issuer/subject identities or key material.
 Schema 1 and schema 2 remain supported unchanged. Image-trust fields in an
 older schema are rejected, and versions newer than 3 fail closed.
 
-The additional stable foundation error is:
+The additional stable foundation errors are:
 
 - `policy.image_trust_unverified`
+- `policy.image_trust_verifier_invalid`

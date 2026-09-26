@@ -30,6 +30,7 @@ const (
 	registrySignatureVersion     = 1
 	registrySignatureAlgorithm   = "ed25519"
 	maxRegistrySignatureFileSize = 16 << 10
+	maxCosignVerifierSize        = 256 << 20
 )
 
 type ImageTrustMechanism string
@@ -124,6 +125,69 @@ func (p Policy) Summary() string {
 // use; this method deliberately performs no PATH lookup or filesystem access.
 func (p Policy) CosignVerifier() (FilePin, bool) {
 	return p.cosignVerifier, p.cosignVerifier.Path != ""
+}
+
+// AuthenticateCosignVerifier proves that the exact administrator-selected
+// path is still a regular non-symlink file with the pinned SHA-256 digest. The
+// eventual invocation layer must call this immediately before and after every
+// use; successful authentication is not a durable grant across file changes.
+func (p Policy) AuthenticateCosignVerifier() (string, error) {
+	if p.cosignVerifier.Path == "" {
+		return "", policyError("image_trust_verifier_invalid", "cosign verifier is not configured by machine policy")
+	}
+	return authenticatePinnedFile(p.cosignVerifier, "cosign verifier", maxCosignVerifierSize)
+}
+
+func authenticatePinnedFile(pin FilePin, label string, maxSize int64) (string, error) {
+	info, err := os.Lstat(pin.Path)
+	if err != nil {
+		return "", policyError("image_trust_verifier_invalid", "inspect %s %s: %v", label, pin.Path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return "", policyError("image_trust_verifier_invalid", "%s %s must be a regular non-symlink file", label, pin.Path)
+	}
+	if info.Size() <= 0 || info.Size() > maxSize {
+		return "", policyError("image_trust_verifier_invalid", "%s %s has invalid size %d (maximum %d)", label, pin.Path, info.Size(), maxSize)
+	}
+
+	file, err := os.Open(pin.Path)
+	if err != nil {
+		return "", policyError("image_trust_verifier_invalid", "open %s %s: %v", label, pin.Path, err)
+	}
+	opened, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return "", policyError("image_trust_verifier_invalid", "inspect opened %s %s: %v", label, pin.Path, err)
+	}
+	if !opened.Mode().IsRegular() || !os.SameFile(info, opened) {
+		_ = file.Close()
+		return "", policyError("image_trust_verifier_invalid", "%s %s changed before hashing", label, pin.Path)
+	}
+	hash := sha256.New()
+	n, readErr := io.Copy(hash, io.LimitReader(file, maxSize+1))
+	closeErr := file.Close()
+	if readErr != nil {
+		return "", policyError("image_trust_verifier_invalid", "hash %s %s: %v", label, pin.Path, readErr)
+	}
+	if closeErr != nil {
+		return "", policyError("image_trust_verifier_invalid", "close %s %s: %v", label, pin.Path, closeErr)
+	}
+	if n != info.Size() || n != opened.Size() || n > maxSize {
+		return "", policyError("image_trust_verifier_invalid", "%s %s changed size while hashing", label, pin.Path)
+	}
+
+	post, err := os.Lstat(pin.Path)
+	if err != nil || post.Mode()&os.ModeSymlink != 0 || !post.Mode().IsRegular() || !os.SameFile(info, post) || post.Size() != n {
+		if err != nil {
+			return "", policyError("image_trust_verifier_invalid", "reinspect %s %s after hashing: %v", label, pin.Path, err)
+		}
+		return "", policyError("image_trust_verifier_invalid", "%s %s changed while hashing", label, pin.Path)
+	}
+	digest := hex.EncodeToString(hash.Sum(nil))
+	if digest != pin.SHA256 {
+		return "", policyError("image_trust_verifier_invalid", "%s %s SHA-256 %s does not match the machine-policy pin", label, pin.Path, digest)
+	}
+	return pin.Path, nil
 }
 
 // ImageTrustFor returns the most specific repository-bound rule for ref.

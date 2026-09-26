@@ -3,7 +3,9 @@ package policy
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -206,6 +208,84 @@ func TestImageTrustPolicyCanonicalRulesAndSelection(t *testing.T) {
 			t.Fatalf("summary disclosed image trust material %q: %q", secret, summary)
 		}
 	}
+}
+
+func TestAuthenticateCosignVerifierPinsExactRegularFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cosign.exe")
+	contents := []byte("pinned cosign verifier bytes")
+	if err := os.WriteFile(path, contents, 0700); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(contents)
+	p := Policy{cosignVerifier: FilePin{Path: path, SHA256: hex.EncodeToString(sum[:])}}
+	got, err := p.AuthenticateCosignVerifier()
+	if err != nil || got != path {
+		t.Fatalf("AuthenticateCosignVerifier() = (%q, %v), want (%q, nil)", got, err, path)
+	}
+	if err := os.WriteFile(path, []byte("changed verifier bytes"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	assertPolicyCode(t, authenticateCosignError(p), "image_trust_verifier_invalid")
+}
+
+func TestAuthenticateCosignVerifierRejectsUnsafeFiles(t *testing.T) {
+	validHash := strings.Repeat("a", sha256.Size*2)
+	tests := []struct {
+		name string
+		pin  FilePin
+	}{
+		{name: "unconfigured"},
+		{name: "missing", pin: FilePin{Path: filepath.Join(t.TempDir(), "missing.exe"), SHA256: validHash}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assertPolicyCode(t, authenticateCosignError(Policy{cosignVerifier: tc.pin}), "image_trust_verifier_invalid")
+		})
+	}
+
+	t.Run("directory", func(t *testing.T) {
+		path := t.TempDir()
+		assertPolicyCode(t, authenticateCosignError(Policy{cosignVerifier: FilePin{Path: path, SHA256: validHash}}), "image_trust_verifier_invalid")
+	})
+	t.Run("empty", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "cosign.exe")
+		if err := os.WriteFile(path, nil, 0700); err != nil {
+			t.Fatal(err)
+		}
+		assertPolicyCode(t, authenticateCosignError(Policy{cosignVerifier: FilePin{Path: path, SHA256: validHash}}), "image_trust_verifier_invalid")
+	})
+	t.Run("oversized", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "cosign.exe")
+		file, err := os.Create(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := file.Truncate(maxCosignVerifierSize + 1); err != nil {
+			_ = file.Close()
+			t.Fatal(err)
+		}
+		if err := file.Close(); err != nil {
+			t.Fatal(err)
+		}
+		assertPolicyCode(t, authenticateCosignError(Policy{cosignVerifier: FilePin{Path: path, SHA256: validHash}}), "image_trust_verifier_invalid")
+	})
+	t.Run("symlink", func(t *testing.T) {
+		dir := t.TempDir()
+		target := filepath.Join(dir, "target.exe")
+		link := filepath.Join(dir, "cosign.exe")
+		if err := os.WriteFile(target, []byte("target"), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, link); err != nil {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+		assertPolicyCode(t, authenticateCosignError(Policy{cosignVerifier: FilePin{Path: link, SHA256: validHash}}), "image_trust_verifier_invalid")
+	})
+}
+
+func authenticateCosignError(p Policy) error {
+	_, err := p.AuthenticateCosignVerifier()
+	return err
 }
 
 func TestParseRejectsInvalidImageTrustPolicies(t *testing.T) {
