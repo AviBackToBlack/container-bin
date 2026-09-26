@@ -73,11 +73,13 @@ readable, and dangerous to let others edit.
   that boundary.
 - **Repository-bound image trust policy.** Schema 3 pins an external cosign
   executable and declares exact keyless or public-key trust for canonical
-  repository boundaries. Covered repositories fail closed until structured
-  lock evidence can be produced and consumed; missing implementation is never
-  permission to fall back to digest-only locking. Transparency-log verification
-  is mandatory, and offline rules require bundled evidence rather than network
-  fallback.
+  repository boundaries. Lock schema 2 can retain strictly validated,
+  repository/digest/verifier/policy-bound structured evidence; schema 1 remains
+  the digest-only compatibility format. Covered repositories still fail closed
+  until that evidence can be produced and consumed; missing implementation is
+  never permission to fall back to digest-only locking. Transparency-log
+  verification is mandatory, and offline rules require bundled evidence rather
+  than network fallback.
 - **Fail-closed host boundary.** Non-bootstrap work currently runs only in a
   native Windows process. Windows binaries launched through detected WSL
   interoperability, WSL1, recognized-but-not-yet-enabled native WSL2,

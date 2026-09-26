@@ -1,6 +1,7 @@
 // Package lockfile owns container-bin.lock: the immutable image lockfile that
 // pins every configured image reference to either a repository@sha256 digest
-// or a locally built image's sha256 ID, plus the resolution that produces it.
+// or a locally built image's sha256 ID, plus the resolution and optional
+// structured repository-trust evidence that produced it.
 package lockfile
 
 import (
@@ -9,12 +10,15 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
+	"unicode/utf8"
 
 	"github.com/AviBackToBlack/container-bin/internal/atomicio"
 	"github.com/AviBackToBlack/container-bin/internal/policy"
@@ -22,10 +26,35 @@ import (
 	"github.com/AviBackToBlack/container-bin/internal/toml"
 )
 
+const (
+	maxLockVersion            = 2
+	imageTrustEvidenceVersion = 1
+	imageTrustVerifierCosign  = "cosign"
+)
+
+// ImageTrustEvidence records the exact authenticated inputs and result of one
+// repository-digest verification. It is deliberately structured rather than a
+// boolean so runtime policy can prove that evidence still matches the digest,
+// verifier and complete effective policy which authorized it.
+type ImageTrustEvidence struct {
+	Version           int
+	Mechanism         policy.ImageTrustMechanism
+	Repository        string
+	Digest            string
+	Signer            string
+	Issuer            string
+	BundleSHA256      string
+	VerifiedAt        string
+	Verifier          string
+	VerifierSHA256    string
+	PolicyFingerprint string
+}
+
 type LockEntry struct {
 	Configured string
 	Resolved   string
 	Digest     string
+	Trust      *ImageTrustEvidence
 }
 
 type LockFile struct {
@@ -67,9 +96,16 @@ func Load(path string) (*LockFile, error) {
 	} else if err != nil {
 		return nil, err
 	}
+	return parseLockFile(b, maxLockVersion)
+}
+
+func parseLockFile(b []byte, maxVersion int) (*LockFile, error) {
 	lf := &LockFile{Version: 0, Images: map[string]LockEntry{}}
 	var cur *LockEntry
 	var curKey string
+	var curSeen map[string]bool
+	seenVersion := false
+	seenSections := map[string]bool{}
 	sc := bufio.NewScanner(strings.NewReader(string(b)))
 	lineNo := 0
 	flush := func() error {
@@ -82,6 +118,9 @@ func Load(path string) (*LockFile, error) {
 		if curKey != entryID(cur.Configured) {
 			return fmt.Errorf("lock entry id %q does not match configured image %q", curKey, cur.Configured)
 		}
+		if _, duplicate := lf.Images[cur.Configured]; duplicate {
+			return fmt.Errorf("duplicate lock entry for configured image %q", cur.Configured)
+		}
 		if strings.HasPrefix(cur.Resolved, "sha256:") {
 			if !validImageID(cur.Resolved) {
 				return fmt.Errorf("lock entry %q has invalid local image ID %q", curKey, cur.Resolved)
@@ -89,8 +128,11 @@ func Load(path string) (*LockFile, error) {
 			if cur.Digest != cur.Resolved {
 				return fmt.Errorf("lock entry %q local image digest must match resolved ID", curKey)
 			}
+			if cur.Trust != nil {
+				return fmt.Errorf("lock entry %q local image ID cannot carry repository trust evidence", curKey)
+			}
 		} else {
-			_, resolvedDigest, ok := splitImmutableRepositoryDigest(cur.Resolved)
+			resolvedRepository, resolvedDigest, ok := splitImmutableRepositoryDigest(cur.Resolved)
 			if !ok {
 				return fmt.Errorf("lock entry %q has invalid immutable repository digest %q", curKey, cur.Resolved)
 			}
@@ -99,6 +141,14 @@ func Load(path string) (*LockFile, error) {
 			}
 			if matched, ok := matchRepoDigest(cur.Configured, []string{cur.Resolved}); !ok || matched != cur.Resolved {
 				return fmt.Errorf("lock entry %q resolved repository does not match configured image %q", curKey, cur.Configured)
+			}
+			if cur.Trust != nil {
+				if lf.Version < 2 {
+					return fmt.Errorf("lock entry %q trust evidence requires lock_version 2", curKey)
+				}
+				if err := validateImageTrustEvidence(curKey, cur.Configured, resolvedRepository, cur.Digest, *cur.Trust); err != nil {
+					return err
+				}
 			}
 		}
 		lf.Images[cur.Configured] = *cur
@@ -114,6 +164,9 @@ func Load(path string) (*LockFile, error) {
 			if err := flush(); err != nil {
 				return nil, err
 			}
+			if !seenVersion {
+				return nil, fmt.Errorf("line %d: lock_version must precede image sections", lineNo)
+			}
 			sec := strings.TrimSpace(line[1 : len(line)-1])
 			if !strings.HasPrefix(sec, "images.") {
 				return nil, fmt.Errorf("line %d: unsupported lock section %q", lineNo, sec)
@@ -122,7 +175,12 @@ func Load(path string) (*LockFile, error) {
 			if curKey == "" {
 				return nil, fmt.Errorf("line %d: empty image lock id", lineNo)
 			}
+			if seenSections[curKey] {
+				return nil, fmt.Errorf("line %d: duplicate image lock section %q", lineNo, curKey)
+			}
+			seenSections[curKey] = true
 			cur = &LockEntry{}
+			curSeen = map[string]bool{}
 			continue
 		}
 		kv := strings.SplitN(line, "=", 2)
@@ -134,11 +192,30 @@ func Load(path string) (*LockFile, error) {
 			if key != "lock_version" {
 				return nil, fmt.Errorf("line %d: unsupported top-level key %q", lineNo, key)
 			}
+			if seenVersion {
+				return nil, fmt.Errorf("line %d: duplicate top-level key %q", lineNo, key)
+			}
 			v, err := strconv.Atoi(val)
-			if err != nil || v != 1 {
-				return nil, fmt.Errorf("line %d: unsupported lock_version %q (supported: 1)", lineNo, val)
+			if err != nil || v < 1 || v > maxVersion {
+				return nil, fmt.Errorf("line %d: unsupported lock_version %q (supported: 1-%d)", lineNo, val, maxVersion)
 			}
 			lf.Version = v
+			seenVersion = true
+			continue
+		}
+		if curSeen[key] {
+			return nil, fmt.Errorf("line %d: duplicate lock key %q", lineNo, key)
+		}
+		curSeen[key] = true
+		if key == "evidence_version" {
+			v, err := strconv.Atoi(val)
+			if err != nil {
+				return nil, fmt.Errorf("line %d evidence_version: expected integer", lineNo)
+			}
+			if cur.Trust == nil {
+				cur.Trust = &ImageTrustEvidence{}
+			}
+			cur.Trust.Version = v
 			continue
 		}
 		q, err := toml.ParseQuoted(val)
@@ -152,6 +229,26 @@ func Load(path string) (*LockFile, error) {
 			cur.Resolved = q
 		case "digest":
 			cur.Digest = q
+		case "evidence_mechanism":
+			ensureTrustEvidence(cur).Mechanism = policy.ImageTrustMechanism(q)
+		case "evidence_repository":
+			ensureTrustEvidence(cur).Repository = q
+		case "evidence_digest":
+			ensureTrustEvidence(cur).Digest = q
+		case "evidence_signer":
+			ensureTrustEvidence(cur).Signer = q
+		case "evidence_issuer":
+			ensureTrustEvidence(cur).Issuer = q
+		case "evidence_bundle_sha256":
+			ensureTrustEvidence(cur).BundleSHA256 = q
+		case "evidence_verified_at":
+			ensureTrustEvidence(cur).VerifiedAt = q
+		case "evidence_verifier":
+			ensureTrustEvidence(cur).Verifier = q
+		case "evidence_verifier_sha256":
+			ensureTrustEvidence(cur).VerifierSHA256 = q
+		case "evidence_policy_fingerprint":
+			ensureTrustEvidence(cur).PolicyFingerprint = q
 		default:
 			return nil, fmt.Errorf("line %d: unsupported lock key %q", lineNo, key)
 		}
@@ -162,10 +259,113 @@ func Load(path string) (*LockFile, error) {
 	if err := flush(); err != nil {
 		return nil, err
 	}
-	if lf.Version != 1 {
-		return nil, errors.New("lock_version = 1 is required")
+	if !seenVersion {
+		return nil, errors.New("lock_version is required")
 	}
 	return lf, nil
+}
+
+func ensureTrustEvidence(entry *LockEntry) *ImageTrustEvidence {
+	if entry.Trust == nil {
+		entry.Trust = &ImageTrustEvidence{}
+	}
+	return entry.Trust
+}
+
+func validateImageTrustEvidence(entryKey, configured, resolvedRepository, digest string, evidence ImageTrustEvidence) error {
+	fail := func(format string, args ...any) error {
+		return fmt.Errorf("lock entry %q trust evidence: %s", entryKey, fmt.Sprintf(format, args...))
+	}
+	if evidence.Version != imageTrustEvidenceVersion {
+		return fail("unsupported evidence_version %d (supported: %d)", evidence.Version, imageTrustEvidenceVersion)
+	}
+	configuredRepository, err := policy.CanonicalRepository(configured)
+	if err != nil {
+		return fail("configured repository is invalid: %v", err)
+	}
+	canonicalResolved, err := policy.CanonicalRepository(resolvedRepository)
+	if err != nil {
+		return fail("resolved repository is invalid: %v", err)
+	}
+	if evidence.Repository != configuredRepository || evidence.Repository != canonicalResolved {
+		return fail("repository %q does not match canonical configured and resolved repository %q", evidence.Repository, configuredRepository)
+	}
+	if evidence.Digest != digest || !validImageID(evidence.Digest) {
+		return fail("digest %q does not match the locked digest", evidence.Digest)
+	}
+	if err := validateEvidenceText(evidence.Signer); err != nil {
+		return fail("signer %v", err)
+	}
+	switch evidence.Mechanism {
+	case policy.ImageTrustKeyless:
+		if err := validateEvidenceIssuer(evidence.Issuer); err != nil {
+			return fail("issuer %v", err)
+		}
+	case policy.ImageTrustKey:
+		if evidence.Issuer != "" {
+			return fail("issuer must be empty for key verification")
+		}
+		if !validSHA256Hex(evidence.Signer) {
+			return fail("key signer must be a 64-character lowercase SHA-256")
+		}
+	default:
+		return fail("unsupported mechanism %q", evidence.Mechanism)
+	}
+	if !validSHA256Hex(evidence.BundleSHA256) {
+		return fail("bundle SHA-256 must be 64 lowercase hexadecimal characters")
+	}
+	verifiedAt, err := time.Parse(time.RFC3339, evidence.VerifiedAt)
+	if err != nil || verifiedAt.Location() != time.UTC || verifiedAt.Format(time.RFC3339) != evidence.VerifiedAt {
+		return fail("verified_at must be canonical UTC RFC3339 seconds")
+	}
+	if evidence.Verifier != imageTrustVerifierCosign {
+		return fail("unsupported verifier %q", evidence.Verifier)
+	}
+	if !validSHA256Hex(evidence.VerifierSHA256) {
+		return fail("verifier SHA-256 must be 64 lowercase hexadecimal characters")
+	}
+	if !validSHA256Hex(evidence.PolicyFingerprint) {
+		return fail("policy fingerprint must be 64 lowercase hexadecimal characters")
+	}
+	return nil
+}
+
+func validateEvidenceText(value string) error {
+	if value == "" || !utf8.ValidString(value) || len(value) > 1024 || containsControl(value) {
+		return errors.New("must be 1-1024 bytes without control characters")
+	}
+	return nil
+}
+
+func validateEvidenceIssuer(value string) error {
+	if err := validateEvidenceText(value); err != nil {
+		return err
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return errors.New("must be an HTTPS URL without userinfo, query or fragment")
+	}
+	if parsed.Host != strings.ToLower(parsed.Host) {
+		return errors.New("host must be lowercase")
+	}
+	return nil
+}
+
+func validSHA256Hex(value string) bool {
+	if len(value) != sha256.Size*2 || value != strings.ToLower(value) {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
+}
+
+func containsControl(value string) bool {
+	for _, r := range value {
+		if r < 0x20 || r == 0x7f {
+			return true
+		}
+	}
+	return false
 }
 
 func entryID(configured string) string {
@@ -177,7 +377,7 @@ func render(lf *LockFile) []byte {
 	var b strings.Builder
 	b.WriteString("# container-bin immutable image lockfile\n")
 	b.WriteString("# Generated by cb lock / cb update. Do not edit by hand.\n")
-	b.WriteString("lock_version = 1\n")
+	b.WriteString("lock_version = " + strconv.Itoa(lf.Version) + "\n")
 	keys := make([]string, 0, len(lf.Images))
 	for k := range lf.Images {
 		keys = append(keys, k)
@@ -189,6 +389,21 @@ func render(lf *LockFile) []byte {
 		b.WriteString("configured = " + toml.Quote(e.Configured) + "\n")
 		b.WriteString("resolved = " + toml.Quote(e.Resolved) + "\n")
 		b.WriteString("digest = " + toml.Quote(e.Digest) + "\n")
+		if e.Trust != nil {
+			b.WriteString("evidence_version = " + strconv.Itoa(e.Trust.Version) + "\n")
+			b.WriteString("evidence_mechanism = " + toml.Quote(string(e.Trust.Mechanism)) + "\n")
+			b.WriteString("evidence_repository = " + toml.Quote(e.Trust.Repository) + "\n")
+			b.WriteString("evidence_digest = " + toml.Quote(e.Trust.Digest) + "\n")
+			b.WriteString("evidence_signer = " + toml.Quote(e.Trust.Signer) + "\n")
+			if e.Trust.Issuer != "" {
+				b.WriteString("evidence_issuer = " + toml.Quote(e.Trust.Issuer) + "\n")
+			}
+			b.WriteString("evidence_bundle_sha256 = " + toml.Quote(e.Trust.BundleSHA256) + "\n")
+			b.WriteString("evidence_verified_at = " + toml.Quote(e.Trust.VerifiedAt) + "\n")
+			b.WriteString("evidence_verifier = " + toml.Quote(e.Trust.Verifier) + "\n")
+			b.WriteString("evidence_verifier_sha256 = " + toml.Quote(e.Trust.VerifierSHA256) + "\n")
+			b.WriteString("evidence_policy_fingerprint = " + toml.Quote(e.Trust.PolicyFingerprint) + "\n")
+		}
 	}
 	return []byte(b.String())
 }
@@ -390,6 +605,9 @@ func runtimeImageForTool(t registry.Tool, machinePolicy policy.Policy, lf *LockF
 func Write(path string, lf *LockFile) error {
 	if lf.Version == 0 {
 		lf.Version = 1
+	}
+	if lf.Version < 1 || lf.Version > maxLockVersion {
+		return fmt.Errorf("unsupported lock_version %d (supported: 1-%d)", lf.Version, maxLockVersion)
 	}
 	data := render(lf)
 	// Parse our own output before committing it.

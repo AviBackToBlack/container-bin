@@ -181,6 +181,17 @@ metadata alone does not establish user intent. Section IDs are a hash of the
 configured reference, validated on load; the file is rendered, re-parsed as a
 self-check, then written atomically.
 
+Lock schema 1 carries digest identity only. Schema 2 can additionally carry one
+versioned `ImageTrustEvidence` record per repository entry: mechanism,
+canonical repository, locked digest, signer/key identity, optional keyless
+issuer, authenticated bundle SHA-256, canonical UTC verification time, cosign
+identity/hash and the full policy-byte fingerprint. The parser binds that
+evidence back to the configured and resolved repository plus digest and rejects
+partial evidence, duplicates and evidence on local image IDs. New code keeps
+schema 1 as the write default until the verification producer explicitly opts
+into schema 2; a parser capped at schema 1 rejects schema 2. This provides a
+one-way, fail-closed migration boundary instead of silently discarding evidence.
+
 Runtime resolution is fail-closed: lockfile present + configured image missing
 from it = refuse to run and say exactly which command fixes it. Tools sharing
 an image share one entry, so `node`, `npm`, `npx` and every npm-exposed tool
@@ -224,11 +235,12 @@ cosign file as a bounded regular non-symlink file with the pinned digest, but
 does not invoke external code. Authentication yields an immutable byte snapshot,
 not a path that could be replaced between checking and execution. The later
 invocation layer must materialize that snapshot inside a protected private
-directory and execute only the staged copy. Until a later package verifies
-exact resolved digests and the lockfile can carry structured evidence, every
-covered image fails authorization with
-`policy.image_trust_unverified`; no existing digest-only path can silently
-bypass the new control.
+directory and execute only the staged copy. Lock schema 2 can validate and
+retain structured evidence, but no command produces or consumes it for
+authorization yet. Until a later package verifies exact resolved digests and
+runtime proves that stored evidence is current, every covered image fails
+authorization with `policy.image_trust_unverified`; no existing digest-only
+path can silently bypass the new control.
 
 ## Atomic writes
 

@@ -49,6 +49,164 @@ func TestLockFileRoundTrip(t *testing.T) {
 	}
 }
 
+func validTrustEvidence() *ImageTrustEvidence {
+	return &ImageTrustEvidence{
+		Version:           1,
+		Mechanism:         policy.ImageTrustKeyless,
+		Repository:        "docker.io/library/node",
+		Digest:            "sha256:" + strings.Repeat("a", 64),
+		Signer:            "https://github.com/acme/tools/.github/workflows/release.yml@refs/tags/v1.2.3",
+		Issuer:            "https://token.actions.githubusercontent.com",
+		BundleSHA256:      strings.Repeat("b", 64),
+		VerifiedAt:        "2026-09-26T12:34:56Z",
+		Verifier:          "cosign",
+		VerifierSHA256:    strings.Repeat("c", 64),
+		PolicyFingerprint: strings.Repeat("d", 64),
+	}
+}
+
+func validTrustLock(version int) *LockFile {
+	return &LockFile{Version: version, Images: map[string]LockEntry{
+		"node:24-slim": {
+			Configured: "node:24-slim",
+			Resolved:   "node@sha256:" + strings.Repeat("a", 64),
+			Digest:     "sha256:" + strings.Repeat("a", 64),
+			Trust:      validTrustEvidence(),
+		},
+	}}
+}
+
+func TestLockFileV2TrustEvidenceRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "container-bin.lock")
+	if err := Write(path, validTrustLock(2)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := got.Images["node:24-slim"]
+	if got.Version != 2 || entry.Trust == nil {
+		t.Fatalf("unexpected v2 lock: %#v", got)
+	}
+	if *entry.Trust != *validTrustEvidence() {
+		t.Fatalf("trust evidence mismatch:\n got %#v\nwant %#v", *entry.Trust, *validTrustEvidence())
+	}
+}
+
+func TestLockFileV2KeyEvidenceRoundTrip(t *testing.T) {
+	lf := validTrustLock(2)
+	entry := lf.Images["node:24-slim"]
+	entry.Trust.Mechanism = policy.ImageTrustKey
+	entry.Trust.Signer = strings.Repeat("e", 64)
+	entry.Trust.Issuer = ""
+	lf.Images[entry.Configured] = entry
+
+	path := filepath.Join(t.TempDir(), "container-bin.lock")
+	if err := Write(path, lf); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trust := got.Images[entry.Configured].Trust
+	if trust == nil || trust.Mechanism != policy.ImageTrustKey || trust.Signer != strings.Repeat("e", 64) || trust.Issuer != "" {
+		t.Fatalf("unexpected key evidence: %#v", trust)
+	}
+}
+
+func TestLockFileV2AllowsDigestOnlyEntries(t *testing.T) {
+	lf := validTrustLock(2)
+	entry := lf.Images["node:24-slim"]
+	entry.Trust = nil
+	lf.Images[entry.Configured] = entry
+	if err := Write(filepath.Join(t.TempDir(), "container-bin.lock"), lf); err != nil {
+		t.Fatalf("digest-only v2 lock rejected: %v", err)
+	}
+}
+
+func TestLockFileV1RejectsTrustEvidence(t *testing.T) {
+	err := Write(filepath.Join(t.TempDir(), "container-bin.lock"), validTrustLock(1))
+	if err == nil || !strings.Contains(err.Error(), "requires lock_version 2") {
+		t.Fatalf("Write error = %v, want lock_version 2 requirement", err)
+	}
+}
+
+func TestOlderParserRejectsV2Lock(t *testing.T) {
+	data := render(validTrustLock(2))
+	if _, err := parseLockFile(data, 1); err == nil || !strings.Contains(err.Error(), "supported: 1-1") {
+		t.Fatalf("old parser error = %v, want unsupported v2", err)
+	}
+	if _, err := parseLockFile(render(&LockFile{Version: 1, Images: map[string]LockEntry{}}), 1); err != nil {
+		t.Fatalf("old parser rejected v1: %v", err)
+	}
+}
+
+func TestLockFileRejectsMalformedTrustEvidence(t *testing.T) {
+	cases := []struct {
+		name string
+		edit func(*ImageTrustEvidence, *LockEntry)
+		want string
+	}{
+		{"version", func(e *ImageTrustEvidence, _ *LockEntry) { e.Version = 2 }, "unsupported evidence_version"},
+		{"repository", func(e *ImageTrustEvidence, _ *LockEntry) { e.Repository = "ghcr.io/acme/node" }, "does not match canonical"},
+		{"digest", func(e *ImageTrustEvidence, _ *LockEntry) { e.Digest = "sha256:" + strings.Repeat("f", 64) }, "does not match the locked digest"},
+		{"empty signer", func(e *ImageTrustEvidence, _ *LockEntry) { e.Signer = "" }, "signer must be"},
+		{"keyless issuer", func(e *ImageTrustEvidence, _ *LockEntry) { e.Issuer = "http://issuer.example" }, "issuer must be an HTTPS URL"},
+		{"key issuer", func(e *ImageTrustEvidence, _ *LockEntry) {
+			e.Mechanism, e.Signer, e.Issuer = policy.ImageTrustKey, strings.Repeat("e", 64), "https://issuer.example"
+		}, "issuer must be empty"},
+		{"key signer", func(e *ImageTrustEvidence, _ *LockEntry) {
+			e.Mechanism, e.Signer, e.Issuer = policy.ImageTrustKey, "key.pem", ""
+		}, "key signer must be"},
+		{"mechanism", func(e *ImageTrustEvidence, _ *LockEntry) { e.Mechanism = "notation" }, "unsupported mechanism"},
+		{"bundle", func(e *ImageTrustEvidence, _ *LockEntry) { e.BundleSHA256 = strings.Repeat("B", 64) }, "bundle SHA-256"},
+		{"time offset", func(e *ImageTrustEvidence, _ *LockEntry) { e.VerifiedAt = "2026-09-26T13:34:56+01:00" }, "canonical UTC"},
+		{"time fraction", func(e *ImageTrustEvidence, _ *LockEntry) { e.VerifiedAt = "2026-09-26T12:34:56.123Z" }, "canonical UTC"},
+		{"verifier", func(e *ImageTrustEvidence, _ *LockEntry) { e.Verifier = "cosign.exe" }, "unsupported verifier"},
+		{"verifier hash", func(e *ImageTrustEvidence, _ *LockEntry) { e.VerifierSHA256 = "short" }, "verifier SHA-256"},
+		{"policy fingerprint", func(e *ImageTrustEvidence, _ *LockEntry) { e.PolicyFingerprint = "short" }, "policy fingerprint"},
+		{"local image", func(_ *ImageTrustEvidence, entry *LockEntry) {
+			entry.Resolved, entry.Digest = "sha256:"+strings.Repeat("a", 64), "sha256:"+strings.Repeat("a", 64)
+		}, "local image ID cannot carry"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			lf := validTrustLock(2)
+			entry := lf.Images["node:24-slim"]
+			tc.edit(entry.Trust, &entry)
+			lf.Images[entry.Configured] = entry
+			err := Write(filepath.Join(t.TempDir(), "container-bin.lock"), lf)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Write error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestLockFileRejectsDuplicateKeysAndSections(t *testing.T) {
+	configured := "node:24-slim"
+	id := entryID(configured)
+	entry := fmt.Sprintf("[images.%s]\nconfigured = %q\nresolved = %q\ndigest = %q\n", id, configured, "node@sha256:"+strings.Repeat("a", 64), "sha256:"+strings.Repeat("a", 64))
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"top level", "lock_version = 1\nlock_version = 1\n" + entry, "duplicate top-level"},
+		{"entry key", "lock_version = 1\n" + strings.Replace(entry, "configured =", "configured = \"node:24-slim\"\nconfigured =", 1), "duplicate lock key"},
+		{"section", "lock_version = 1\n" + entry + entry, "duplicate image lock section"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := parseLockFile([]byte(tc.body), maxLockVersion); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("parse error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestWriteRejectsMalformedLocalImageID(t *testing.T) {
 	lf := &LockFile{Version: 1, Images: map[string]LockEntry{
 		"local/tool:dev": {

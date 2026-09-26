@@ -544,6 +544,13 @@ the supported registry coverage.
 This changes the lockfile schema and trust boundary, so it needs migration,
 old-binary/new-lock tests and security-model documentation.
 
+**Implementation status:** lock schema 2 now provides the structured storage,
+strict repository/digest/evidence validation, schema-1 compatibility,
+old-parser/new-lock rejection tests and security-model documentation. Cosign
+execution, evidence production and runtime freshness/policy matching remain
+separate follow-up slices; until they land, policy-covered images continue to
+fail with `policy.image_trust_unverified`.
+
 ## Plugin/provider architecture
 
 This is justified only by concrete providers that cannot be expressed by the
