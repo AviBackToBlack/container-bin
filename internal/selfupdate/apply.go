@@ -71,7 +71,7 @@ func (tx applyTransaction) apply(ctx context.Context, verified Verified, install
 	}
 	installDir := filepath.Dir(installedExecutable)
 	stageDir := filepath.Dir(staged)
-	if filepath.Base(staged) != "cb.exe" || filepath.Dir(stageDir) != installDir || !strings.HasPrefix(filepath.Base(stageDir), stagingPrefix) {
+	if !strings.EqualFold(filepath.Base(staged), "cb.exe") || !strings.EqualFold(filepath.Dir(stageDir), installDir) || !strings.HasPrefix(filepath.Base(stageDir), stagingPrefix) {
 		return errors.New("verified executable is outside the exact private same-volume staging layout")
 	}
 	if !strings.EqualFold(filepath.VolumeName(staged), filepath.VolumeName(installedExecutable)) {
@@ -218,7 +218,10 @@ func (tx applyTransaction) rollback(installedExecutable, rollbackBinary string, 
 			result = errors.Join(result, fmt.Errorf("managed shim %s changed outside the update transaction; refusing to overwrite it during rollback", shim))
 			continue
 		}
-		if err := tx.replace(rollbackBinary, shim, true); err != nil {
+		// The rollback copy has a protected owner-only DACL. Copy it through a
+		// fresh install-directory file so restored shims inherit the installation
+		// ACL instead of hardlinking that private security descriptor.
+		if err := tx.replace(rollbackBinary, shim, false); err != nil {
 			result = errors.Join(result, fmt.Errorf("restore managed shim %s: %w", shim, err))
 		}
 	}

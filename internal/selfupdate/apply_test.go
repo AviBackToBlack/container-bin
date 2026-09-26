@@ -79,6 +79,19 @@ func TestApplyTransactionRollsBackCompleteManagedSetAfterSmokeFailure(t *testing
 	for _, path := range []string{fixture.installed, fixture.hardlinkShim, copyShim} {
 		assertApplyBytes(t, path, fixture.oldBytes)
 	}
+	installedInfo, err := os.Stat(fixture.installed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, shim := range []string{fixture.hardlinkShim, copyShim} {
+		shimInfo, err := os.Stat(shim)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if os.SameFile(installedInfo, shimInfo) {
+			t.Errorf("rollback shim %s retained the private recovery-file hardlink identity", shim)
+		}
+	}
 	assertNoApplyRecoveryArtifacts(t, fixture.dir)
 }
 
