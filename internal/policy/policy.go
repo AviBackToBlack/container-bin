@@ -30,6 +30,7 @@ const (
 	registrySignatureVersion     = 1
 	registrySignatureAlgorithm   = "ed25519"
 	maxRegistrySignatureFileSize = 16 << 10
+	maxCosignVerifierSize        = 256 << 20
 )
 
 type ImageTrustMechanism string
@@ -52,6 +53,19 @@ type FilePin struct {
 	Path   string
 	SHA256 string
 }
+
+// FileSnapshot is an immutable authenticated copy of pinned file bytes. It
+// deliberately carries no source path: callers must materialize the snapshot
+// in their own protected staging directory rather than execute a mutable path
+// that was merely checked earlier.
+type FileSnapshot struct {
+	contents []byte
+	digest   string
+}
+
+func (s FileSnapshot) Bytes() []byte  { return append([]byte(nil), s.contents...) }
+func (s FileSnapshot) SHA256() string { return s.digest }
+func (s FileSnapshot) Size() int64    { return int64(len(s.contents)) }
 
 // ImageTrustRule is one canonical repository-bound cosign policy. Keyless
 // rules use Issuer and Subject; key rules use PublicKey. Transparency-log
@@ -124,6 +138,71 @@ func (p Policy) Summary() string {
 // use; this method deliberately performs no PATH lookup or filesystem access.
 func (p Policy) CosignVerifier() (FilePin, bool) {
 	return p.cosignVerifier, p.cosignVerifier.Path != ""
+}
+
+// AuthenticateCosignVerifier proves that the exact administrator-selected
+// path is a regular non-symlink file with the pinned SHA-256 digest and returns
+// an immutable snapshot of those authenticated bytes. The eventual invocation
+// layer must execute only a protected staged copy of this snapshot, never the
+// source path returned by CosignVerifier configuration lookup.
+func (p Policy) AuthenticateCosignVerifier() (FileSnapshot, error) {
+	if p.cosignVerifier.Path == "" {
+		return FileSnapshot{}, policyError("image_trust_verifier_invalid", "cosign verifier is not configured by machine policy")
+	}
+	return authenticatePinnedFile(p.cosignVerifier, "cosign verifier", maxCosignVerifierSize)
+}
+
+func authenticatePinnedFile(pin FilePin, label string, maxSize int64) (FileSnapshot, error) {
+	info, err := os.Lstat(pin.Path)
+	if err != nil {
+		return FileSnapshot{}, policyError("image_trust_verifier_invalid", "inspect %s %s: %v", label, pin.Path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return FileSnapshot{}, policyError("image_trust_verifier_invalid", "%s %s must be a regular non-symlink file", label, pin.Path)
+	}
+	if info.Size() <= 0 || info.Size() > maxSize {
+		return FileSnapshot{}, policyError("image_trust_verifier_invalid", "%s %s has invalid size %d (maximum %d)", label, pin.Path, info.Size(), maxSize)
+	}
+
+	file, err := os.Open(pin.Path)
+	if err != nil {
+		return FileSnapshot{}, policyError("image_trust_verifier_invalid", "open %s %s: %v", label, pin.Path, err)
+	}
+	opened, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return FileSnapshot{}, policyError("image_trust_verifier_invalid", "inspect opened %s %s: %v", label, pin.Path, err)
+	}
+	if !opened.Mode().IsRegular() || !os.SameFile(info, opened) {
+		_ = file.Close()
+		return FileSnapshot{}, policyError("image_trust_verifier_invalid", "%s %s changed before hashing", label, pin.Path)
+	}
+	contents, readErr := io.ReadAll(io.LimitReader(file, maxSize+1))
+	closeErr := file.Close()
+	if readErr != nil {
+		return FileSnapshot{}, policyError("image_trust_verifier_invalid", "read %s %s: %v", label, pin.Path, readErr)
+	}
+	if closeErr != nil {
+		return FileSnapshot{}, policyError("image_trust_verifier_invalid", "close %s %s: %v", label, pin.Path, closeErr)
+	}
+	n := int64(len(contents))
+	if n != info.Size() || n != opened.Size() || n > maxSize {
+		return FileSnapshot{}, policyError("image_trust_verifier_invalid", "%s %s changed size while reading", label, pin.Path)
+	}
+
+	post, err := os.Lstat(pin.Path)
+	if err != nil || post.Mode()&os.ModeSymlink != 0 || !post.Mode().IsRegular() || !os.SameFile(info, post) || post.Size() != n {
+		if err != nil {
+			return FileSnapshot{}, policyError("image_trust_verifier_invalid", "reinspect %s %s after reading: %v", label, pin.Path, err)
+		}
+		return FileSnapshot{}, policyError("image_trust_verifier_invalid", "%s %s changed while reading", label, pin.Path)
+	}
+	sum := sha256.Sum256(contents)
+	digest := hex.EncodeToString(sum[:])
+	if digest != pin.SHA256 {
+		return FileSnapshot{}, policyError("image_trust_verifier_invalid", "%s %s SHA-256 %s does not match the machine-policy pin", label, pin.Path, digest)
+	}
+	return FileSnapshot{contents: contents, digest: digest}, nil
 }
 
 // ImageTrustFor returns the most specific repository-bound rule for ref.
