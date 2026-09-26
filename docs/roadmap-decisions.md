@@ -132,6 +132,12 @@ lock schema, including mechanism, repository, digest, signer identity/key,
 issuer where applicable, log/bundle identity, verification time, verifier
 identity/hash and effective trust-policy fingerprint.
 
+Lock schema 2 now defines and strictly validates that evidence shape while
+preserving schema-1 reads and fail-closed old-binary/new-lock behavior. Verifier
+execution, evidence production and runtime staleness enforcement remain the
+next slices; policy-covered repositories do not become runnable from schema
+support alone.
+
 Runtime still executes the pinned digest and does not invoke cosign on every
 tool launch. A changed digest, verifier or trust-policy fingerprint makes prior
 evidence stale and fails closed until explicit re-verification. Mirrors do not

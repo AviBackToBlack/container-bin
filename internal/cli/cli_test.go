@@ -440,6 +440,49 @@ func TestProjectOverlayLockRefreshPreservesOnlyOtherValidatedEntries(t *testing.
 	}
 }
 
+func TestProjectOverlayLockRefreshPreservesSchema2Evidence(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	current := "ghcr.io/acme/current:1"
+	other := "ghcr.io/acme/other:1"
+	path := filepath.Join(t.TempDir(), "container-bin.lock")
+	lf := &lockfile.LockFile{Version: 2, Images: map[string]lockfile.LockEntry{
+		current: {Configured: current, Resolved: "ghcr.io/acme/current@" + digest, Digest: digest},
+		other: {
+			Configured: other,
+			Resolved:   "ghcr.io/acme/other@" + digest,
+			Digest:     digest,
+			Trust: &lockfile.ImageTrustEvidence{
+				Version:           1,
+				Mechanism:         policy.ImageTrustKeyless,
+				Repository:        "ghcr.io/acme/other",
+				Digest:            digest,
+				Signer:            "https://github.com/acme/tools/.github/workflows/release.yml@refs/tags/v1.2.3",
+				Issuer:            "https://token.actions.githubusercontent.com",
+				BundleSHA256:      strings.Repeat("b", 64),
+				VerifiedAt:        "2026-09-26T12:34:56Z",
+				Verifier:          "cosign",
+				VerifierSHA256:    strings.Repeat("c", 64),
+				PolicyFingerprint: strings.Repeat("d", 64),
+			},
+		},
+	}}
+	if err := lockfile.Write(path, lf); err != nil {
+		t.Fatal(err)
+	}
+
+	seed, preserved, err := lockFileForRefresh(path, []string{current}, true, policy.Policy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seed.Version != 2 || preserved != 1 || seed.Images[other].Trust == nil {
+		t.Fatalf("preserved schema-2 seed = %#v, count=%d", seed, preserved)
+	}
+	seed.Images[current] = lockfile.LockEntry{Configured: current, Resolved: "ghcr.io/acme/current@" + digest, Digest: digest}
+	if err := lockfile.Write(filepath.Join(t.TempDir(), "refreshed.lock"), seed); err != nil {
+		t.Fatalf("write preserved schema-2 refresh: %v", err)
+	}
+}
+
 func TestCheckLockReportsEveryStatusAfterPolicyPreflight(t *testing.T) {
 	reg := registry.Registry{Tools: map[string]registry.Tool{
 		"present": {Image: "ghcr.io/acme/present:1"},
