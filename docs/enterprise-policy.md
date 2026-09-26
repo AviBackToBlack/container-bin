@@ -233,9 +233,11 @@ image_trust_rules = [
 The verifier path must be clean and absolute, and its pin is exactly 64
 lowercase hexadecimal SHA-256 characters. ContainerBin never searches `PATH`.
 `internal/policy` authenticates that exact path as a bounded, non-empty regular
-non-symlink file and rejects identity, size or digest changes. The later
-invocation layer must perform this authentication immediately before and after
-every use; a successful earlier check is not a durable grant.
+non-symlink file, rejects identity, size or digest changes, and returns an
+immutable byte snapshot rather than an executable path. The later invocation
+layer must materialize only that snapshot inside its own protected staging
+directory and execute the staged copy; validating and then executing the
+mutable configured pathname would leave a replacement race.
 
 Each rule has five pipe-delimited fields:
 

@@ -221,10 +221,12 @@ absolute SHA-256 pins for an external cosign verifier and any public-key files.
 Rule lookup reuses Docker Hub normalization and selects the most-specific
 repository boundary. The policy layer can authenticate the exact configured
 cosign file as a bounded regular non-symlink file with the pinned digest, but
-does not invoke external code. The later invocation layer must re-authenticate
-it immediately before and after use. Until a later package verifies exact
-resolved digests and the lockfile can carry structured evidence, every covered
-image fails authorization with
+does not invoke external code. Authentication yields an immutable byte snapshot,
+not a path that could be replaced between checking and execution. The later
+invocation layer must materialize that snapshot inside a protected private
+directory and execute only the staged copy. Until a later package verifies
+exact resolved digests and the lockfile can carry structured evidence, every
+covered image fails authorization with
 `policy.image_trust_unverified`; no existing digest-only path can silently
 bypass the new control.
 

@@ -218,12 +218,15 @@ func TestAuthenticateCosignVerifierPinsExactRegularFile(t *testing.T) {
 	}
 	sum := sha256.Sum256(contents)
 	p := Policy{cosignVerifier: FilePin{Path: path, SHA256: hex.EncodeToString(sum[:])}}
-	got, err := p.AuthenticateCosignVerifier()
-	if err != nil || got != path {
-		t.Fatalf("AuthenticateCosignVerifier() = (%q, %v), want (%q, nil)", got, err, path)
+	snapshot, err := p.AuthenticateCosignVerifier()
+	if err != nil || !bytes.Equal(snapshot.Bytes(), contents) || snapshot.SHA256() != p.cosignVerifier.SHA256 || snapshot.Size() != int64(len(contents)) {
+		t.Fatalf("AuthenticateCosignVerifier() = (%q, %q, %d, %v)", snapshot.Bytes(), snapshot.SHA256(), snapshot.Size(), err)
 	}
 	if err := os.WriteFile(path, []byte("changed verifier bytes"), 0700); err != nil {
 		t.Fatal(err)
+	}
+	if !bytes.Equal(snapshot.Bytes(), contents) {
+		t.Fatal("authenticated verifier snapshot changed with its source path")
 	}
 	assertPolicyCode(t, authenticateCosignError(p), "image_trust_verifier_invalid")
 }
