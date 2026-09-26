@@ -770,6 +770,11 @@ and overlap rotation. Signed registries are read-only to `cb`; updates must be
 provisioned with a matching signature by the administrator. Policy schema 3 can
 add repository-bound image-signature requirements; covered images fail closed
 until `cb lock` records verification evidence from the pinned cosign verifier.
+The internal verification boundary can now authenticate and privately stage
+the pinned verifier and key bytes, run online verification against one exact
+repository digest, and independently validate bounded JSON results. It is not
+yet wired into `cb lock`; offline bundles, evidence production and runtime
+freshness authorization remain fail closed.
 Lower-precedence registry or command-line choices cannot weaken policy. See
 [enterprise machine policy](docs/enterprise-policy.md) for the schema,
 ownership rules, normalization behavior and stable diagnostic codes.
