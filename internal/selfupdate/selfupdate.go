@@ -1,6 +1,7 @@
-// Package selfupdate implements release selection, same-volume staging and
-// artifact verification for ContainerBin's transactional self-update.
-// Installed-file replacement remains a deliberately separate later phase.
+// Package selfupdate implements release selection, same-volume staging,
+// artifact verification and rollback-safe installed-set replacement for
+// ContainerBin's transactional self-update. The temporary helper that waits
+// for the invoking process and the user-facing apply command remain separate.
 package selfupdate
 
 import (

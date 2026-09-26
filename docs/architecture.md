@@ -304,7 +304,7 @@ internal/atomicio    crash-safe write + .bak recovery                (leaf)
 internal/mutationlock  the registry mutation lock primitive          (leaf)
 internal/hostenv       host classification and gated WSL layout       (leaf)
 internal/wslfs         native WSL filesystem ownership/mode preflight
-internal/selfupdate    canonical release selection and read-only plan (leaf)
+internal/selfupdate    release selection, staging, verification and replacement
 ```
 
 The exact import edges, from `go list -f '{{.ImportPath}} {{.Imports}}' ./...`,
@@ -312,7 +312,7 @@ project-internal imports only:
 
 ```
 main         -> cli, diag, dockerrun, hostenv, mutationlock, policy, projectconfig, registry, selfupdate, state
-cli          -> atomicio, diag, dockerrun, lockfile, pathmap, policy, registry, statearchive, toml
+cli          -> atomicio, diag, dockerrun, dockervol, lockfile, pathmap, policy, registry, statearchive, toml
 projectconfig -> atomicio, pathmap, policy, registry, toml
 diag         -> dockerrun, dockervol, lockfile, pathmap, policy, registry
 dockerrun    -> dockervol, lockfile, pathmap, policy, registry
@@ -323,15 +323,16 @@ pathmap      -> registry
 registry     -> atomicio, toml
 policy       -> toml
 wslfs       -> hostenv
-atomicio, dockervol, hostenv, mutationlock, selfupdate, toml -> (leaves)
+selfupdate  -> mutationlock, registry
+atomicio, dockervol, hostenv, mutationlock, toml -> (leaves)
 ```
 
 Notably: `lockfile` and `pathmap` both depend on `registry` directly, not on
 each other; `dockervol` is a true leaf with no internal dependencies at all
 (not "beneath" `lockfile`/`pathmap` in any dependency sense — every one of
 `diag`/`dockerrun`/`state` reaches it independently); and `mutationlock` is
-reached only from `main`, unrelated to the `registry`/`lockfile`/`pathmap`
-chain.
+reached from `main` and the self-update replacement transaction. The latter
+also reaches `registry` to scope managed shim names without guessing.
 
 Two boundaries are load-bearing rather than cosmetic:
 
@@ -361,12 +362,15 @@ After the host runtime boundary is enforced, `cb self-update --check` is
 dispatched before machine policy and registry loading. Release selection
 therefore remains available when either local configuration source is missing
 or invalid without allowing unsupported frontends to perform network work.
-`internal/selfupdate` has no project imports. The CLI currently performs only
-bounded metadata queries and plan output. The package also has an unexposed
-same-volume staging phase that requires the installed executable path, then
-downloads the directly attested executable and checksum manifest into private,
-exact-size temporary files through a narrowly allowed GitHub release redirect.
-Windows staging replaces inherited permissions with a protected DACL granting
-access only to the current user. Attestation/checksum verification and
-installed-file replacement remain separate later phases, so no download path
-can yet mutate the installed binary.
+The exposed CLI currently performs only bounded metadata queries and plan
+output; that path does not load project or registry state. The package imports
+`mutationlock` and `registry` only for its unexposed replacement transaction,
+which serializes with registry/shim mutations and limits discovery to valid,
+non-reserved managed shim names. Its other unexposed phases provide private
+same-volume staging, exact checksum and GitHub build-provenance verification,
+and rollback-safe replacement of the management executable plus the complete
+proven shim set. Windows staging and recovery files use protected
+current-user-only DACLs; installed replacements inherit installation-directory
+ACLs. The temporary helper that waits for the invoking process to exit and the
+user-facing apply command remain separate later work, so the exposed command
+still cannot mutate the installed binary.
