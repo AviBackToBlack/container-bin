@@ -112,7 +112,7 @@ func (v verifier) Verify(ctx context.Context, machinePolicy policy.Policy, confi
 	if v.runner == nil || v.now == nil || v.createStage == nil {
 		return Result{}, errors.New("image trust verifier is incomplete")
 	}
-	repository, digest, rule, err := validateRequest(machinePolicy, configured, resolved)
+	repository, digest, verificationTarget, rule, err := validateRequest(machinePolicy, configured, resolved)
 	if err != nil {
 		return Result{}, err
 	}
@@ -128,7 +128,7 @@ func (v verifier) Verify(ctx context.Context, machinePolicy policy.Policy, confi
 		}
 	}
 	return v.verifyAuthenticated(ctx, verificationRequest{
-		resolved:          resolved,
+		resolved:          verificationTarget,
 		repository:        repository,
 		digest:            digest,
 		rule:              rule,
@@ -229,29 +229,37 @@ func (v verifier) verifyAuthenticated(ctx context.Context, request verificationR
 	}, nil
 }
 
-func validateRequest(machinePolicy policy.Policy, configured, resolved string) (string, string, policy.ImageTrustRule, error) {
+func validateRequest(machinePolicy policy.Policy, configured, resolved string) (string, string, string, policy.ImageTrustRule, error) {
 	if !machinePolicy.Managed() || !validSHA256(machinePolicy.Fingerprint) {
-		return "", "", policy.ImageTrustRule{}, errors.New("image trust verification requires a valid managed machine policy fingerprint")
+		return "", "", "", policy.ImageTrustRule{}, errors.New("image trust verification requires a valid managed machine policy fingerprint")
 	}
-	configuredRepository, err := policy.CanonicalRepository(configured)
+	configuredRepository, digest, verificationTarget, err := canonicalVerificationTarget(configured, resolved)
 	if err != nil {
-		return "", "", policy.ImageTrustRule{}, fmt.Errorf("configured image %q: %w", configured, err)
-	}
-	resolvedRepository, digest, err := splitResolvedDigest(resolved)
-	if err != nil {
-		return "", "", policy.ImageTrustRule{}, err
-	}
-	if resolvedRepository != configuredRepository {
-		return "", "", policy.ImageTrustRule{}, fmt.Errorf("resolved repository %q does not match configured repository %q", resolvedRepository, configuredRepository)
+		return "", "", "", policy.ImageTrustRule{}, err
 	}
 	rule, ok, err := machinePolicy.ImageTrustFor(configured)
 	if err != nil {
-		return "", "", policy.ImageTrustRule{}, fmt.Errorf("select image trust rule for %q: %w", configured, err)
+		return "", "", "", policy.ImageTrustRule{}, fmt.Errorf("select image trust rule for %q: %w", configured, err)
 	}
 	if !ok {
-		return "", "", policy.ImageTrustRule{}, fmt.Errorf("image %q has no machine-policy image trust rule", configured)
+		return "", "", "", policy.ImageTrustRule{}, fmt.Errorf("image %q has no machine-policy image trust rule", configured)
 	}
-	return configuredRepository, digest, rule, nil
+	return configuredRepository, digest, verificationTarget, rule, nil
+}
+
+func canonicalVerificationTarget(configured, resolved string) (string, string, string, error) {
+	configuredRepository, err := policy.CanonicalRepository(configured)
+	if err != nil {
+		return "", "", "", fmt.Errorf("configured image %q: %w", configured, err)
+	}
+	resolvedRepository, digest, err := splitResolvedDigest(resolved)
+	if err != nil {
+		return "", "", "", err
+	}
+	if resolvedRepository != configuredRepository {
+		return "", "", "", fmt.Errorf("resolved repository %q does not match configured repository %q", resolvedRepository, configuredRepository)
+	}
+	return configuredRepository, digest, configuredRepository + "@" + digest, nil
 }
 
 func splitResolvedDigest(resolved string) (string, string, error) {

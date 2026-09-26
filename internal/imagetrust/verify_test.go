@@ -272,6 +272,20 @@ func TestSplitResolvedDigestIsStrict(t *testing.T) {
 	}
 }
 
+func TestCanonicalVerificationTargetNormalizesDockerHubAlias(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	repository, gotDigest, target, err := canonicalVerificationTarget(
+		"python:3.13",
+		"registry-1.docker.io/library/python@"+digest,
+	)
+	if err != nil || repository != "docker.io/library/python" || gotDigest != digest || target != "docker.io/library/python@"+digest {
+		t.Fatalf("canonicalVerificationTarget() = (%q, %q, %q, %v)", repository, gotDigest, target, err)
+	}
+	if _, _, _, err := canonicalVerificationTarget("ghcr.io/acme/tool:v1", "ghcr.io/other/tool@"+digest); err == nil {
+		t.Fatal("mismatched resolved repository was accepted")
+	}
+}
+
 func TestBoundedBufferReportsOverflowWithoutShortWrite(t *testing.T) {
 	buffer := boundedBuffer{limit: 4}
 	n, err := buffer.Write([]byte("abcdef"))
@@ -281,8 +295,12 @@ func TestBoundedBufferReportsOverflowWithoutShortWrite(t *testing.T) {
 }
 
 func testSnapshot(contents string) authenticatedSnapshot {
-	sum := sha256.Sum256([]byte(contents))
-	return authenticatedSnapshot{contents: []byte(contents), digest: hex.EncodeToString(sum[:])}
+	return testSnapshotBytes([]byte(contents))
+}
+
+func testSnapshotBytes(contents []byte) authenticatedSnapshot {
+	sum := sha256.Sum256(contents)
+	return authenticatedSnapshot{contents: append([]byte(nil), contents...), digest: hex.EncodeToString(sum[:])}
 }
 
 func testCosignOutput(t *testing.T, digest, subject, issuer string, bundle any) []byte {
