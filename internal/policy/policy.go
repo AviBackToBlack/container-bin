@@ -12,22 +12,58 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/AviBackToBlack/container-bin/internal/toml"
 )
 
 const (
-	MaxSchemaVersion             = 2
+	MaxSchemaVersion             = 3
 	registrySignatureVersion     = 1
 	registrySignatureAlgorithm   = "ed25519"
 	maxRegistrySignatureFileSize = 16 << 10
 )
+
+type ImageTrustMechanism string
+
+const (
+	ImageTrustKeyless ImageTrustMechanism = "keyless"
+	ImageTrustKey     ImageTrustMechanism = "key"
+)
+
+type ImageTrustNetworkMode string
+
+const (
+	ImageTrustOnline        ImageTrustNetworkMode = "online"
+	ImageTrustOfflineBundle ImageTrustNetworkMode = "offline-bundle"
+)
+
+// FilePin identifies administrator-selected verifier or key material without
+// trusting PATH lookup or mutable path identity alone.
+type FilePin struct {
+	Path   string
+	SHA256 string
+}
+
+// ImageTrustRule is one canonical repository-bound cosign policy. Keyless
+// rules use Issuer and Subject; key rules use PublicKey. Transparency-log
+// verification is mandatory for both mechanisms.
+type ImageTrustRule struct {
+	Repository  string
+	Mechanism   ImageTrustMechanism
+	Issuer      string
+	Subject     string
+	PublicKey   FilePin
+	NetworkMode ImageTrustNetworkMode
+}
 
 type Error struct {
 	Code string
@@ -52,6 +88,8 @@ type Policy struct {
 	Fingerprint              string
 	registrySigningKeys      map[string]registrySigningKey
 	revokedRegistryKeyIDs    map[string]bool
+	cosignVerifier           FilePin
+	imageTrustRules          []ImageTrustRule
 }
 
 type registrySigningKey struct {
@@ -77,8 +115,36 @@ func (p Policy) Summary() string {
 	if p.ExpiresAt != nil {
 		expires = p.ExpiresAt.UTC().Format(time.RFC3339)
 	}
-	return fmt.Sprintf("managed schema=%d require_lock=%t allow_local_images=%t allowed_repositories=%d require_registry_signature=%t registry_trusted_keys=%d registry_revoked_keys=%d expires=%s fingerprint=sha256:%s source=%s",
-		p.SchemaVersion, p.RequireLock, p.AllowLocalImages, len(p.AllowedRepositories), p.RequireRegistrySignature, len(p.registrySigningKeys), len(p.revokedRegistryKeyIDs), expires, p.Fingerprint, p.Path)
+	return fmt.Sprintf("managed schema=%d require_lock=%t allow_local_images=%t allowed_repositories=%d require_registry_signature=%t registry_trusted_keys=%d registry_revoked_keys=%d image_trust_rules=%d cosign_pinned=%t expires=%s fingerprint=sha256:%s source=%s",
+		p.SchemaVersion, p.RequireLock, p.AllowLocalImages, len(p.AllowedRepositories), p.RequireRegistrySignature, len(p.registrySigningKeys), len(p.revokedRegistryKeyIDs), len(p.imageTrustRules), p.cosignVerifier.Path != "", expires, p.Fingerprint, p.Path)
+}
+
+// CosignVerifier returns the administrator-pinned verifier configuration.
+// The later execution slice must authenticate this exact path before and after
+// use; this method deliberately performs no PATH lookup or filesystem access.
+func (p Policy) CosignVerifier() (FilePin, bool) {
+	return p.cosignVerifier, p.cosignVerifier.Path != ""
+}
+
+// ImageTrustFor returns the most specific repository-bound rule for ref.
+// Absence means digest-only locking remains permitted by this policy; callers
+// must never treat an invalid reference as absence.
+func (p Policy) ImageTrustFor(ref string) (ImageTrustRule, bool, error) {
+	repository, err := CanonicalRepository(ref)
+	if err != nil {
+		return ImageTrustRule{}, false, err
+	}
+	var selected ImageTrustRule
+	found := false
+	for _, rule := range p.imageTrustRules {
+		if repository != rule.Repository && !strings.HasPrefix(repository, rule.Repository+"/") {
+			continue
+		}
+		if !found || len(rule.Repository) > len(selected.Repository) {
+			selected, found = rule, true
+		}
+	}
+	return selected, found, nil
 }
 
 func Load() (Policy, error) {
@@ -112,8 +178,10 @@ func loadAt(path string, ownership func(string) error, now time.Time) (Policy, e
 
 func parse(path string, b []byte, now time.Time) (Policy, error) {
 	p := Policy{Path: path}
-	var registrySigningKeySpecs, revokedRegistryKeyIDs []string
+	var registrySigningKeySpecs, revokedRegistryKeyIDs, imageTrustRuleSpecs []string
+	var cosignPath, cosignSHA256 string
 	usedRegistrySignatureFields := false
+	usedImageTrustFields := false
 	seen := map[string]bool{}
 	sc := bufio.NewScanner(strings.NewReader(string(b)))
 	lineNo := 0
@@ -202,6 +270,35 @@ func parse(path string, b []byte, now time.Time) (Policy, error) {
 				revokedRegistryKeyIDs = values
 			}
 			usedRegistrySignatureFields = true
+		case "cosign_path", "cosign_sha256":
+			value, err := toml.ParseQuoted(raw)
+			if err != nil {
+				return Policy{}, policyError("syntax", "line %d %s: %v", lineNo, key, err)
+			}
+			if key == "cosign_path" {
+				cosignPath = value
+			} else {
+				cosignSHA256 = value
+			}
+			usedImageTrustFields = true
+		case "image_trust_rules":
+			startLine := lineNo
+			for strings.HasPrefix(strings.TrimSpace(raw), "[") && !arrayValueComplete(raw) {
+				if !sc.Scan() {
+					if err := sc.Err(); err != nil {
+						return Policy{}, policyError("unreadable", "scan %s: %v", path, err)
+					}
+					return Policy{}, policyError("syntax", "line %d image_trust_rules: unterminated array", startLine)
+				}
+				lineNo++
+				raw += "\n" + strings.TrimSpace(toml.StripComment(sc.Text()))
+			}
+			values, err := toml.ParseStringArray(raw)
+			if err != nil {
+				return Policy{}, policyError("syntax", "line %d image_trust_rules: %v", startLine, err)
+			}
+			imageTrustRuleSpecs = values
+			usedImageTrustFields = true
 		case "expires_at":
 			value, err := toml.ParseQuoted(raw)
 			if err != nil {
@@ -225,7 +322,10 @@ func parse(path string, b []byte, now time.Time) (Policy, error) {
 	if usedRegistrySignatureFields && p.SchemaVersion < 2 {
 		return Policy{}, policyError("version", "registry signature controls require policy_version 2")
 	}
-	if !p.RequireLock && len(p.AllowedRepositories) == 0 && !p.RequireRegistrySignature {
+	if usedImageTrustFields && p.SchemaVersion < 3 {
+		return Policy{}, policyError("version", "image trust controls require policy_version 3")
+	}
+	if !p.RequireLock && len(p.AllowedRepositories) == 0 && !p.RequireRegistrySignature && len(imageTrustRuleSpecs) == 0 {
 		return Policy{}, policyError("syntax", "policy has no authorization controls")
 	}
 	if p.ExpiresAt != nil && !now.Before(*p.ExpiresAt) {
@@ -263,9 +363,113 @@ func parse(path string, b []byte, now time.Time) (Policy, error) {
 			return Policy{}, policyError("syntax", "require_registry_signature needs at least one currently active, non-revoked registry signing key")
 		}
 	}
+	rules, err := parseImageTrustRules(imageTrustRuleSpecs)
+	if err != nil {
+		return Policy{}, err
+	}
+	if len(rules) == 0 {
+		if cosignPath != "" || cosignSHA256 != "" {
+			return Policy{}, policyError("syntax", "cosign_path and cosign_sha256 require at least one image_trust_rules entry")
+		}
+	} else {
+		pin, err := parseFilePin("cosign verifier", cosignPath, cosignSHA256)
+		if err != nil {
+			return Policy{}, err
+		}
+		p.cosignVerifier = pin
+	}
+	p.imageTrustRules = rules
 	sum := sha256.Sum256(b)
 	p.Fingerprint = hex.EncodeToString(sum[:])
 	return p, nil
+}
+
+func parseImageTrustRules(specs []string) ([]ImageTrustRule, error) {
+	rules := make([]ImageTrustRule, 0, len(specs))
+	seen := map[string]bool{}
+	for _, spec := range specs {
+		parts := strings.Split(spec, "|")
+		if len(parts) != 5 {
+			return nil, policyError("syntax", "image_trust_rules entry must be REPOSITORY|MECHANISM|ISSUER_OR_KEY_PATH|SUBJECT_OR_KEY_SHA256|NETWORK_MODE")
+		}
+		repository, err := canonicalRule(parts[0])
+		if err != nil {
+			return nil, policyError("syntax", "invalid image trust repository %q: %v", parts[0], err)
+		}
+		if seen[repository] {
+			return nil, policyError("syntax", "duplicate image trust repository %q", repository)
+		}
+		rule := ImageTrustRule{Repository: repository, Mechanism: ImageTrustMechanism(parts[1])}
+		switch rule.Mechanism {
+		case ImageTrustKeyless:
+			if err := validateImageTrustIssuer(parts[2]); err != nil {
+				return nil, policyError("syntax", "image trust repository %q issuer: %v", repository, err)
+			}
+			if err := validateImageTrustSubject(parts[3]); err != nil {
+				return nil, policyError("syntax", "image trust repository %q subject: %v", repository, err)
+			}
+			rule.Issuer, rule.Subject = parts[2], parts[3]
+		case ImageTrustKey:
+			pin, err := parseFilePin("image trust public key", parts[2], parts[3])
+			if err != nil {
+				return nil, err
+			}
+			rule.PublicKey = pin
+		default:
+			return nil, policyError("syntax", "image trust repository %q has unsupported mechanism %q", repository, parts[1])
+		}
+		rule.NetworkMode = ImageTrustNetworkMode(parts[4])
+		if rule.NetworkMode != ImageTrustOnline && rule.NetworkMode != ImageTrustOfflineBundle {
+			return nil, policyError("syntax", "image trust repository %q has unsupported network mode %q", repository, parts[4])
+		}
+		seen[repository] = true
+		rules = append(rules, rule)
+	}
+	sort.Slice(rules, func(i, j int) bool { return rules[i].Repository < rules[j].Repository })
+	return rules, nil
+}
+
+func parseFilePin(name, path, digest string) (FilePin, error) {
+	if path == "" || !utf8.ValidString(path) || !filepath.IsAbs(path) || filepath.Clean(path) != path || containsControl(path) {
+		return FilePin{}, policyError("syntax", "%s path %q must be a clean absolute path without control characters", name, path)
+	}
+	if len(digest) != sha256.Size*2 || digest != strings.ToLower(digest) {
+		return FilePin{}, policyError("syntax", "%s SHA-256 must be 64 lowercase hexadecimal characters", name)
+	}
+	if _, err := hex.DecodeString(digest); err != nil {
+		return FilePin{}, policyError("syntax", "%s SHA-256 must be 64 lowercase hexadecimal characters", name)
+	}
+	return FilePin{Path: path, SHA256: digest}, nil
+}
+
+func validateImageTrustSubject(subject string) error {
+	if subject == "" || !utf8.ValidString(subject) || len(subject) > 1024 || containsControl(subject) {
+		return errors.New("must be 1-1024 bytes without control characters")
+	}
+	return nil
+}
+
+func validateImageTrustIssuer(issuer string) error {
+	if issuer == "" || !utf8.ValidString(issuer) || len(issuer) > 1024 || containsControl(issuer) {
+		return errors.New("must be 1-1024 bytes without control characters")
+	}
+	parsed, err := url.Parse(issuer)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return errors.New("must be an HTTPS URL without userinfo, query or fragment")
+	}
+	if parsed.Host != strings.ToLower(parsed.Host) {
+		return errors.New("host must be lowercase")
+	}
+	return nil
+}
+
+func containsControl(value string) bool {
+	for _, r := range value {
+		if r < 0x20 || r == 0x7f {
+			return true
+		}
+	}
+	return false
 }
 
 func parseRegistrySigningKeys(specs, revokedIDs []string) (map[string]registrySigningKey, map[string]bool, error) {
@@ -560,18 +764,31 @@ func (p Policy) AuthorizeImage(configured string, locked, local bool) error {
 	if p.RequireLock && !locked {
 		return policyError("lock_required", "image %q is not covered by an exact lock entry", configured)
 	}
+	var rule ImageTrustRule
+	var trustRequired bool
+	var trustErr error
+	if len(p.imageTrustRules) != 0 {
+		rule, trustRequired, trustErr = p.ImageTrustFor(configured)
+	}
 	if local {
+		if trustErr == nil && trustRequired {
+			return policyError("image_trust_unverified", "local image %q cannot satisfy the %s signature requirement for repository boundary %q", configured, rule.Mechanism, rule.Repository)
+		}
 		if !p.AllowLocalImages {
 			return policyError("local_image_denied", "local image %q has no authorized registry origin", configured)
 		}
 		return nil
 	}
-	if len(p.AllowedRepositories) == 0 {
-		return nil
+	if len(p.AllowedRepositories) != 0 {
+		if _, err := p.authorizeRepository(configured); err != nil {
+			return policyError("repository_denied", "image %q: %v", configured, err)
+		}
 	}
-	_, err := p.authorizeRepository(configured)
-	if err != nil {
-		return policyError("repository_denied", "image %q: %v", configured, err)
+	if trustErr != nil {
+		return policyError("repository_denied", "image %q: %v", configured, trustErr)
+	}
+	if trustRequired {
+		return policyError("image_trust_unverified", "image %q requires %s signature evidence for repository boundary %q; this build cannot yet create or consume image trust evidence", configured, rule.Mechanism, rule.Repository)
 	}
 	return nil
 }

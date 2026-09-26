@@ -110,8 +110,8 @@ Policy failures have a stable bracketed code suitable for log processing:
 - `policy.repository_denied`
 
 The fingerprint hashes the exact policy bytes. It is an audit correlation
-value, not a signature. Image-signature policy remains a separate roadmap
-stage and is not implied by either schema.
+value, not a signature. Schemas 1 and 2 do not imply image-signature policy;
+schema 3 declares that separate requirement as described below.
 
 ## Schema 2 — authenticated registry bytes
 
@@ -191,9 +191,8 @@ operation. An unmanaged restore of an unsigned archive removes any stale
 envelope and its backup.
 
 Schema 1 remains supported unchanged. Registry-signature fields in schema 1
-are rejected, and policy versions newer than 2 fail closed. This makes rollback
-to a ContainerBin build that predates schema 2 fail visibly instead of silently
-ignoring the authentication requirement.
+are rejected. A ContainerBin build that predates schema 2 rejects the newer
+version visibly instead of silently ignoring the authentication requirement.
 
 Additional stable error codes are:
 
@@ -206,3 +205,71 @@ Additional stable error codes are:
 Policy summaries report whether registry signatures are required plus trusted
 and revoked key counts. They never print public-key material or signature
 contents.
+
+## Schema 3 — repository-bound image trust policy
+
+Schema 3 retains every earlier control and adds the fail-closed policy contract
+for Sigstore/cosign image verification. This foundation intentionally does not
+yet invoke cosign or change the lockfile schema. A repository covered by an
+`image_trust_rules` entry is therefore rejected with
+`policy.image_trust_unverified` until the later verification/evidence slice can
+prove and record the required evidence. It never falls back to a digest-only
+lock merely because that slice is absent.
+
+```toml
+policy_version = 3
+require_lock = true
+allowed_repositories = ["ghcr.io/acme", "registry.example.com/platform"]
+
+cosign_path = "C:\\Program Files\\ContainerBin\\cosign.exe"
+cosign_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+image_trust_rules = [
+  "ghcr.io/acme|keyless|https://token.actions.githubusercontent.com|https://github.com/acme/tools/.github/workflows/release.yml@refs/tags/v1.2.3|online",
+  "registry.example.com/platform|key|C:\\ProgramData\\ContainerBin\\keys\\platform.pub|abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789|offline-bundle",
+]
+```
+
+The verifier path must be clean and absolute, and its pin is exactly 64
+lowercase hexadecimal SHA-256 characters. ContainerBin never searches `PATH`.
+The later invocation layer must authenticate the exact regular non-symlink
+executable before and after use; a hash mismatch or replacement is fatal.
+
+Each rule has five pipe-delimited fields:
+
+`REPOSITORY|MECHANISM|ISSUER_OR_KEY_PATH|SUBJECT_OR_KEY_SHA256|NETWORK_MODE`
+
+- `REPOSITORY` uses the same canonical Docker Hub and repository-boundary rules
+  as `allowed_repositories`. Duplicate canonical boundaries are rejected. A
+  nested rule overrides a parent rule only by being more specific.
+- `MECHANISM` is `keyless` or `key`.
+- A `keyless` rule supplies an exact HTTPS OIDC issuer and exact certificate
+  subject. The issuer cannot contain userinfo, query or fragment data.
+- A `key` rule supplies a clean absolute public-key path and a lowercase
+  SHA-256 pin for those exact bytes. The later verifier layer must authenticate
+  that key file just as strictly as the cosign executable.
+- `NETWORK_MODE` is `online` or `offline-bundle`. `online` permits the verifier
+  to obtain required Sigstore material from the network. `offline-bundle`
+  requires complete bundled evidence and forbids network fallback.
+
+Transparency-log inclusion is mandatory for both mechanisms. Keyless
+certificate validity must be proven at the signed/integrated time represented
+by authenticated bundle/log evidence; current wall-clock validity alone is not
+sufficient. No policy switch disables either check.
+
+Signature verification is explicit per repository. A repository without a
+matching rule retains digest-only locking when the rest of machine policy
+permits it. Mirrors never inherit a source repository's rule merely because
+the content digest matches. The most-specific boundary match is deterministic;
+an invalid image reference is an error, not an absent rule.
+
+The complete policy-byte fingerprint already covers verifier pins and every
+trust rule, so any policy change will make later lock evidence stale. Policy
+summaries report only the rule count and whether cosign is pinned; they do not
+print paths, hashes, issuer/subject identities or key material.
+
+Schema 1 and schema 2 remain supported unchanged. Image-trust fields in an
+older schema are rejected, and versions newer than 3 fail closed.
+
+The additional stable foundation error is:
+
+- `policy.image_trust_unverified`
