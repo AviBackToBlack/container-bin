@@ -716,6 +716,19 @@ Runtime behavior is fail-closed:
 - an image configured in the registry but missing from the lock → execution
   **fails** and asks for `cb update TOOL` or `cb lock`.
 
+Lock schema 1 remains the default digest-only format. Schema 2 adds optional,
+structured repository-signature evidence to an entry: evidence version,
+`keyless`/`key` mechanism, canonical repository, exact locked digest,
+signer/administrator-key SHA-256, keyless issuer where applicable, the
+authenticated bundle SHA-256, canonical UTC verification time, verifier
+identity/hash and the complete effective machine-policy fingerprint. Partial,
+duplicate, malformed, cross-repository or local-image evidence is rejected.
+Schema 2 storage is implemented before verifier execution on purpose: current
+`cb lock`/`cb update` operations continue writing schema 1 and covered policy
+schema 3 images still fail closed until the verification producer and runtime
+staleness check land. Old ContainerBin builds reject schema 2 as unsupported;
+there is no silent down-conversion.
+
 Tools sharing an image share one lock entry. The Node 24 family
 (`node24`, `npm24`, `npx24`, its aliases when selected, and anything exposed
 from `npm24`) rides the single `node:24-slim` entry. The Node 22 family

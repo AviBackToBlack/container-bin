@@ -209,9 +209,10 @@ contents.
 ## Schema 3 — repository-bound image trust policy
 
 Schema 3 retains every earlier control and adds the fail-closed policy contract
-for Sigstore/cosign image verification. This foundation intentionally does not
-yet invoke cosign or change the lockfile schema. A repository covered by an
-`image_trust_rules` entry is therefore rejected with
+for Sigstore/cosign image verification. Lock schema 2 now defines and strictly
+validates the structured evidence record, but this foundation intentionally
+does not yet invoke cosign, produce evidence or authorize execution from it. A
+repository covered by an `image_trust_rules` entry is therefore rejected with
 `policy.image_trust_unverified` until the later verification/evidence slice can
 prove and record the required evidence. It never falls back to a digest-only
 lock merely because that slice is absent.
@@ -263,7 +264,9 @@ the content digest matches. The most-specific boundary match is deterministic;
 an invalid image reference is an error, not an absent rule.
 
 The complete policy-byte fingerprint already covers verifier pins and every
-trust rule, so any policy change will make later lock evidence stale. Policy
+trust rule. Lock schema 2 records that fingerprint beside the exact repository,
+digest, verifier hash, signer/key identity, issuer, bundle hash and verification
+time, so any policy change will make later lock evidence stale. Policy
 summaries report only the rule count and whether cosign is pinned; they do not
 print paths, hashes, issuer/subject identities or key material.
 
