@@ -72,7 +72,7 @@ real Linux CLI/runtime in an ephemeral container
 | Windows 10/11 x64 + Docker Desktop (Linux containers) + PowerShell | **Supported** — this is the validated configuration |
 | cmd.exe invocation of shims | Works for the common cases; less battle-tested than PowerShell |
 | WSL2 | **Not yet supported.** The selected native-Linux frontend now has an explicit fail-closed runtime boundary; config/shim/state implementation and real Docker Desktop WSL qualification remain. See [docs/wsl.md](docs/wsl.md) |
-| Windows 11 ARM64 | **CI/release-artifact qualified only, not supported yet.** Native tests/build/dispatch run on GitHub-hosted ARM64 hardware and the release workflow produces a reproducible ARM64 archive, but real Docker Desktop ARM64 E2E qualification remains |
+| Windows 11 ARM64 | **CI/release-artifact/update-path qualified only, not supported yet.** Native tests/build/dispatch run on GitHub-hosted ARM64 hardware, the release workflow produces a reproducible ARM64 archive, and self-update selects and verifies that archive by `GOARCH`; real Docker Desktop ARM64 E2E qualification remains |
 | Linux / macOS hosts | **Not supported.** The program is Go and cross-compiles, but shim installation, path mapping and doctor checks are Windows-specific |
 | Windows containers | Not supported; images are Linux images |
 
@@ -878,10 +878,10 @@ a false failure; run `cb setup` to append the current default profiles.
 ### Self-update release selection
 
 `cb self-update --check` is the currently exposed, read-only command. It
-compares a release-qualified Windows/amd64 build with the latest stable release
-and reports the exact binary, archive, checksum and provenance policy. It does
-not download assets or change any files, and development builds fail closed
-because their installed version cannot be proved.
+compares a release-qualified Windows/amd64 or Windows/arm64 build with the latest
+stable release and reports the exact artifact, archive, checksum and provenance
+policy. It does not download assets or change any files, and development builds
+fail closed because their installed version cannot be proved.
 
 The internal next phases use private same-volume staging, exact checksum plus
 GitHub build-provenance verification, and a rollback-safe Windows replacement
@@ -902,7 +902,8 @@ canonical prerelease among the 30 most recent published releases, or
 `--version vX.Y.Z` to inspect one exact published release; those two selectors
 are mutually exclusive. Selecting a version older
 than the running build is rejected unless `--allow-downgrade` is explicit. The
-current slice supports only Windows/amd64, matching the release artifacts.
+architecture comes only from Go's native `GOARCH`; any other platform fails
+explicitly before network access.
 
 ### `cb self-test --json` report format
 
@@ -1090,3 +1091,10 @@ misinterpreted as a tool shim. Verify the exact executable or archive you
 download. The ARM64 archive is release-provenance coverage, not a support
 claim: full Windows ARM64 support still requires real Docker Desktop
 qualification.
+
+`cb self-update --check` selects the raw `cb.exe` on Windows amd64 and the
+ARM64 archive on Windows arm64 directly from Go's native `GOARCH`; unsupported
+architectures fail explicitly. The verifier authenticates the selected asset
+before extracting the ARM64 `cb.exe`, accepts the legacy two-entry checksum
+manifest for pre-ARM64 amd64 releases, and requires the canonical three-entry
+manifest for dual-architecture releases.

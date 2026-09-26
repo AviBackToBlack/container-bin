@@ -1,6 +1,7 @@
 package selfupdate
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -25,9 +26,9 @@ const (
 )
 
 // Verified is an opaque result binding a successful checksum and provenance
-// verification to both the exact staged executable and the installed binary
-// identity/version that selected the update. A later replacement phase must
-// re-hash both identities before changing installed bytes.
+// verification of the selected release artifact to both the exact staged
+// cb.exe and the installed binary identity/version that selected the update. A
+// later replacement phase must re-hash both identities before changing bytes.
 type Verified struct {
 	binaryPath       string
 	target           string
@@ -62,10 +63,12 @@ type installedIdentity struct {
 }
 
 // Verify checks the release checksum and GitHub build-provenance attestation
-// for a staged cb.exe. ghExecutable must name an explicitly selected absolute,
-// regular executable with a valid GitHub, Inc. Authenticode signature. Verify
-// never searches PATH, passes inherited verifier configuration, or falls back
-// to checksum-only acceptance.
+// for the selected staged artifact, then extracts the exact cb.exe only when
+// the authenticated ARM64 artifact is an archive. It also binds the installed
+// executable identity that selected the update. ghExecutable must name an
+// explicitly selected absolute, regular executable with a valid GitHub, Inc.
+// Authenticode signature. Verify never searches PATH, passes inherited verifier
+// configuration, or falls back to checksum-only acceptance.
 func Verify(ctx context.Context, plan Plan, binaryPath, checksumsPath, installedExecutable, ghExecutable string) (Verified, error) {
 	return (verifier{
 		runner:        commandAttestationRunner{},
@@ -88,7 +91,7 @@ func (v verifier) Verify(ctx context.Context, plan Plan, binaryPath, checksumsPa
 	if err != nil {
 		return Verified{}, err
 	}
-	binaryPath, binaryInfo, err := canonicalVerificationFile(binaryPath, "staged executable")
+	binaryPath, binaryInfo, err := canonicalVerificationFile(binaryPath, "staged release artifact")
 	if err != nil {
 		return Verified{}, err
 	}
@@ -100,7 +103,7 @@ func (v verifier) Verify(ctx context.Context, plan Plan, binaryPath, checksumsPa
 		return Verified{}, errors.New("self-update verification inputs do not have the exact staged layout")
 	}
 	if binaryInfo.Size() != plan.Binary.Size {
-		return Verified{}, fmt.Errorf("staged executable size is %d, expected %d", binaryInfo.Size(), plan.Binary.Size)
+		return Verified{}, fmt.Errorf("staged release artifact size is %d, expected %d", binaryInfo.Size(), plan.Binary.Size)
 	}
 	if checksumsInfo.Size() != plan.Checksums.Size {
 		return Verified{}, fmt.Errorf("checksum manifest size is %d, expected %d", checksumsInfo.Size(), plan.Checksums.Size)
@@ -167,7 +170,7 @@ func (v verifier) Verify(ctx context.Context, plan Plan, binaryPath, checksumsPa
 		return Verified{}, errors.New("GitHub CLI executable changed during verification")
 	}
 
-	postPath, postInfo, err := canonicalVerificationFile(binaryPath, "staged executable")
+	postPath, postInfo, err := canonicalVerificationFile(binaryPath, "staged release artifact")
 	if err != nil {
 		return Verified{}, err
 	}
@@ -176,7 +179,26 @@ func (v verifier) Verify(ctx context.Context, plan Plan, binaryPath, checksumsPa
 		return Verified{}, err
 	}
 	if postPath != binaryPath || postSize != size || postDigest != digest {
-		return Verified{}, errors.New("staged executable changed during verification")
+		return Verified{}, errors.New("staged release artifact changed during verification")
+	}
+	if plan.Arch == "arm64" {
+		extractedPath, extractedDigest, extractedSize, err := extractVerifiedExecutable(binaryPath, postInfo)
+		if err != nil {
+			return Verified{}, err
+		}
+		finalPath, finalInfo, err := canonicalVerificationFile(binaryPath, "verified ARM64 archive")
+		if err != nil {
+			_ = os.Remove(extractedPath)
+			return Verified{}, err
+		}
+		finalDigest, finalSize, err := hashVerificationFile(finalPath, finalInfo)
+		if err != nil || finalPath != binaryPath || finalSize != size || finalDigest != digest {
+			_ = os.Remove(extractedPath)
+			return Verified{}, errors.New("verified ARM64 archive changed during extraction")
+		}
+		binaryPath = extractedPath
+		digest = extractedDigest
+		size = extractedSize
 	}
 	installed, err := v.bindInstalled(ctx, installedExecutable, plan.Current)
 	if err != nil {
@@ -203,23 +225,39 @@ func validateVerificationPlan(plan Plan) (semanticVersion, error) {
 	if err != nil {
 		return semanticVersion{}, fmt.Errorf("invalid self-update verification target: %w", err)
 	}
-	if plan.OS != "windows" || plan.Arch != "amd64" {
+	if plan.OS != "windows" || (plan.Arch != "amd64" && plan.Arch != "arm64") {
 		return semanticVersion{}, fmt.Errorf("self-update verification has no qualified artifact for %s/%s", plan.OS, plan.Arch)
 	}
 	if plan.ExpectedRepo != expectedReleaseRepo || plan.ExpectedRef != "refs/tags/"+target.raw || plan.Workflow != expectedReleaseWorkflow {
 		return semanticVersion{}, errors.New("self-update verification plan has an unexpected provenance policy")
 	}
-	archiveName := fmt.Sprintf("container-bin-%s-windows-amd64.zip", target.raw)
-	if plan.Binary.Name != "cb.exe" || plan.Archive.Name != archiveName || plan.Checksums.Name != "SHA256SUMS" {
+	amd64Archive := fmt.Sprintf("container-bin-%s-windows-amd64.zip", target.raw)
+	arm64Archive := fmt.Sprintf("container-bin-%s-windows-arm64.zip", target.raw)
+	binaryName := "cb.exe"
+	archiveName := amd64Archive
+	binaryLimit := int64(maxBinarySize)
+	wantLayout := checksumLayoutLegacyAMD64
+	if plan.Arch == "arm64" {
+		binaryName = arm64Archive
+		archiveName = arm64Archive
+		binaryLimit = maxArchiveSize
+		wantLayout = checksumLayoutDualArch
+	} else if plan.checksumLayout == checksumLayoutDualArch {
+		wantLayout = checksumLayoutDualArch
+	}
+	if plan.checksumLayout != wantLayout {
+		return semanticVersion{}, errors.New("self-update verification plan has an unexpected checksum layout")
+	}
+	if plan.Binary.Name != binaryName || plan.Archive.Name != archiveName || plan.Checksums.Name != "SHA256SUMS" {
 		return semanticVersion{}, errors.New("self-update verification plan has an unexpected asset layout")
 	}
 	if plan.ReleaseURL != releaseWebRoot+"/tag/"+target.raw ||
-		plan.Binary.URL != releaseWebRoot+"/download/"+target.raw+"/cb.exe" ||
+		plan.Binary.URL != releaseWebRoot+"/download/"+target.raw+"/"+binaryName ||
 		plan.Archive.URL != releaseWebRoot+"/download/"+target.raw+"/"+archiveName ||
 		plan.Checksums.URL != releaseWebRoot+"/download/"+target.raw+"/SHA256SUMS" {
 		return semanticVersion{}, errors.New("self-update verification plan has a non-canonical release URL")
 	}
-	if plan.Binary.Size <= 0 || plan.Binary.Size > maxBinarySize || plan.Archive.Size <= 0 || plan.Archive.Size > maxArchiveSize || plan.Checksums.Size <= 0 || plan.Checksums.Size > maxChecksumSize {
+	if plan.Binary.Size <= 0 || plan.Binary.Size > binaryLimit || plan.Archive.Size <= 0 || plan.Archive.Size > maxArchiveSize || plan.Checksums.Size <= 0 || plan.Checksums.Size > maxChecksumSize {
 		return semanticVersion{}, errors.New("self-update verification plan has an invalid asset size")
 	}
 	switch comparison := current.compare(target); {
@@ -296,7 +334,7 @@ func canonicalVerificationFile(path, label string) (string, os.FileInfo, error) 
 }
 
 func hashVerificationFile(path string, expected os.FileInfo) (string, int64, error) {
-	return hashRegularFile(path, expected, "staged executable")
+	return hashRegularFile(path, expected, "verification file")
 }
 
 func hashRegularFile(path string, expected os.FileInfo, label string) (string, int64, error) {
@@ -350,7 +388,14 @@ func verifyChecksumManifest(data []byte, plan Plan, binaryDigest string) error {
 	if len(data) == 0 || data[len(data)-1] != '\n' || bytes.Contains(data, []byte{'\r'}) {
 		return errors.New("checksum manifest must use canonical LF-terminated lines")
 	}
-	wantNames := map[string]bool{plan.Binary.Name: false, plan.Archive.Name: false}
+	wantList, err := checksumManifestNames(plan)
+	if err != nil {
+		return err
+	}
+	wantNames := make(map[string]bool, len(wantList))
+	for _, name := range wantList {
+		wantNames[name] = false
+	}
 	for _, line := range strings.Split(strings.TrimSuffix(string(data), "\n"), "\n") {
 		if len(line) < sha256.Size*2+2 || line[sha256.Size*2:sha256.Size*2+2] != "  " {
 			return errors.New("checksum manifest has a non-canonical entry")
@@ -370,15 +415,166 @@ func verifyChecksumManifest(data []byte, plan Plan, binaryDigest string) error {
 		}
 		wantNames[name] = true
 		if name == plan.Binary.Name && digest != binaryDigest {
-			return errors.New("staged executable checksum does not match SHA256SUMS")
+			return errors.New("staged release artifact checksum does not match SHA256SUMS")
 		}
 	}
-	for _, name := range []string{plan.Binary.Name, plan.Archive.Name} {
+	for _, name := range wantList {
 		if !wantNames[name] {
 			return fmt.Errorf("checksum manifest is missing asset %q", name)
 		}
 	}
 	return nil
+}
+
+func checksumManifestNames(plan Plan) ([]string, error) {
+	target, err := parseVersion(plan.Target)
+	if err != nil {
+		return nil, fmt.Errorf("checksum manifest plan target: %w", err)
+	}
+	amd64Archive := fmt.Sprintf("container-bin-%s-windows-amd64.zip", target.raw)
+	switch plan.checksumLayout {
+	case checksumLayoutLegacyAMD64:
+		return []string{"cb.exe", amd64Archive}, nil
+	case checksumLayoutDualArch:
+		return []string{"cb.exe", amd64Archive, fmt.Sprintf("container-bin-%s-windows-arm64.zip", target.raw)}, nil
+	default:
+		return nil, errors.New("checksum manifest plan has an unexpected layout")
+	}
+}
+
+func extractVerifiedExecutable(archivePath string, expected os.FileInfo) (path, digest string, size int64, err error) {
+	archive, err := os.Open(archivePath)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("open verified ARM64 archive: %w", err)
+	}
+	defer archive.Close()
+	opened, err := archive.Stat()
+	if err != nil {
+		return "", "", 0, fmt.Errorf("inspect verified ARM64 archive: %w", err)
+	}
+	if !os.SameFile(expected, opened) || !opened.Mode().IsRegular() || opened.Size() <= 0 || opened.Size() > maxArchiveSize {
+		return "", "", 0, errors.New("verified ARM64 archive changed before extraction")
+	}
+	reader, err := zip.NewReader(archive, opened.Size())
+	if err != nil {
+		return "", "", 0, fmt.Errorf("open verified ARM64 archive layout: %w", err)
+	}
+	wanted := map[string]*zip.File{"cb.exe": nil, "LICENSE": nil, "README.md": nil}
+	var total uint64
+	for _, entry := range reader.File {
+		if _, ok := wanted[entry.Name]; !ok {
+			return "", "", 0, fmt.Errorf("verified ARM64 archive contains unexpected entry %q", entry.Name)
+		}
+		if wanted[entry.Name] != nil {
+			return "", "", 0, fmt.Errorf("verified ARM64 archive contains duplicate entry %q", entry.Name)
+		}
+		if entry.Flags&0x1 != 0 || (entry.Method != zip.Store && entry.Method != zip.Deflate) || !entry.FileInfo().Mode().IsRegular() {
+			return "", "", 0, fmt.Errorf("verified ARM64 archive entry %q has an unsafe type or encoding", entry.Name)
+		}
+		if entry.UncompressedSize64 > uint64(maxArchiveSize) || total > uint64(maxArchiveSize)-entry.UncompressedSize64 {
+			return "", "", 0, errors.New("verified ARM64 archive expands beyond the safety limit")
+		}
+		total += entry.UncompressedSize64
+		wanted[entry.Name] = entry
+	}
+	for name, entry := range wanted {
+		if entry == nil {
+			return "", "", 0, fmt.Errorf("verified ARM64 archive is missing entry %q", name)
+		}
+	}
+	binary := wanted["cb.exe"]
+	if binary.UncompressedSize64 == 0 || binary.UncompressedSize64 > uint64(maxBinarySize) {
+		return "", "", 0, errors.New("verified ARM64 archive cb.exe size is outside the safety limit")
+	}
+	destination := filepath.Join(filepath.Dir(archivePath), "cb.exe")
+	expectedDigest, expectedSize, err := hashArchiveExecutable(binary)
+	if err != nil {
+		return "", "", 0, err
+	}
+	if _, statErr := os.Lstat(destination); statErr == nil {
+		clean, info, err := canonicalVerificationFile(destination, "previously extracted ARM64 executable")
+		if err != nil {
+			return "", "", 0, err
+		}
+		digest, size, err := hashVerificationFile(clean, info)
+		if err != nil {
+			return "", "", 0, err
+		}
+		if digest != expectedDigest || size != expectedSize {
+			return "", "", 0, errors.New("existing extracted ARM64 executable does not match the authenticated archive")
+		}
+		if err := restrictStagingPath(clean, false); err != nil {
+			return "", "", 0, fmt.Errorf("restrict existing extracted ARM64 cb.exe: %w", err)
+		}
+		postClean, postInfo, err := canonicalVerificationFile(clean, "previously extracted ARM64 executable")
+		if err != nil {
+			return "", "", 0, err
+		}
+		postDigest, postSize, err := hashVerificationFile(postClean, postInfo)
+		if err != nil || postClean != clean || postDigest != expectedDigest || postSize != expectedSize {
+			return "", "", 0, errors.New("existing extracted ARM64 executable changed during re-verification")
+		}
+		return clean, digest, size, nil
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return "", "", 0, fmt.Errorf("inspect extracted ARM64 cb.exe destination: %w", statErr)
+	}
+	input, err := binary.Open()
+	if err != nil {
+		return "", "", 0, fmt.Errorf("open verified ARM64 archive cb.exe: %w", err)
+	}
+	defer input.Close()
+	output, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("create extracted ARM64 cb.exe: %w", err)
+	}
+	keep := false
+	defer func() {
+		if !keep {
+			_ = os.Remove(destination)
+		}
+	}()
+	n, copyErr := io.Copy(output, io.LimitReader(input, maxBinarySize+1))
+	syncErr := output.Sync()
+	closeErr := output.Close()
+	if err := errors.Join(copyErr, syncErr, closeErr); err != nil {
+		return "", "", 0, fmt.Errorf("extract verified ARM64 cb.exe: %w", err)
+	}
+	if n != int64(binary.UncompressedSize64) {
+		return "", "", 0, errors.New("verified ARM64 archive cb.exe changed size during extraction")
+	}
+	if err := restrictStagingPath(destination, false); err != nil {
+		return "", "", 0, fmt.Errorf("restrict extracted ARM64 cb.exe: %w", err)
+	}
+	clean, info, err := canonicalVerificationFile(destination, "extracted ARM64 executable")
+	if err != nil {
+		return "", "", 0, err
+	}
+	digest, size, err = hashVerificationFile(clean, info)
+	if err != nil {
+		return "", "", 0, err
+	}
+	if digest != expectedDigest || size != expectedSize {
+		return "", "", 0, errors.New("extracted ARM64 executable does not match the authenticated archive")
+	}
+	keep = true
+	return clean, digest, size, nil
+}
+
+func hashArchiveExecutable(binary *zip.File) (string, int64, error) {
+	input, err := binary.Open()
+	if err != nil {
+		return "", 0, fmt.Errorf("open verified ARM64 archive cb.exe: %w", err)
+	}
+	hash := sha256.New()
+	n, copyErr := io.Copy(hash, io.LimitReader(input, maxBinarySize+1))
+	closeErr := input.Close()
+	if err := errors.Join(copyErr, closeErr); err != nil {
+		return "", 0, fmt.Errorf("hash verified ARM64 archive cb.exe: %w", err)
+	}
+	if n != int64(binary.UncompressedSize64) {
+		return "", 0, errors.New("verified ARM64 archive cb.exe changed size while hashing")
+	}
+	return hex.EncodeToString(hash.Sum(nil)), n, nil
 }
 
 type attestationOutput []struct {

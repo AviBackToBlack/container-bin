@@ -71,9 +71,9 @@ The minimum delivery gate for a code change is:
 | RM-23 8.3 path alias | **Intentionally deferred** | Keep explicit comma-path rejection; reconsider only on demonstrated user demand |
 | RM-24 Python/uv provider choice | **Decision complete — keep both** | No provider migration; Python provider and uv/uvx remain separate |
 | RM-26 Python global CLI exposure | **Completed in PR #74** | Stateful pipx + `cb expose pipx` shipped; plain pip `/venv/bin` remains intentionally unexposed |
-| RM-29 Windows ARM64 | **Native CI and release packaging shipped / update and hardware work remain** | PR #78 added native hosted ARM64 CI and PR #86 added reproducible release packaging; ARM64 self-update selection and real Windows-on-Arm + Docker Desktop E2E remain |
+| RM-29 Windows ARM64 | **Native CI, release packaging and update selection shipped / hardware work remains** | PR #78 added native hosted ARM64 CI, PR #86 added reproducible release packaging and PR #91 added ARM64 self-update selection; real Windows-on-Arm + Docker Desktop E2E remains |
 | RM-30 Authenticode | **Design complete / externally blocked** | Provision real code-signing certificate and protected signing mechanism |
-| RM-31 self-update | **Selection, staging and verification shipped / transaction implemented** | PRs #76, #81 and #82 shipped the read-only plan, fail-closed staging and provenance verification; temporary helper, user-facing apply wiring, broader architecture support and release E2E remain |
+| RM-31 self-update | **Selection, staging and verification shipped / ARM64 selection and transaction implemented** | PRs #76, #81, #82 and #91 shipped the read-only plan, fail-closed staging, provenance verification and ARM64 artifact selection; this tree adds the rollback-safe replacement transaction, while the temporary helper, user-facing apply wiring and release E2E remain |
 | RM-34 Cargo expose enhancement | **Intentionally deferred** | Existing expose-all/explicit selection are sufficient; reopen only for concrete unmet use case |
 | Linux/macOS hosts | **Demand-gated** | WSL may factor reusable Linux host code; standalone support needs its own demand and qualification |
 | Enterprise policy | **Foundation and signed registry shipped / image trust remains** | PRs #75 and #84 shipped the machine-owned constraint layer and authenticated registry; image trust remains |
@@ -316,12 +316,14 @@ Desktop in Linux-container mode.
 PR #78 shipped native hosted ARM64 CI for non-Docker qualification. PR #86
 shipped the architecture-specific ARM64 archive, checksum coverage, independent
 byte-for-byte reproduction and release provenance while preserving existing
-amd64 asset names. PR #76's self-update foundation still deliberately rejects
-architectures other than Windows/amd64. ARM64 install/update selection and real
-Windows-on-Arm + Docker Desktop qualification therefore remain; CI and a
-provenanced archive alone are not a full support claim. The first three bullets
-below are the shipped PR #86 contract. Install/update selection and the
-hardware-backed qualification record remain.
+amd64 asset names. PR #76's self-update foundation originally rejected
+architectures other than Windows/amd64. The update pipeline now selects the
+ARM64 archive from native `GOARCH`, verifies its checksum and provenance before
+exact extraction, and preserves legacy amd64 release compatibility. Real
+Windows-on-Arm + Docker Desktop qualification remains; CI, update selection and
+a provenanced archive are not a full support claim. The first three bullets
+below are the shipped PR #86 contract. The hardware-backed qualification record
+remains.
 
 ### Shipped release contract and remaining implementation
 
@@ -397,10 +399,12 @@ and [artifact-attestation verification](https://docs.github.com/en/actions/conce
 
 PR #76 shipped the command surface, release selection, check/dry-run behavior,
 strict Windows/amd64 asset selection and bounded metadata rules. Private
-same-volume staging and provenance verification followed. This tree also
+same-volume staging and provenance verification followed. The current pipeline
+also selects, stages and verifies the Windows/arm64 archive from native
+`GOARCH`; unsupported architectures still fail closed. This tree also
 implements the unexposed rollback-safe Windows replacement transaction and
 complete proven-shim reconciliation. The temporary helper, user-facing apply
-wiring, broader architecture support and release E2E remain incomplete.
+wiring and release E2E remain incomplete.
 
 ### Command and selection requirements
 
@@ -656,16 +660,17 @@ implementation task in this roadmap document.
 Merged foundations are not remaining queue entries: RM-26 shipped in PR #74,
 enterprise-policy foundation in PR #75, RM-31 selection/check in PR #76, the
 WSL host boundary in PR #77, native Windows ARM64 CI in PR #78, and
-reproducible ARM64 release packaging in PR #86.
+reproducible ARM64 release packaging in PR #86, and ARM64 self-update selection
+in PR #91.
 
 1. Per-project overlay trust foundation.
 2. Signed-registry enterprise policy.
 3. Image trust at lock time, after signed-registry policy merges.
-4. Remaining RM-31 helper/user-facing apply wiring, broader architecture support and E2E.
+4. Remaining RM-31 helper/user-facing transactional apply wiring and E2E.
 5. Remaining WSL2 native layout, Docker Desktop integration and real E2E.
 6. RM-30 Authenticode only after certificate/protected-signing prerequisites exist.
-7. RM-29 ARM64 self-update selection and real Windows-on-Arm + Docker Desktop
-   qualification last; do not delay higher-value work for them.
+7. RM-29 real Windows-on-Arm + Docker Desktop qualification last; do not delay
+   higher-value work for it.
 
 RM-19, RM-23, RM-34, standalone Linux/macOS, plugins, SBOM and Snyk are dormant
 until their documented triggers occur. The govulncheck pin is recurring

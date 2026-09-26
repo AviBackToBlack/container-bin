@@ -21,9 +21,9 @@ items from being repeatedly rediscovered as if they were immediately actionable.
 | Image trust | **Policy-driven Sigstore/cosign at lock time** | Ready after signed-registry policy. Digest locking remains default where policy permits. Required trust never silently falls back to digest-only. |
 | Per-project overlays | **Explicit digest-bound, add-only trust model** | Implementation-ready on the merged policy foundation. Initial overlays exclude host mounts, env prefixes and shared cross-project volumes. |
 | Plugin/provider architecture | **Intentionally deferred** | Reopen only after at least two concrete integrations cannot be expressed safely by the declarative model. |
-| RM-31 self-update | **Explicit transactional, attestation-verifying update** | Selection/check, staging and verification are implemented; the internal Windows transaction now replaces and rolls back the complete proven managed set. Helper/user-facing apply wiring, broader architecture support and E2E remain. |
+| RM-31 self-update | **Explicit transactional, attestation-verifying update** | Selection/check, staging, verification and ARM64 artifact selection are implemented; the internal Windows transaction now replaces and rolls back the complete proven managed set. Helper/user-facing apply wiring and release E2E remain. |
 | RM-30 Authenticode | **Design accepted; externally blocked** | Implement only after a real code-signing certificate and protected signing mechanism exist. Stable and prerelease release artifacts are both signed. |
-| RM-29 Windows ARM64 | **Lowest priority** | Native GitHub Windows ARM64 CI shipped in PR #78 and reproducible release packaging in PR #86. ARM64 self-update selection and real Windows-on-Arm + Docker Desktop qualification remain. Do not delay other roadmap work. |
+| RM-29 Windows ARM64 | **Lowest priority** | Native GitHub Windows ARM64 CI shipped in PR #78, reproducible release packaging in PR #86 and ARM64 self-update selection in PR #91. Real Windows-on-Arm + Docker Desktop qualification remains. Do not delay other roadmap work. |
 | Standalone Linux/macOS | **Demand-gated** | No support claim yet. WSL should create reusable narrow Linux host abstractions, but standalone hosts require their own contract and real Docker qualification. |
 | RM-23 8.3 mount alias | **Intentionally deferred** | Current comma-path rejection remains supported behavior. Reopen only on demonstrated user demand. |
 | RM-19 reserved-name migration | **Conditionally deferred** | Implement only when a future release actually proposes reserving a previously legal name. |
@@ -196,10 +196,14 @@ known folder needed for GitHub CLI's signed-root cache, noninteractive settings,
 and exactly one explicit `GH_TOKEN` or `GITHUB_TOKEN`. These host paths come
 from Windows APIs rather than inherited variables. GitHub host, config-directory,
 proxy, custom-CA and other inherited settings are not passed through. It
-requires the canonical two-entry `SHA256SUMS` layout, invokes
+accepts the legacy two-entry `SHA256SUMS` layout for pre-ARM64 amd64 releases
+and requires the canonical three-entry layout for dual-architecture releases,
+invokes
 `gh attestation verify` with the repository, exact workflow-and-tag certificate
 identity, tag ref and SLSA provenance predicate fixed in argv, validates the
-reported subject digest and re-hashes `cb.exe` after verification. Authenticode
+reported subject digest and re-hashes the selected artifact after verification.
+For ARM64, it then extracts and hashes only the exact `cb.exe` entry.
+Authenticode
 checks run from the Windows directory with bounded, cancelable subprocesses.
 Its opaque result binds the exact digest for the later replacement phase; any
 missing verifier, policy mismatch, malformed output or file change fails closed
@@ -296,8 +300,9 @@ Merged foundations are removed from the remaining queue: RM-26 shipped in PR
 #74, enterprise policy and signed registries in PRs #75 and #84, per-project
 overlay trust in PR #80, RM-31 selection/staging/verification in PRs #76, #81
 and #82, the WSL host boundary and native layout identity in PRs #77 and #83,
-native Windows ARM64 CI in PR #78, and reproducible ARM64 release packaging in
-PR #86. Unmerged pull-request coverage is not completion.
+native Windows ARM64 CI in PR #78, reproducible ARM64 release packaging in PR
+#86, and ARM64 self-update selection in PR #91. Unmerged pull-request coverage
+is not completion.
 
 1. **Image trust**
    - cosign verifier configuration and verifier hash validation;
@@ -308,9 +313,10 @@ PR #86. Unmerged pull-request coverage is not completion.
 2. **Remaining RM-31 self-update**
    - selection/check, bounded staging and `gh attestation verify` are merged in
      PRs #76, #81 and #82;
+   - ARM64 archive selection, verification and exact extraction are merged in
+     PR #91;
    - rollback-safe Windows transaction and managed-shim reconciliation are implemented internally;
    - temporary wait helper and user-facing apply wiring;
-   - broader architecture support;
    - release/self-test E2E.
 
 3. **Remaining WSL2**
@@ -329,7 +335,7 @@ PR #86. Unmerged pull-request coverage is not completion.
    - **lowest priority**;
    - native hosted ARM64 CI is merged in PR #78;
    - architecture-specific release packaging is merged in PR #86;
-   - ARM64 self-update selection remains;
+   - self-update selects and verifies the ARM64 archive from native `GOARCH`;
    - support claim only after real Windows-on-Arm + Docker Desktop E2E.
 
 ## Dormant / recurring items

@@ -131,17 +131,20 @@ readable, and dangerous to let others edit.
   network-disabled helper with a read-only container root; no archive member is
   turned into a Windows host path.
 - **Fail-closed self-update selection.** `cb self-update --check` accepts only a
-  release-qualified Windows/amd64 build, queries the canonical GitHub repository
+  release-qualified Windows/amd64 or Windows/arm64 build selected from native
+  `GOARCH`, queries the canonical GitHub repository
   over HTTPS with a bounded response, and requires exact canonical release and
   asset URLs, names and sizes. Downgrades and prereleases require explicit
   flags. The command performs no asset download and changes no installed files.
   A separate, not-yet-exposed staging phase downloads exact advertised bytes
-  for `cb.exe` and `SHA256SUMS` beside a supplied, existing installed
+  for the selected artifact and `SHA256SUMS` beside a supplied, existing installed
   executable, accepting only the canonical URL or one HTTPS redirect to
   GitHub's release-asset host. Staging applies a protected current-user-only
   DACL on Windows and removes partial staging on any failure. Later phases must
   require both checksums and GitHub provenance without a fallback before
-  replacement is possible.
+  replacement is possible. On ARM64, archive checksum and provenance are
+  verified before an exact three-file archive layout is parsed and `cb.exe` is
+  extracted; unexpected, duplicate or unsafe entries fail closed.
 
 ## What ContainerBin does NOT protect against
 
