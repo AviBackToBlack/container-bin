@@ -109,6 +109,26 @@ func TestPlanStableSelectionAndHeaders(t *testing.T) {
 	}
 }
 
+func TestPlanSelectsARM64ArchiveFromGOARCH(t *testing.T) {
+	selected := canonicalDualArchRelease("v1.2.0", false)
+	c := checker{doer: releaseDoer(t, apiRoot+"/releases/latest", selected)}
+	plan, err := c.Plan(context.Background(), "v1.1.0", "windows", "arm64", Options{Check: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "container-bin-v1.2.0-windows-arm64.zip"
+	if plan.Binary.Name != want || plan.Archive.Name != want || plan.checksumLayout != checksumLayoutDualArch {
+		t.Fatalf("unexpected ARM64 plan: %+v", plan)
+	}
+	amd64, err := (checker{doer: releaseDoer(t, apiRoot+"/releases/latest", selected)}).Plan(context.Background(), "v1.1.0", "windows", "amd64", Options{Check: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if amd64.Binary.Name != "cb.exe" || amd64.checksumLayout != checksumLayoutDualArch {
+		t.Fatalf("dual-architecture release changed amd64 selection: %+v", amd64)
+	}
+}
+
 func TestPlanExactAndDowngradePolicy(t *testing.T) {
 	selected := canonicalRelease("v1.0.0", false)
 	c := checker{doer: releaseDoer(t, apiRoot+"/releases/tags/v1.0.0", selected)}
@@ -164,7 +184,7 @@ func TestPlanRejectsDevelopmentAndUnsupportedPlatformBeforeNetwork(t *testing.T)
 	}{
 		{"dev", "windows", "amd64", "development builds"},
 		{"v0.0.0-dev.abc", "windows", "amd64", "development builds"},
-		{"v1.1.0", "windows", "arm64", "no qualified artifact"},
+		{"v1.1.0", "windows", "386", "no qualified artifact"},
 		{"v1.1.0", "linux", "amd64", "no qualified artifact"},
 	} {
 		_, err := c.Plan(context.Background(), tc.current, tc.goos, tc.goarch, Options{Check: true})
@@ -202,6 +222,15 @@ func TestPlanRejectsUnsafeReleaseMetadata(t *testing.T) {
 				t.Fatalf("unsafe metadata error = %v, want %q", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestPlanRejectsUnsafeCompanionARM64MetadataOnAMD64(t *testing.T) {
+	selected := canonicalDualArchRelease("v1.2.0", false)
+	selected.Assets[len(selected.Assets)-1].BrowserDownloadURL = "https://evil.example/arm64.zip"
+	_, err := (checker{doer: releaseDoer(t, apiRoot+"/releases/latest", selected)}).Plan(context.Background(), "v1.1.0", "windows", "amd64", Options{Check: true})
+	if err == nil || !strings.Contains(err.Error(), "non-canonical download URL") {
+		t.Fatalf("unsafe companion ARM64 metadata error = %v", err)
 	}
 }
 
@@ -259,6 +288,17 @@ func canonicalRelease(tag string, prerelease bool) release {
 			asset("SHA256SUMS", 178),
 		},
 	}
+}
+
+func canonicalDualArchRelease(tag string, prerelease bool) release {
+	release := canonicalRelease(tag, prerelease)
+	name := "container-bin-" + tag + "-windows-arm64.zip"
+	release.Assets = append(release.Assets, releaseAsset{
+		Name:               name,
+		Size:               2 << 20,
+		BrowserDownloadURL: releaseWebRoot + "/download/" + tag + "/" + name,
+	})
+	return release
 }
 
 func releaseDoer(t *testing.T, wantURL string, value any) httpDoer {

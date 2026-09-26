@@ -73,7 +73,7 @@ The minimum delivery gate for a code change is:
 | RM-26 Python global CLI exposure | **Completed in PR #74** | Stateful pipx + `cb expose pipx` shipped; plain pip `/venv/bin` remains intentionally unexposed |
 | RM-29 Windows ARM64 | **Native CI and release packaging shipped / update and hardware work remain** | PR #78 added native hosted ARM64 CI and PR #86 added reproducible release packaging; ARM64 self-update selection and real Windows-on-Arm + Docker Desktop E2E remain |
 | RM-30 Authenticode | **Design complete / externally blocked** | Provision real code-signing certificate and protected signing mechanism |
-| RM-31 self-update | **Selection, staging and verification shipped** | PRs #76, #81 and #82 shipped the read-only plan, fail-closed staging and provenance verification; transactional apply and E2E remain |
+| RM-31 self-update | **Selection, staging and verification shipped / ARM64 selection implemented** | PRs #76, #81 and #82 shipped the read-only plan, fail-closed staging and provenance verification; this tree adds ARM64 artifact selection, while transactional apply wiring and E2E remain |
 | RM-34 Cargo expose enhancement | **Intentionally deferred** | Existing expose-all/explicit selection are sufficient; reopen only for concrete unmet use case |
 | Linux/macOS hosts | **Demand-gated** | WSL may factor reusable Linux host code; standalone support needs its own demand and qualification |
 | Enterprise policy | **Foundation and signed registry shipped / image trust remains** | PRs #75 and #84 shipped the machine-owned constraint layer and authenticated registry; image trust remains |
@@ -316,12 +316,14 @@ Desktop in Linux-container mode.
 PR #78 shipped native hosted ARM64 CI for non-Docker qualification. PR #86
 shipped the architecture-specific ARM64 archive, checksum coverage, independent
 byte-for-byte reproduction and release provenance while preserving existing
-amd64 asset names. PR #76's self-update foundation still deliberately rejects
-architectures other than Windows/amd64. ARM64 install/update selection and real
-Windows-on-Arm + Docker Desktop qualification therefore remain; CI and a
-provenanced archive alone are not a full support claim. The first three bullets
-below are the shipped PR #86 contract. Install/update selection and the
-hardware-backed qualification record remain.
+amd64 asset names. PR #76's self-update foundation originally rejected
+architectures other than Windows/amd64. The update pipeline now selects the
+ARM64 archive from native `GOARCH`, verifies its checksum and provenance before
+exact extraction, and preserves legacy amd64 release compatibility. Real
+Windows-on-Arm + Docker Desktop qualification remains; CI, update selection and
+a provenanced archive are not a full support claim. The first three bullets
+below are the shipped PR #86 contract. The hardware-backed qualification record
+remains.
 
 ### Shipped release contract and remaining implementation
 
@@ -396,10 +398,12 @@ separate phases with explicit boundaries. GitHub documents both
 and [artifact-attestation verification](https://docs.github.com/en/actions/concepts/security/artifact-attestations).
 
 PR #76 shipped the command surface, release selection, check/dry-run behavior,
-strict Windows/amd64 asset selection and bounded metadata rules. Unsupported
-architectures still fail closed. Download staging, provenance verification,
-transactional Windows apply, rollback, broader architecture support and release
-E2E remain incomplete until their implementations merge.
+strict Windows/amd64 asset selection and bounded metadata rules. Private
+same-volume staging and provenance verification followed. The current pipeline
+also selects, stages and verifies the Windows/arm64 archive from native
+`GOARCH`; unsupported architectures still fail closed. Transactional helper
+and user-facing apply wiring plus release E2E remain incomplete until their
+implementations merge.
 
 ### Command and selection requirements
 
@@ -660,7 +664,7 @@ reproducible ARM64 release packaging in PR #86.
 1. Per-project overlay trust foundation.
 2. Signed-registry enterprise policy.
 3. Image trust at lock time, after signed-registry policy merges.
-4. Remaining RM-31 staging, verification, transactional apply and E2E.
+4. Remaining RM-31 helper/user-facing transactional apply wiring and E2E.
 5. Remaining WSL2 native layout, Docker Desktop integration and real E2E.
 6. RM-30 Authenticode only after certificate/protected-signing prerequisites exist.
 7. RM-29 ARM64 self-update selection and real Windows-on-Arm + Docker Desktop

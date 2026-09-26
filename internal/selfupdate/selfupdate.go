@@ -54,7 +54,15 @@ type Plan struct {
 	ExpectedRef            string
 	Workflow               string
 	downgradeAuthorization downgradeAuthorization
+	checksumLayout         checksumLayout
 }
+
+type checksumLayout uint8
+
+const (
+	checksumLayoutLegacyAMD64 checksumLayout = iota + 1
+	checksumLayoutDualArch
+)
 
 type downgradeAuthorization struct {
 	current string
@@ -150,8 +158,8 @@ func (c checker) Plan(ctx context.Context, current, goos, goarch string, opts Op
 	if err != nil {
 		return Plan{}, err
 	}
-	if goos != "windows" || goarch != "amd64" {
-		return Plan{}, fmt.Errorf("self-update has no qualified artifact for %s/%s (supported: windows/amd64)", goos, goarch)
+	if goos != "windows" || (goarch != "amd64" && goarch != "arm64") {
+		return Plan{}, fmt.Errorf("self-update has no qualified artifact for %s/%s (supported: windows/amd64, windows/arm64)", goos, goarch)
 	}
 	selected, channel, err := c.selectRelease(ctx, current, opts)
 	if err != nil {
@@ -171,24 +179,25 @@ func (c checker) Plan(ctx context.Context, current, goos, goarch string, opts Op
 	case comparison > 0:
 		status = "DOWNGRADE AUTHORIZED (CHECK ONLY)"
 	}
-	binary, archive, checksums, err := validateRelease(selected, goos, goarch)
+	binary, archive, checksums, layout, err := validateRelease(selected, goarch)
 	if err != nil {
 		return Plan{}, err
 	}
 	plan := Plan{
-		Current:      currentParsed.raw,
-		Target:       target.raw,
-		Channel:      channel,
-		Status:       status,
-		OS:           goos,
-		Arch:         goarch,
-		ReleaseURL:   selected.HTMLURL,
-		Binary:       binary,
-		Archive:      archive,
-		Checksums:    checksums,
-		ExpectedRepo: "AviBackToBlack/container-bin",
-		ExpectedRef:  "refs/tags/" + target.raw,
-		Workflow:     ".github/workflows/release.yml",
+		Current:        currentParsed.raw,
+		Target:         target.raw,
+		Channel:        channel,
+		Status:         status,
+		OS:             goos,
+		Arch:           goarch,
+		ReleaseURL:     selected.HTMLURL,
+		Binary:         binary,
+		Archive:        archive,
+		Checksums:      checksums,
+		ExpectedRepo:   "AviBackToBlack/container-bin",
+		ExpectedRef:    "refs/tags/" + target.raw,
+		Workflow:       ".github/workflows/release.yml",
+		checksumLayout: layout,
 	}
 	if comparison > 0 && opts.AllowDowngrade {
 		plan.downgradeAuthorization = downgradeAuthorization{current: currentParsed.raw, target: target.raw}
@@ -277,17 +286,23 @@ func (c checker) getJSON(ctx context.Context, endpoint, current string, dst any)
 	return nil
 }
 
-func validateRelease(selected release, goos, goarch string) (Asset, Asset, Asset, error) {
+func validateRelease(selected release, goarch string) (Asset, Asset, Asset, checksumLayout, error) {
 	tag, err := parseVersion(selected.TagName)
 	if err != nil {
-		return Asset{}, Asset{}, Asset{}, err
+		return Asset{}, Asset{}, Asset{}, 0, err
 	}
 	wantReleaseURL := releaseWebRoot + "/tag/" + tag.raw
 	if selected.HTMLURL != wantReleaseURL {
-		return Asset{}, Asset{}, Asset{}, fmt.Errorf("release URL %q is outside the canonical release page", selected.HTMLURL)
+		return Asset{}, Asset{}, Asset{}, 0, fmt.Errorf("release URL %q is outside the canonical release page", selected.HTMLURL)
 	}
-	archiveName := fmt.Sprintf("container-bin-%s-%s-%s.zip", tag.raw, goos, goarch)
-	wanted := map[string]int64{"cb.exe": maxBinarySize, archiveName: maxArchiveSize, "SHA256SUMS": maxChecksumSize}
+	amd64Archive := fmt.Sprintf("container-bin-%s-windows-amd64.zip", tag.raw)
+	arm64Archive := fmt.Sprintf("container-bin-%s-windows-arm64.zip", tag.raw)
+	wanted := map[string]int64{
+		"cb.exe":     maxBinarySize,
+		amd64Archive: maxArchiveSize,
+		arm64Archive: maxArchiveSize,
+		"SHA256SUMS": maxChecksumSize,
+	}
 	found := map[string]Asset{}
 	for _, candidate := range selected.Assets {
 		limit, required := wanted[candidate.Name]
@@ -295,23 +310,33 @@ func validateRelease(selected release, goos, goarch string) (Asset, Asset, Asset
 			continue
 		}
 		if _, duplicate := found[candidate.Name]; duplicate {
-			return Asset{}, Asset{}, Asset{}, fmt.Errorf("release contains duplicate required asset %q", candidate.Name)
+			return Asset{}, Asset{}, Asset{}, 0, fmt.Errorf("release contains duplicate required asset %q", candidate.Name)
 		}
 		if candidate.Size <= 0 || candidate.Size > limit {
-			return Asset{}, Asset{}, Asset{}, fmt.Errorf("release asset %q has invalid size %d (limit %d)", candidate.Name, candidate.Size, limit)
+			return Asset{}, Asset{}, Asset{}, 0, fmt.Errorf("release asset %q has invalid size %d (limit %d)", candidate.Name, candidate.Size, limit)
 		}
 		wantURL := releaseWebRoot + "/download/" + tag.raw + "/" + candidate.Name
 		if candidate.BrowserDownloadURL != wantURL {
-			return Asset{}, Asset{}, Asset{}, fmt.Errorf("release asset %q has non-canonical download URL", candidate.Name)
+			return Asset{}, Asset{}, Asset{}, 0, fmt.Errorf("release asset %q has non-canonical download URL", candidate.Name)
 		}
 		found[candidate.Name] = Asset{Name: candidate.Name, URL: candidate.BrowserDownloadURL, Size: candidate.Size}
 	}
-	for name := range wanted {
+	for _, name := range []string{"cb.exe", amd64Archive, "SHA256SUMS"} {
 		if _, ok := found[name]; !ok {
-			return Asset{}, Asset{}, Asset{}, fmt.Errorf("release is missing required asset %q", name)
+			return Asset{}, Asset{}, Asset{}, 0, fmt.Errorf("release is missing required asset %q", name)
 		}
 	}
-	return found["cb.exe"], found[archiveName], found["SHA256SUMS"], nil
+	layout := checksumLayoutLegacyAMD64
+	if _, ok := found[arm64Archive]; ok {
+		layout = checksumLayoutDualArch
+	}
+	if goarch == "arm64" && layout != checksumLayoutDualArch {
+		return Asset{}, Asset{}, Asset{}, 0, fmt.Errorf("release is missing required asset %q", arm64Archive)
+	}
+	if goarch == "arm64" {
+		return found[arm64Archive], found[arm64Archive], found["SHA256SUMS"], layout, nil
+	}
+	return found["cb.exe"], found[amd64Archive], found["SHA256SUMS"], layout, nil
 }
 
 func printPlan(out io.Writer, plan Plan) {
@@ -322,8 +347,10 @@ func printPlan(out io.Writer, plan Plan) {
 	fmt.Fprintf(out, "status:       %s\n", plan.Status)
 	fmt.Fprintf(out, "platform:     %s/%s\n", plan.OS, plan.Arch)
 	fmt.Fprintf(out, "release:      %s\n", plan.ReleaseURL)
-	fmt.Fprintf(out, "binary:       %s (%d bytes)\n", plan.Binary.Name, plan.Binary.Size)
-	fmt.Fprintf(out, "archive:      %s (%d bytes)\n", plan.Archive.Name, plan.Archive.Size)
+	fmt.Fprintf(out, "artifact:     %s (%d bytes)\n", plan.Binary.Name, plan.Binary.Size)
+	if plan.Archive.Name != plan.Binary.Name {
+		fmt.Fprintf(out, "archive:      %s (%d bytes)\n", plan.Archive.Name, plan.Archive.Size)
+	}
 	fmt.Fprintf(out, "checksums:    %s (%d bytes)\n", plan.Checksums.Name, plan.Checksums.Size)
 	fmt.Fprintf(out, "verification: gh attestation verify; repository=%s workflow=%s ref=%s; checksums additionally required; no fallback\n", plan.ExpectedRepo, plan.Workflow, plan.ExpectedRef)
 	fmt.Fprintln(out, "apply:        unavailable in this slice; verified download and transactional replacement are separate roadmap phases")
