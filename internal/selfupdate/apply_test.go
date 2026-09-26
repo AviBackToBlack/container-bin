@@ -271,6 +271,58 @@ func TestApplyTransactionPreservesRecoveryArtifactWhenRollbackFails(t *testing.T
 	assertApplyBytes(t, matches[0], fixture.oldBytes)
 }
 
+func TestApplyTransactionRefusesForeignShimChangeDuringRollback(t *testing.T) {
+	fixture := newApplyFixture(t)
+	foreignBytes := []byte("foreign concurrent shim replacement")
+	tx := applyTransaction{
+		replace: replaceManagedFile,
+		smoke: func(context.Context, string, string) error {
+			writeApplyFileReplace(t, fixture.hardlinkShim, foreignBytes)
+			return errors.New("smoke failure after foreign shim change")
+		},
+	}
+	err := tx.apply(context.Background(), fixture.verified, fixture.installed)
+	if err == nil || !strings.Contains(err.Error(), "changed outside the update transaction") || !strings.Contains(err.Error(), "recovery executable preserved") {
+		t.Fatalf("apply error = %v", err)
+	}
+	assertApplyBytes(t, fixture.installed, fixture.oldBytes)
+	assertApplyBytes(t, fixture.hardlinkShim, foreignBytes)
+	assertOneApplyRecoveryExecutable(t, fixture.dir, fixture.oldBytes)
+}
+
+func TestApplyTransactionUsesRecoveryCopyWhenManagementRestoreFails(t *testing.T) {
+	fixture := newApplyFixture(t)
+	fallbackUsed := false
+	tx := applyTransaction{
+		replace: func(source, destination string, preferHardlink bool) error {
+			fromRecovery := strings.HasPrefix(filepath.Base(filepath.Dir(source)), rollbackPrefix)
+			if fromRecovery && destination == fixture.installed {
+				return errors.New("filesystem denied management restore")
+			}
+			if fromRecovery && destination == fixture.hardlinkShim {
+				fallbackUsed = true
+				if preferHardlink {
+					t.Fatal("defensive recovery fallback preferred a hardlink")
+				}
+			}
+			return replaceManagedFile(source, destination, preferHardlink)
+		},
+		smoke: func(context.Context, string, string) error {
+			return errors.New("smoke failure")
+		},
+	}
+	err := tx.apply(context.Background(), fixture.verified, fixture.installed)
+	if err == nil || !strings.Contains(err.Error(), "restore management executable") || !strings.Contains(err.Error(), "recovery executable preserved") {
+		t.Fatalf("apply error = %v", err)
+	}
+	if !fallbackUsed {
+		t.Fatal("rollback did not use the defensive recovery-copy fallback")
+	}
+	assertApplyBytes(t, fixture.installed, fixture.newBytes)
+	assertApplyBytes(t, fixture.hardlinkShim, fixture.oldBytes)
+	assertOneApplyRecoveryExecutable(t, fixture.dir, fixture.oldBytes)
+}
+
 type applyFixture struct {
 	dir          string
 	installed    string
@@ -358,4 +410,16 @@ func assertNoApplyRecoveryArtifacts(t *testing.T, dir string) {
 	if len(matches) != 0 {
 		t.Fatalf("unexpected rollback artifacts: %v", matches)
 	}
+}
+
+func assertOneApplyRecoveryExecutable(t *testing.T, dir string, want []byte) {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(dir, rollbackPrefix+"*", "cb.exe"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("recovery executables = %v, want one", matches)
+	}
+	assertApplyBytes(t, matches[0], want)
 }
