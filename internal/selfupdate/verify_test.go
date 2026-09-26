@@ -230,6 +230,34 @@ func TestVerifyARM64AuthenticatesArchiveBeforeExactExtraction(t *testing.T) {
 	if !bytes.Equal(data, want) || verified.SHA256() != hex.EncodeToString(sum[:]) || verified.Size() != int64(len(want)) {
 		t.Fatalf("unexpected extracted ARM64 executable: bytes=%q verified=%+v", data, verified)
 	}
+	verifiedAgain, err := testVerifier(attestationRunnerFunc(func(context.Context, string, []string) ([]byte, []byte, error) {
+		return attestationJSON(fixture.digest), nil, nil
+	})).Verify(context.Background(), fixture.plan, fixture.binary, fixture.checksums, fixture.gh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verifiedAgain.BinaryPath() != verified.BinaryPath() || verifiedAgain.SHA256() != verified.SHA256() || verifiedAgain.Size() != verified.Size() {
+		t.Fatalf("repeat verification changed result: first=%+v second=%+v", verified, verifiedAgain)
+	}
+}
+
+func TestVerifyARM64RejectsMismatchedExistingExtractionWithoutOverwrite(t *testing.T) {
+	fixture := newARM64VerificationFixture(t, nil)
+	destination := filepath.Join(filepath.Dir(fixture.binary), "cb.exe")
+	want := []byte("untrusted pre-existing bytes")
+	if err := os.WriteFile(destination, want, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := testVerifier(attestationRunnerFunc(func(context.Context, string, []string) ([]byte, []byte, error) {
+		return attestationJSON(fixture.digest), nil, nil
+	})).Verify(context.Background(), fixture.plan, fixture.binary, fixture.checksums, fixture.gh)
+	if err == nil || !strings.Contains(err.Error(), "does not match the authenticated archive") {
+		t.Fatalf("mismatched existing extraction Verify = %v", err)
+	}
+	data, readErr := os.ReadFile(destination)
+	if readErr != nil || !bytes.Equal(data, want) {
+		t.Fatalf("mismatched existing extraction was changed: bytes=%q err=%v", data, readErr)
+	}
 }
 
 func TestVerifyAMD64AcceptsCanonicalDualArchitectureManifest(t *testing.T) {

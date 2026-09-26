@@ -414,6 +414,37 @@ func extractVerifiedExecutable(archivePath string, expected os.FileInfo) (path, 
 		return "", "", 0, errors.New("verified ARM64 archive cb.exe size is outside the safety limit")
 	}
 	destination := filepath.Join(filepath.Dir(archivePath), "cb.exe")
+	expectedDigest, expectedSize, err := hashArchiveExecutable(binary)
+	if err != nil {
+		return "", "", 0, err
+	}
+	if _, statErr := os.Lstat(destination); statErr == nil {
+		clean, info, err := canonicalVerificationFile(destination, "previously extracted ARM64 executable")
+		if err != nil {
+			return "", "", 0, err
+		}
+		digest, size, err := hashVerificationFile(clean, info)
+		if err != nil {
+			return "", "", 0, err
+		}
+		if digest != expectedDigest || size != expectedSize {
+			return "", "", 0, errors.New("existing extracted ARM64 executable does not match the authenticated archive")
+		}
+		if err := restrictStagingPath(clean, false); err != nil {
+			return "", "", 0, fmt.Errorf("restrict existing extracted ARM64 cb.exe: %w", err)
+		}
+		postClean, postInfo, err := canonicalVerificationFile(clean, "previously extracted ARM64 executable")
+		if err != nil {
+			return "", "", 0, err
+		}
+		postDigest, postSize, err := hashVerificationFile(postClean, postInfo)
+		if err != nil || postClean != clean || postDigest != expectedDigest || postSize != expectedSize {
+			return "", "", 0, errors.New("existing extracted ARM64 executable changed during re-verification")
+		}
+		return clean, digest, size, nil
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return "", "", 0, fmt.Errorf("inspect extracted ARM64 cb.exe destination: %w", statErr)
+	}
 	input, err := binary.Open()
 	if err != nil {
 		return "", "", 0, fmt.Errorf("open verified ARM64 archive cb.exe: %w", err)
@@ -449,8 +480,28 @@ func extractVerifiedExecutable(archivePath string, expected os.FileInfo) (path, 
 	if err != nil {
 		return "", "", 0, err
 	}
+	if digest != expectedDigest || size != expectedSize {
+		return "", "", 0, errors.New("extracted ARM64 executable does not match the authenticated archive")
+	}
 	keep = true
 	return clean, digest, size, nil
+}
+
+func hashArchiveExecutable(binary *zip.File) (string, int64, error) {
+	input, err := binary.Open()
+	if err != nil {
+		return "", 0, fmt.Errorf("open verified ARM64 archive cb.exe: %w", err)
+	}
+	hash := sha256.New()
+	n, copyErr := io.Copy(hash, io.LimitReader(input, maxBinarySize+1))
+	closeErr := input.Close()
+	if err := errors.Join(copyErr, closeErr); err != nil {
+		return "", 0, fmt.Errorf("hash verified ARM64 archive cb.exe: %w", err)
+	}
+	if n != int64(binary.UncompressedSize64) {
+		return "", 0, errors.New("verified ARM64 archive cb.exe changed size while hashing")
+	}
+	return hex.EncodeToString(hash.Sum(nil)), n, nil
 }
 
 type attestationOutput []struct {
