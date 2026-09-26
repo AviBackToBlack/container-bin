@@ -29,8 +29,8 @@ type applyTransaction struct {
 // ApplyVerified replaces an installed Windows management executable with an
 // opaque, previously verified release artifact. It is intended to run only in
 // the self-update helper after the invoking ContainerBin process has exited.
-// The helper/waiting command surface is a separate slice; exposing this
-// transaction does not make ordinary self-update mutate installed files.
+// The public apply command reaches this transaction only after the parent and
+// helper independently authenticate the staged release.
 func ApplyVerified(ctx context.Context, verified Verified, installedExecutable string) error {
 	if runtime.GOOS != "windows" {
 		return errors.New("self-update replacement is supported only on native Windows")

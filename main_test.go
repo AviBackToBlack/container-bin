@@ -11,6 +11,7 @@ import (
 	"github.com/AviBackToBlack/container-bin/internal/policy"
 	"github.com/AviBackToBlack/container-bin/internal/projectconfig"
 	"github.com/AviBackToBlack/container-bin/internal/registry"
+	"github.com/AviBackToBlack/container-bin/internal/selfupdate"
 )
 
 func TestVersionDefaultIsDev(t *testing.T) {
@@ -148,18 +149,18 @@ func TestHostBoundaryPrecedesPolicyAndRegistryLoad(t *testing.T) {
 	main()
 }
 
-func TestSelfUpdateCheckEnforcesHostBoundaryAndSkipsPolicyAndRegistry(t *testing.T) {
+func TestSelfUpdateEnforcesHostBoundaryAndSkipsPolicyAndRegistry(t *testing.T) {
 	oldArgs := os.Args
 	oldLoadRegistry := loadRegistry
 	oldLoadPolicy := loadPolicy
 	oldRequireHostFrontend := requireHostFrontend
-	oldRunSelfUpdateCheck := runSelfUpdateCheck
+	oldRunSelfUpdate := runSelfUpdate
 	defer func() {
 		os.Args = oldArgs
 		loadRegistry = oldLoadRegistry
 		loadPolicy = oldLoadPolicy
 		requireHostFrontend = oldRequireHostFrontend
-		runSelfUpdateCheck = oldRunSelfUpdateCheck
+		runSelfUpdate = oldRunSelfUpdate
 	}()
 
 	hostChecked := false
@@ -173,7 +174,7 @@ func TestSelfUpdateCheckEnforcesHostBoundaryAndSkipsPolicyAndRegistry(t *testing
 	loadPolicy = func() (policy.Policy, error) {
 		panic("self-update check attempted to load machine policy")
 	}
-	runSelfUpdateCheck = func(_ context.Context, current string, args []string, out io.Writer) error {
+	runSelfUpdate = func(_ context.Context, current string, args []string, out io.Writer) error {
 		if current != "dev" {
 			t.Fatalf("current version = %q, want dev", current)
 		}
@@ -191,6 +192,47 @@ func TestSelfUpdateCheckEnforcesHostBoundaryAndSkipsPolicyAndRegistry(t *testing
 	}
 	if !hostChecked {
 		t.Fatal("self-update check skipped host enforcement")
+	}
+}
+
+func TestSelfUpdateHelperDispatchIsPrivateAndSkipsPolicyAndRegistry(t *testing.T) {
+	oldArgs := os.Args
+	oldLoadRegistry := loadRegistry
+	oldLoadPolicy := loadPolicy
+	oldRequireHostFrontend := requireHostFrontend
+	oldRunSelfUpdateHelper := runSelfUpdateHelper
+	defer func() {
+		os.Args = oldArgs
+		loadRegistry = oldLoadRegistry
+		loadPolicy = oldLoadPolicy
+		requireHostFrontend = oldRequireHostFrontend
+		runSelfUpdateHelper = oldRunSelfUpdateHelper
+	}()
+
+	hostChecked := false
+	requireHostFrontend = func() error { hostChecked = true; return nil }
+	loadRegistry = func(registry.Authenticator) (registry.Registry, string, error) {
+		panic("self-update helper attempted to load the registry")
+	}
+	loadPolicy = func() (policy.Policy, error) {
+		panic("self-update helper attempted to load machine policy")
+	}
+	called := false
+	runSelfUpdateHelper = func(_ context.Context, args []string, out io.Writer) error {
+		called = true
+		if strings.Join(args, " ") != `--request C:\private\request.json` {
+			t.Fatalf("helper args = %q", args)
+		}
+		_, err := io.WriteString(out, "helper seam reached\n")
+		return err
+	}
+	os.Args = []string{"cb-update-helper.exe", "__self-update-helper", "--request", `C:\private\request.json`}
+	out := captureMainStdout(t, main)
+	if !called || !hostChecked || !strings.Contains(out, "helper seam reached") {
+		t.Fatalf("helper called=%t host=%t output=%q", called, hostChecked, out)
+	}
+	if !selfupdate.IsHelperInvocation("cb-update-helper", os.Args[1:]) {
+		t.Fatal("private helper invocation was not recognized")
 	}
 }
 

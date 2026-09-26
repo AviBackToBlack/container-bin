@@ -38,9 +38,15 @@ var loadPolicy = policy.Load
 // Production always uses hostenv.RequireFrontend.
 var requireHostFrontend = hostenv.RequireFrontend
 
-// runSelfUpdateCheck is a test seam for proving self-update selection remains
-// available before policy or registry I/O. Production always uses selfupdate.Check.
-var runSelfUpdateCheck = selfupdate.Check
+// runSelfUpdate is a test seam for proving the complete explicit self-update
+// command remains available before policy or registry I/O. Production always
+// uses selfupdate.Run.
+var runSelfUpdate = selfupdate.Run
+
+// runSelfUpdateHelper is the hidden, fail-closed child-process half of a
+// transactional update. It is dispatched before registry/policy I/O because
+// the private request carries and revalidates every required identity.
+var runSelfUpdateHelper = selfupdate.RunHelper
 
 func main() {
 	invoked := invokedName(os.Args[0])
@@ -51,8 +57,14 @@ func main() {
 		fatalf("host runtime: %v", err)
 		return
 	}
+	if selfupdate.IsHelperInvocation(invoked, os.Args[1:]) {
+		if err := runSelfUpdateHelper(context.Background(), os.Args[2:], os.Stdout); err != nil {
+			fatalf("self-update helper: %v", err)
+		}
+		return
+	}
 	if isManagementInvocation(invoked) && len(os.Args) > 1 && os.Args[1] == "self-update" {
-		if err := runSelfUpdateCheck(context.Background(), version, os.Args[2:], os.Stdout); err != nil {
+		if err := runSelfUpdate(context.Background(), version, os.Args[2:], os.Stdout); err != nil {
 			fatalf("self-update: %v", err)
 		}
 		return
@@ -393,8 +405,9 @@ Commands:
   cb backup    back up registry + lock; --state adds explicitly named volumes
   cb restore   validate/restore a backup (dry-run unless --apply; state is opt-in)
   cb self-test [--json] [--release] run offline end-to-end compatibility checks
-  cb self-update --check [--prerelease | --version VERSION] [--allow-downgrade]
-                report a release update plan without downloading or changing files
+  cb self-update (--check | --apply --gh-executable ABSOLUTE_GH_EXE)
+                 [--prerelease | --version VERSION] [--allow-downgrade]
+                report a plan, or verify and transactionally apply it
   cb list      list configured tool profiles
   cb default   list defaults; "cb default set FAMILY VERSION" switches a family
   cb trace     show raw/normalized/mapped argv for a tool without running it
