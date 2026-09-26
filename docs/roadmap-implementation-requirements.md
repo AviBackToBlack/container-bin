@@ -15,8 +15,9 @@ decision.
 
 Status snapshot: **2026-09-25**. The earlier 2026-09-17 snapshot counted every
 unchecked roadmap line as unfinished work; that is no longer an accurate model.
-RM-26 pipx, the enterprise-policy foundation, the RM-31 selection/check slice,
-the WSL host boundary, native Windows ARM64 CI, and reproducible ARM64 release
+RM-26 pipx, per-project overlay trust, signed-registry policy, the RM-31
+selection/check/staging/verification slices, the WSL host boundary and native
+layout identity, native Windows ARM64 CI, and reproducible ARM64 release
 packaging have since shipped. The
 maintainer has also explicitly accepted product/security dispositions for the
 remaining design gates. Use the readiness table below plus
@@ -72,14 +73,14 @@ The minimum delivery gate for a code change is:
 | RM-26 Python global CLI exposure | **Completed in PR #74** | Stateful pipx + `cb expose pipx` shipped; plain pip `/venv/bin` remains intentionally unexposed |
 | RM-29 Windows ARM64 | **Native CI and release packaging shipped / update and hardware work remain** | PR #78 added native hosted ARM64 CI and PR #86 added reproducible release packaging; ARM64 self-update selection and real Windows-on-Arm + Docker Desktop E2E remain |
 | RM-30 Authenticode | **Design complete / externally blocked** | Provision real code-signing certificate and protected signing mechanism |
-| RM-31 self-update | **Selection/staging/verifier and transaction foundations implemented** | Temporary helper, user-facing apply wiring, broader architecture support and release E2E remain |
+| RM-31 self-update | **Selection, staging and verification shipped / transaction implemented** | PRs #76, #81 and #82 shipped the read-only plan, fail-closed staging and provenance verification; temporary helper, user-facing apply wiring, broader architecture support and release E2E remain |
 | RM-34 Cargo expose enhancement | **Intentionally deferred** | Existing expose-all/explicit selection are sufficient; reopen only for concrete unmet use case |
 | Linux/macOS hosts | **Demand-gated** | WSL may factor reusable Linux host code; standalone support needs its own demand and qualification |
-| Enterprise policy | **Foundation shipped / signed registry remains** | PR #75 shipped the machine-owned constraint layer; authenticated registry and image-trust slices remain |
+| Enterprise policy | **Foundation and signed registry shipped / image trust remains** | PRs #75 and #84 shipped the machine-owned constraint layer and authenticated registry; image trust remains |
 | Image trust | **Design complete / sequenced** | Implement after signed-registry policy using policy-driven Sigstore/cosign verification |
 | Plugin/provider architecture | **Intentionally deferred** | Reopen only after at least two real integrations cannot fit the declarative model |
-| WSL2 | **Host boundary shipped / implementation remaining** | PR #77 shipped the fail-closed host boundary; native layout, Docker Desktop integration and real WSL qualification remain |
-| Per-project overlays | **Design complete / implementation-ready** | Implement add-only digest-bound trust model on the merged enterprise-policy foundation |
+| WSL2 | **Host boundary and layout identity shipped / implementation remaining** | PRs #77 and #83 shipped the fail-closed host boundary and fixed native layout/state identity; filesystem preparation is implemented but unexposed, while frontend wiring, Docker Desktop integration and real WSL qualification remain |
+| Per-project overlays | **Completed in PR #80** | Add-only digest-bound trust model shipped on the merged enterprise-policy foundation |
 | Release SBOM | **Conditionally deferred** | Trigger on shipped third-party/runtime dependencies or concrete compliance/consumer demand |
 | Snyk | **Conditionally deferred** | Trigger only for a real coverage gap plus owner/account/token and triage/outage policy |
 | Issue #69 | **Completed** | Superseded by merged implementation; no remaining roadmap dependency |
