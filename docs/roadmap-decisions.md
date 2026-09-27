@@ -334,6 +334,8 @@ is not completion.
    - explicit read-only/apply Linux ownership, permission and symlink layout
      preparation and registry-derived tool-shim preflight are implemented;
      installer/runtime integration and race-safe shim mutation remain;
+   - namespace-prefixed/labeled WSL volume identity is implemented, but Docker
+     creation and lifecycle commands are not yet wired to it;
    - Docker Desktop WSL integration;
    - project identity and cross-boundary rejection tests;
    - real WSL Docker E2E.
