@@ -102,9 +102,11 @@ A WSL-filesystem project must be on the same filesystem device as the
 distribution root. A Windows-filesystem project must be below a proven default
 `/mnt/<lowercase-drive>` mount reported as 9p DrvFs or WSL's `drvfs*` virtiofs
 share. The drive root itself, a lookalike `/mnt` directory, custom DrvFs
-automount roots, nested mounts and separate unqualified native filesystems fail
-closed. This deliberately supports the standard WSL boundary first instead of
-guessing how a custom mount maps back to Windows.
+automount roots, mounts masking a Windows drive and separate unqualified native
+filesystems fail closed. Same-device distribution bind mounts remain separate
+projects under their exact canonical spelling. This deliberately supports the
+standard WSL boundary first instead of guessing how a custom mount maps back to
+Windows.
 
 ## Required before WSL execution can be enabled
 

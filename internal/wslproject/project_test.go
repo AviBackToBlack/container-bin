@@ -2,6 +2,7 @@ package wslproject
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -52,13 +53,17 @@ func TestClassifyUsesDeepestContainingMount(t *testing.T) {
 	}
 }
 
-func TestClassifyUsesTopmostSamePointMount(t *testing.T) {
-	root := "/mnt/c/Users/Alice/Project"
-	mounts := rootMount +
-		"25 24 0:45 / /mnt/c rw - 9p drvfsa rw,aname=drvfs\n" +
-		"26 25 0:46 / /mnt/c rw - tmpfs none rw\n"
-	if _, err := classify(root, validDependencies(root, mounts)); err == nil || !strings.Contains(err.Error(), "not proven DrvFs") {
-		t.Fatalf("classify() error = %v", err)
+func TestClassifyUsesMountAncestryForSamePointStack(t *testing.T) {
+	for name, topID := range map[string]int{"higher top ID": 26, "lower reused top ID": 12} {
+		t.Run(name, func(t *testing.T) {
+			root := "/mnt/c/Users/Alice/Project"
+			mounts := rootMount +
+				"25 24 0:45 / /mnt/c rw - 9p drvfsa rw,aname=drvfs\n" +
+				fmt.Sprintf("%d 25 0:46 / /mnt/c rw - tmpfs none rw\n", topID)
+			if _, err := classify(root, validDependencies(root, mounts)); err == nil || !strings.Contains(err.Error(), "not proven DrvFs") {
+				t.Fatalf("classify() error = %v", err)
+			}
+		})
 	}
 }
 
@@ -114,6 +119,9 @@ func TestClassifyRejectsAmbiguousBoundaries(t *testing.T) {
 		"unproven mnt drive": {
 			root: "/mnt/c/Users/Alice/Project",
 		},
+		"uppercase mnt drive lookalike": {
+			root: "/mnt/C/Users/Alice/Project",
+		},
 		"lookalike 9p option": {
 			root: "/mnt/c/Users/Alice/Project",
 			mutate: func(d *dependencies) {
@@ -161,6 +169,8 @@ func TestClassifyRejectsAmbiguousBoundaries(t *testing.T) {
 func TestParseMountInfoRejectsMalformedOrUnknownEscapes(t *testing.T) {
 	for _, raw := range []string{
 		"bad\n",
+		"24 24 8:1 / / rw - ext4 /dev/sdb rw\n",
+		rootMount + "24 1 8:2 / /other rw - ext4 /dev/sdc rw\n",
 		"24 1 8:1 / /bad\\999 rw - ext4 /dev/sdb rw\n",
 		"24 1 8:1 / relative rw - ext4 /dev/sdb rw\n",
 	} {

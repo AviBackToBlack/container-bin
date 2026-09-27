@@ -44,6 +44,7 @@ type dependencies struct {
 
 type mountInfo struct {
 	id           int
+	parentID     int
 	point        string
 	filesystem   string
 	source       string
@@ -83,9 +84,9 @@ func classify(root string, d dependencies) (Project, error) {
 	if err != nil {
 		return Project{}, fmt.Errorf("parse WSL mount table: %w", err)
 	}
-	mount, ok := containingMount(root, mounts)
-	if !ok {
-		return Project{}, fmt.Errorf("WSL project root %s has no containing mount", root)
+	mount, err := containingMount(root, mounts)
+	if err != nil {
+		return Project{}, fmt.Errorf("select mount for WSL project root %s: %w", root, err)
 	}
 	if isDrvFS(mount) {
 		drive, ok := defaultDriveMount(mount.point)
@@ -128,6 +129,7 @@ func parseMountInfo(raw []byte) ([]mountInfo, error) {
 		return nil, errors.New("mount table is empty")
 	}
 	mounts := make([]mountInfo, 0, len(lines))
+	seenIDs := make(map[int]bool, len(lines))
 	for index, line := range lines {
 		fields := strings.Fields(line)
 		separator := -1
@@ -141,8 +143,13 @@ func parseMountInfo(raw []byte) ([]mountInfo, error) {
 			return nil, fmt.Errorf("line %d has invalid field layout", index+1)
 		}
 		mountID, err := strconv.Atoi(fields[0])
-		if err != nil || mountID <= 0 {
+		if err != nil || mountID <= 0 || seenIDs[mountID] {
 			return nil, fmt.Errorf("line %d has invalid mount ID", index+1)
+		}
+		seenIDs[mountID] = true
+		parentID, err := strconv.Atoi(fields[1])
+		if err != nil || parentID <= 0 || parentID == mountID {
+			return nil, fmt.Errorf("line %d has invalid parent mount ID", index+1)
 		}
 		point, err := unescapeMountField(fields[4])
 		if err != nil || !path.IsAbs(point) || path.Clean(point) != point {
@@ -154,6 +161,7 @@ func parseMountInfo(raw []byte) ([]mountInfo, error) {
 		}
 		mounts = append(mounts, mountInfo{
 			id:           mountID,
+			parentID:     parentID,
 			point:        point,
 			filesystem:   fields[separator+1],
 			source:       source,
@@ -191,20 +199,61 @@ func unescapeMountField(field string) (string, error) {
 	return decoded.String(), nil
 }
 
-func containingMount(root string, mounts []mountInfo) (mountInfo, bool) {
-	var selected mountInfo
-	found := false
+func containingMount(root string, mounts []mountInfo) (mountInfo, error) {
+	deepest := ""
 	for _, mount := range mounts {
-		if root != mount.point && mount.point != "/" && !strings.HasPrefix(root, mount.point+"/") {
+		contains := mount.point == "/" || root == mount.point || strings.HasPrefix(root, mount.point+"/")
+		if !contains {
 			continue
 		}
-		if mount.point == "/" || root == mount.point || strings.HasPrefix(root, mount.point+"/") {
-			if !found || len(mount.point) > len(selected.point) || (mount.point == selected.point && mount.id > selected.id) {
-				selected, found = mount, true
-			}
+		if len(mount.point) > len(deepest) {
+			deepest = mount.point
 		}
 	}
-	return selected, found
+	if deepest == "" {
+		return mountInfo{}, errors.New("no containing mount")
+	}
+	byID := make(map[int]mountInfo, len(mounts))
+	var candidates []mountInfo
+	for _, mount := range mounts {
+		byID[mount.id] = mount
+		if mount.point == deepest {
+			candidates = append(candidates, mount)
+		}
+	}
+	var visible []mountInfo
+	for _, candidate := range candidates {
+		hidden := false
+		for _, other := range candidates {
+			if other.id != candidate.id && mountDescendsFrom(other, candidate.id, byID) {
+				hidden = true
+				break
+			}
+		}
+		if !hidden {
+			visible = append(visible, candidate)
+		}
+	}
+	if len(visible) != 1 {
+		return mountInfo{}, fmt.Errorf("mount point %s has %d visible candidates", deepest, len(visible))
+	}
+	return visible[0], nil
+}
+
+func mountDescendsFrom(mount mountInfo, ancestorID int, byID map[int]mountInfo) bool {
+	visited := make(map[int]bool)
+	for parentID := mount.parentID; parentID != 0 && !visited[parentID]; {
+		if parentID == ancestorID {
+			return true
+		}
+		visited[parentID] = true
+		parent, ok := byID[parentID]
+		if !ok {
+			return false
+		}
+		parentID = parent.parentID
+	}
+	return false
 }
 
 func isDrvFS(mount mountInfo) bool {
@@ -231,11 +280,18 @@ func defaultDriveMount(point string) (string, bool) {
 }
 
 func defaultDriveRoot(root string) (string, bool) {
-	if len(root) < len("/mnt/c") || !strings.HasPrefix(root, "/mnt/") || root[5] < 'a' || root[5] > 'z' {
+	if len(root) < len("/mnt/c") || !strings.HasPrefix(root, "/mnt/") {
+		return "", false
+	}
+	drive := root[5]
+	if drive >= 'A' && drive <= 'Z' {
+		drive += 'a' - 'A'
+	}
+	if drive < 'a' || drive > 'z' {
 		return "", false
 	}
 	if len(root) != len("/mnt/c") && root[6] != '/' {
 		return "", false
 	}
-	return string(root[5]), true
+	return string(drive), true
 }
