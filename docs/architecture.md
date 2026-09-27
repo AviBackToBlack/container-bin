@@ -321,6 +321,7 @@ internal/atomicio    crash-safe write + .bak recovery                (leaf)
 internal/mutationlock  the registry mutation lock primitive          (leaf)
 internal/hostenv       host classification and gated WSL layout       (leaf)
 internal/wslfs         native WSL filesystem ownership/mode preflight
+internal/wslvolume     native WSL namespaced volume identity
 internal/selfupdate    release selection, staging, verification and replacement
 ```
 
@@ -340,6 +341,7 @@ pathmap      -> registry
 registry     -> atomicio, toml
 policy       -> toml
 wslfs       -> hostenv
+wslvolume   -> hostenv, registry
 selfupdate  -> mutationlock, registry
 atomicio, dockervol, hostenv, mutationlock, toml -> (leaves)
 ```
@@ -374,6 +376,15 @@ directories without repairing existing objects, and validates strict modes for
 managed registry, lock, binary and management-shim endpoints. The non-Linux
 build-tagged implementation always rejects the operation. Frontend wiring,
 registry-derived tool shims and Docker integration remain later WSL slices.
+
+`internal/wslvolume` defines the pure WSL Docker-volume identity contract. A
+volume name starts with `cb-<wsl-namespace>-`, and exact namespace ownership is
+duplicated in the `cb.wsl_namespace` label. Shared and project volumes retain
+the existing managed/kind/owner labels; project roots are canonical absolute
+Linux paths hashed case-sensitively under a separate versioned domain. The
+package does not contact Docker. Creation, listing, GC, backup and restore must
+all consume this contract in a later wiring slice and require both the name
+prefix and label before adopting or mutating state.
 
 After the host runtime boundary is enforced, `cb self-update --check` is
 dispatched before machine policy and registry loading. Release selection

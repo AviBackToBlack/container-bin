@@ -79,7 +79,7 @@ The minimum delivery gate for a code change is:
 | Enterprise policy | **Foundation and signed registry shipped / image trust remains** | PRs #75 and #84 shipped the machine-owned constraint layer and authenticated registry; image trust remains |
 | Image trust | **Design complete / sequenced** | Implement after signed-registry policy using policy-driven Sigstore/cosign verification |
 | Plugin/provider architecture | **Intentionally deferred** | Reopen only after at least two real integrations cannot fit the declarative model |
-| WSL2 | **Host boundary and layout identity shipped / implementation remaining** | PRs #77 and #83 shipped the fail-closed host boundary and fixed native layout/state identity; filesystem preparation is implemented but unexposed, while frontend wiring, Docker Desktop integration and real WSL qualification remain |
+| WSL2 | **Host boundary and layout identity shipped / implementation remaining** | PRs #77 and #83 shipped the fail-closed host boundary and fixed native layout/state identity; filesystem preparation and namespace-prefixed/labeled volume identity are implemented but unexposed, while Docker lifecycle/frontend wiring, Docker Desktop integration and real WSL qualification remain |
 | Per-project overlays | **Completed in PR #80** | Add-only digest-bound trust model shipped on the merged enterprise-policy foundation |
 | Release SBOM | **Conditionally deferred** | Trigger on shipped third-party/runtime dependencies or concrete compliance/consumer demand |
 | Snyk | **Conditionally deferred** | Trigger only for a real coverage gap plus owner/account/token and triage/outage policy |
@@ -591,6 +591,12 @@ project identity, named-volume behavior, file permissions, case sensitivity,
 symlinks, stdin/TTY/signals and mixed-invocation rejection. Windows and WSL do
 not share registry/lock/state identity implicitly, and ContainerBin never guesses
 equivalence between Windows paths and `/mnt/<drive>` paths.
+
+The implemented volume contract prefixes names and labels with the opaque
+distribution/machine/user namespace, and hashes canonical Linux project roots
+case-sensitively under a versioned WSL domain. Later Docker lifecycle wiring
+must require both the exact name prefix and namespace label for selection,
+adoption, backup, restore, GC or deletion.
 
 Qualification must include both Windows-filesystem and WSL-filesystem projects
 plus mixed invocation rejection cases.

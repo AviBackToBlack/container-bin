@@ -86,6 +86,11 @@ readable, and dangerous to let others edit.
   standalone Linux and other hosts refuse before registry or Docker work.
   WSL2 classification requires Microsoft WSL2 kernel markers; environment
   variables alone cannot turn ordinary Linux into a supported host.
+- **Native WSL volumes are namespace-bound.** The unexposed volume contract
+  places the opaque distribution/machine/user namespace in both every managed
+  name and `cb.wsl_namespace` label. Project hashes preserve exact canonical
+  Linux path case. Later lifecycle wiring must require both proofs before
+  adoption or mutation; Windows and other WSL scopes remain foreign state.
 - **Machine policy cannot be redirected or weakened.** A present enterprise
   policy is loaded only from the fixed OS path, requires administrator/root
   ownership and restrictive permissions, and authorizes the already-resolved

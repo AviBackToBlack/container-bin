@@ -330,6 +330,8 @@ is not completion.
      layout/state identity are merged in PRs #77 and #83;
    - Linux ownership, permission and symlink preflight is implemented but not
      yet wired into an enabled frontend;
+   - namespace-prefixed/labeled WSL volume identity is implemented, but Docker
+     creation and lifecycle commands are not yet wired to it;
    - Docker Desktop WSL integration;
    - project identity and cross-boundary rejection tests;
    - real WSL Docker E2E.

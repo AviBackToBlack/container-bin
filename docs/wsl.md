@@ -90,6 +90,16 @@ state listing, garbage collection, backup and restore must filter on the exact
 namespace. Reinstalling a distribution, changing users or selecting another
 distribution therefore cannot silently adopt existing state.
 
+The implemented pure volume contract names every object
+`cb-<namespace>-<group>-<logical>`; project volumes add a 12-hex project hash.
+Every volume also carries `cb.wsl_namespace=<namespace>` in addition to the
+existing `cb.managed`, `cb.kind`, `cb.owner` and project identity labels.
+Project hashing uses a versioned WSL domain and the exact canonical absolute
+Linux path: it is case-sensitive and performs no Unicode normalization. A
+volume belongs to the active scope only when both its name prefix and namespace
+label match. Docker creation and lifecycle commands are not wired to this
+contract yet.
+
 ## Required before WSL execution can be enabled
 
 Later reviewable slices must still implement and qualify all of the following:
@@ -97,8 +107,8 @@ Later reviewable slices must still implement and qualify all of the following:
 1. wire the implemented Linux ownership, permission and symlink preflight into
    the native installer/config lifecycle and extend it to registry-derived tool
    shims;
-2. wiring the accepted distribution/machine/user namespace into shared and
-   project volume creation and lifecycle commands;
+2. wire the implemented distribution/machine/user volume identity contract
+   into shared/project creation and every lifecycle command;
 3. native Linux path, symlink, case, stdin/TTY and signal semantics;
 4. Docker Desktop WSL-integration detection without accepting a separate local
    Docker Engine by accident;
