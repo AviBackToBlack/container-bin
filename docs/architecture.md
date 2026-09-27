@@ -400,19 +400,25 @@ package does not contact Docker. Prefix/label filtering is discovery-only;
 creation, adoption, GC, backup, restore and deletion must use an exact identity
 constructed by this package and match its complete label set.
 
-After the host runtime boundary is enforced, `cb self-update --check` is
-dispatched before machine policy and registry loading. Release selection
-therefore remains available when either local configuration source is missing
-or invalid without allowing unsupported frontends to perform network work.
-The exposed CLI currently performs only bounded metadata queries and plan
-output; that path does not load project or registry state. The package imports
-`mutationlock` and `registry` only for its unexposed replacement transaction,
-which serializes with registry/shim mutations and limits discovery to valid,
-non-reserved managed shim names. Its other unexposed phases provide private
-same-volume staging, exact checksum and GitHub build-provenance verification,
-and rollback-safe replacement of the management executable plus the complete
-proven shim set. Windows staging and recovery files use protected
-current-user-only DACLs; installed replacements inherit installation-directory
-ACLs. The temporary helper that waits for the invoking process to exit and the
-user-facing apply command remain separate later work, so the exposed command
-still cannot mutate the installed binary.
+After the host runtime boundary is enforced, `cb self-update` is dispatched
+before machine policy and registry loading. Release selection therefore remains
+available when either local configuration source is missing or invalid without
+allowing unsupported frontends to perform network work. `--check` performs only
+bounded metadata queries and plan output. Explicit `--apply` first proves that
+the running image is the installed `cb.exe` and that the supplied GitHub CLI is
+an absolute regular file, then selects, privately stages and verifies the exact
+release artifact before any installed bytes change.
+
+After verification, the parent copies its already-bound installed bytes into a
+protected same-volume helper directory and writes a bounded versioned request.
+Only that exact helper filename plus hidden marker bypasses ordinary shim
+dispatch. The helper waits with a two-minute bound for the parent to exit,
+revalidates its own/request/staging layout, re-runs checksum and GitHub
+provenance verification, and requires the new opaque result to equal the
+parent-bound result. It then acquires the normal mutation lock, replaces the
+management executable, reconciles only valid non-reserved shims proven to hold
+the old bytes, and runs bootstrap version/shim-identity checks. Failure rolls
+back the complete changed set where possible. A final fixed-system-PowerShell
+process waits for the helper and deletes only its exact validated directory.
+Windows staging, helper and recovery files use protected current-user-only
+DACLs; installed replacements inherit installation-directory ACLs.
