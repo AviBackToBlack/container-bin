@@ -220,6 +220,35 @@ never falls back to a digest-only lock. Execution remains rejected with
 `policy.image_trust_unverified` until the separate runtime freshness gate can
 consume the stored evidence.
 
+The repository includes an opt-in Windows qualification test for this producer
+path. Build it with the `image_trust_e2e` tag and set the five
+`CONTAINERBIN_IMAGE_TRUST_E2E*` variables documented by the test. It calls the
+real `Lock` and `Update` entry points against a Linux-container Docker Desktop
+engine, authenticates and privately stages the selected native cosign binary,
+verifies the selected public image, and reloads the resulting schema-2 lockfile
+after each operation. The test synthesizes an isolated policy and registry in
+its temporary directory; the build-tagged policy loader skips only the
+administrator-ownership check and is not compiled into production binaries.
+Normal CI does not claim this qualification because GitHub-hosted Windows
+runners do not provide Docker Desktop.
+
+From an explicit repository working directory, cross-compile the tagged test
+with the ContainerBin Go shim, then run the PE test binary natively:
+
+```powershell
+$env:GOOS = "windows"
+$env:GOARCH = "amd64"
+go test -c -tags=image_trust_e2e -o "$env:TEMP\container-bin-image-trust-e2e.test.exe" ./internal/cli
+
+$env:CONTAINERBIN_IMAGE_TRUST_E2E = "1"
+$env:CONTAINERBIN_IMAGE_TRUST_E2E_COSIGN = "C:\absolute\path\to\cosign.exe"
+$env:CONTAINERBIN_IMAGE_TRUST_E2E_IMAGE = "registry.example.com/team/signed-image:immutable-tag"
+$env:CONTAINERBIN_IMAGE_TRUST_E2E_ISSUER = "https://issuer.example"
+$env:CONTAINERBIN_IMAGE_TRUST_E2E_SUBJECT = "exact-certificate-identity"
+& "$env:TEMP\container-bin-image-trust-e2e.test.exe" `
+  '-test.v' '-test.run=^TestImageTrustLockAndUpdateWindowsDockerDesktop$'
+```
+
 ```toml
 policy_version = 3
 require_lock = true

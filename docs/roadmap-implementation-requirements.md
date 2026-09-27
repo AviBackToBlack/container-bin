@@ -556,9 +556,10 @@ old-binary/new-lock tests and security-model documentation.
 strict repository/digest/evidence validation, schema-1 compatibility,
 old-parser/new-lock rejection tests and security-model documentation. The
 internal online invocation slice authenticates pinned verifier/key snapshots,
-stages them under current-user-only permissions, runs a bounded exact-digest
-verification with a minimal environment, and independently checks the JSON
-digest and keyless identity. Lock/update integration now resolves the exact
+stages them under current-user-only permissions, downloads bounded signature
+bundles for the exact digest with a minimal environment, and locally re-verifies
+each bundle against the digest, cosign predicate and configured identity/key.
+Lock/update integration now resolves the exact
 digest first and promotes the document to schema 2 only after one authenticated
 transparency bundle can be recorded; zero/multiple bundle results and verifier
 failures abort without a digest-only fallback. Runtime freshness authorization

@@ -726,10 +726,12 @@ authenticated bundle SHA-256, canonical UTC verification time, verifier
 identity/hash and the complete effective machine-policy fingerprint. Partial,
 duplicate, malformed, cross-repository or local-image evidence is rejected.
 For an online policy-covered repository, `cb lock` and `cb update` resolve the
-exact digest first, execute only the authenticated staged cosign snapshot, and
-promote the lockfile to schema 2 after one authenticated transparency bundle is
-available. Zero or multiple distinct bundles, verifier failure, malformed
-output, or unavailable policy material aborts the refresh without a digest-only
+exact digest first, execute only the authenticated staged cosign snapshot,
+download bounded signature bundles for that immutable reference, and locally
+reverify each bundle against the exact digest, cosign predicate, and configured
+identity/key. The lockfile is promoted to schema 2 only when exactly one bundle
+passes. Zero or multiple matching bundles, verifier failure, malformed output,
+or unavailable policy material aborts the refresh without a digest-only
 fallback. Project-scoped refresh preserves unrelated schema-2 evidence. Runtime
 freshness authorization is still fail closed, so covered tools cannot execute
 yet and `cb lock --check` reports them denied. Old ContainerBin builds reject

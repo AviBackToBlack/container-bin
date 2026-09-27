@@ -79,8 +79,9 @@ readable, and dangerous to let others edit.
   the digest-only compatibility format. The invocation layer executes only
   authenticated verifier/key snapshots from a protected private directory,
   bounds time and output, scrubs ambient environment state, checks staged bytes
-  again after execution and independently binds JSON results to the exact
-  digest and keyless identity. Lock/update records an online result only when
+  again after execution, and re-verifies every downloaded bundle locally
+  against the exact digest, cosign predicate, and configured identity/key.
+  Lock/update records an online result only when
   exactly one authenticated transparency bundle fits the schema-2 evidence
   contract. Covered repositories still fail closed at runtime until that result
   can be consumed; missing implementation is never permission to fall back to

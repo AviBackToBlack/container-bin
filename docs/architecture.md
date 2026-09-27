@@ -239,11 +239,14 @@ not a path that could be replaced between checking and execution.
 
 `internal/imagetrust` owns the invocation boundary. It authenticates and stages
 only immutable verifier/key snapshots in a protected current-user directory,
-uses a bounded two-minute child process with a minimal environment, and invokes
-the staged verifier for one exact canonical `repository@sha256` value. It then
-re-hashes the staged material and independently checks bounded JSON output for
-the expected payload type, digest and keyless identity. Only online rules are
-accepted in this slice. `offline-bundle` fails before process execution until
+uses bounded two-minute child processes with a minimal environment, and asks
+the staged verifier to download signature bundles for one exact canonical
+`repository@sha256` value. Each bounded bundle is privately staged and passed
+back to the same verifier for local verification against the exact digest,
+`https://sigstore.dev/cosign/sign/v1` predicate, and configured identity/key;
+only those authenticated bundle bytes can become evidence. Staged material is
+re-hashed after every use. Only online rules are accepted in this slice.
+`offline-bundle` fails before process execution until
 policy can pin the complete trusted-root material needed to guarantee a truly
 network-independent verification; inherited registry credentials are also not
 passed to the verifier yet.
