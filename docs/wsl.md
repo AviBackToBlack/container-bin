@@ -6,10 +6,10 @@ integration. A Windows `cb.exe` launched through WSL interoperability is not the
 WSL frontend, and standalone Linux remains a separate, demand-gated product.
 
 The implemented foundation establishes the runtime boundary, fixed native-WSL
-layout contract and an unexposed filesystem-preparation step. It does not
+layout contract and an explicit filesystem-preparation command. It does not
 publish a Linux artifact or enable WSL execution yet. Until the remaining
-frontend wiring, Docker and qualification slices land, non-bootstrap commands
-fail closed on every host except native Windows.
+frontend wiring, Docker and qualification slices land, ordinary non-bootstrap
+commands fail closed on every host except native Windows.
 
 ## Runtime classification
 
@@ -28,6 +28,10 @@ fail closed on every host except native Windows.
   became consistent. Other Linux kernels are standalone Linux and rejected.
 - `cb version`, `cb help` and `cb config` remain bootstrap-safe for diagnosis;
   they perform no Docker or registry mutation and return before host enforcement.
+- `cb wsl prepare --check` and `cb wsl prepare --apply` are the only native-WSL
+  management exception. They classify the live host themselves and touch only
+  the fixed layout described below; all normal tool and management execution
+  remains gated.
 
 Environment variables alone never promote an ordinary Linux kernel to WSL2.
 Custom kernels that remove the Microsoft WSL2 identity markers fail closed;
@@ -65,8 +69,15 @@ The later wiring slice must revalidate managed paths at each mutation boundary
 or use descriptor-relative, no-follow traversal so a path swap after preflight
 cannot redirect a registry, lockfile, binary, or shim operation.
 
-The unexposed `internal/wslfs` preparation step creates only missing fixed
-layout directories. Config, state and managed-binary directories must be
+`cb wsl prepare --check` validates this contract without changing the
+filesystem and reports every missing required directory. Explicit
+`cb wsl prepare --apply` creates only those missing fixed layout directories,
+then revalidates the complete layout. Neither mode installs a binary, creates
+management or tool shims, writes config, contacts Docker, or enables the WSL
+frontend. The account home and numeric UID come from the native Linux account
+database rather than redirectable environment variables.
+
+Config, state and managed-binary directories must be
 private and current-user-owned; existing registry and lock files must be
 regular non-symlink files with mode `0600`; and an existing managed binary must
 be a regular non-symlink file with mode `0755`. The shim directory must be
@@ -112,9 +123,9 @@ Windows.
 
 Later reviewable slices must still implement and qualify all of the following:
 
-1. wire the implemented Linux ownership, permission and symlink preflight into
-   the native installer/config lifecycle and extend it to registry-derived tool
-   shims;
+1. integrate the prepared layout into the native installer/config lifecycle,
+   revalidate each mutation boundary and extend validation to registry-derived
+   tool shims;
 2. wiring the accepted distribution/machine/user namespace into shared and
    project volume creation and lifecycle commands;
 3. wire the implemented project storage boundary, then complete native Linux
