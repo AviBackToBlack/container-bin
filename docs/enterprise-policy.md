@@ -211,8 +211,10 @@ contents.
 Schema 3 retains every earlier control and adds the fail-closed policy contract
 for Sigstore/cosign image verification. ContainerBin can authenticate the exact
 configured cosign executable against its pin, and lock schema 2 defines and
-strictly validates the structured evidence record. This foundation still does
-not invoke cosign, produce evidence or authorize execution from it. A repository
+strictly validates the structured evidence record. The internal verifier can
+now privately stage authenticated verifier/key snapshots and validate bounded
+online cosign results for an exact repository digest. No command invokes that
+layer yet, produces lock evidence or authorizes execution from it. A repository
 covered by an `image_trust_rules` entry is therefore rejected with
 `policy.image_trust_unverified` until the later verification/evidence slice can
 prove and record the required evidence. It never falls back to a digest-only
@@ -235,10 +237,11 @@ The verifier path must be clean and absolute, and its pin is exactly 64
 lowercase hexadecimal SHA-256 characters. ContainerBin never searches `PATH`.
 `internal/policy` authenticates that exact path as a bounded, non-empty regular
 non-symlink file, rejects identity, size or digest changes, and returns an
-immutable byte snapshot rather than an executable path. The later invocation
-layer must materialize only that snapshot inside its own protected staging
-directory and execute the staged copy; validating and then executing the
-mutable configured pathname would leave a replacement race.
+immutable byte snapshot rather than an executable path. The invocation layer
+materializes only that snapshot inside its own protected current-user
+staging directory and executes the staged copy; validating and then executing
+the mutable configured pathname would leave a replacement race. It re-hashes
+the staged verifier and key after execution and treats mutation as failure.
 
 Each rule has five pipe-delimited fields:
 
@@ -255,7 +258,15 @@ Each rule has five pipe-delimited fields:
   that key file just as strictly as the cosign executable.
 - `NETWORK_MODE` is `online` or `offline-bundle`. `online` permits the verifier
   to obtain required Sigstore material from the network. `offline-bundle`
-  requires complete bundled evidence and forbids network fallback.
+  requires complete bundled evidence and forbids network fallback. The current
+  internal invocation boundary supports `online` only. It rejects
+  `offline-bundle` before executing cosign because the schema cannot yet pin the
+  complete Sigstore trusted-root material needed to guarantee no network use.
+
+Online execution receives a deliberately minimal environment and does not
+inherit registry credential/configuration variables. Public-registry
+verification is the initial boundary; private-registry authentication requires
+a separate explicit credential bridge rather than ambient process state.
 
 Transparency-log inclusion is mandatory for both mechanisms. Keyless
 certificate validity must be proven at the signed/integrated time represented

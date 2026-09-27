@@ -31,6 +31,7 @@ const (
 	registrySignatureAlgorithm   = "ed25519"
 	maxRegistrySignatureFileSize = 16 << 10
 	maxCosignVerifierSize        = 256 << 20
+	maxImageTrustPublicKeySize   = 1 << 20
 )
 
 type ImageTrustMechanism string
@@ -134,8 +135,8 @@ func (p Policy) Summary() string {
 }
 
 // CosignVerifier returns the administrator-pinned verifier configuration.
-// The later execution slice must authenticate this exact path before and after
-// use; this method deliberately performs no PATH lookup or filesystem access.
+// The execution layer must authenticate this exact path before use; this
+// method deliberately performs no PATH lookup or filesystem access.
 func (p Policy) CosignVerifier() (FilePin, bool) {
 	return p.cosignVerifier, p.cosignVerifier.Path != ""
 }
@@ -150,6 +151,25 @@ func (p Policy) AuthenticateCosignVerifier() (FileSnapshot, error) {
 		return FileSnapshot{}, policyError("image_trust_verifier_invalid", "cosign verifier is not configured by machine policy")
 	}
 	return authenticatePinnedFile(p.cosignVerifier, "cosign verifier", maxCosignVerifierSize)
+}
+
+// AuthenticateImageTrustPublicKey proves that the key selected by machine
+// policy for ref is the exact bounded regular non-symlink file whose digest is
+// pinned in that policy. It deliberately returns only an immutable snapshot;
+// verifier code must materialize that snapshot in its own protected staging
+// directory and must never pass the mutable configured path to cosign.
+func (p Policy) AuthenticateImageTrustPublicKey(ref string) (FileSnapshot, error) {
+	rule, ok, err := p.ImageTrustFor(ref)
+	if err != nil {
+		return FileSnapshot{}, policyError("image_trust_verifier_invalid", "select image trust public key for %q: %v", ref, err)
+	}
+	if !ok {
+		return FileSnapshot{}, policyError("image_trust_verifier_invalid", "image %q has no image trust rule", ref)
+	}
+	if rule.Mechanism != ImageTrustKey {
+		return FileSnapshot{}, policyError("image_trust_verifier_invalid", "image %q uses %s trust and has no public key", ref, rule.Mechanism)
+	}
+	return authenticatePinnedFile(rule.PublicKey, "image trust public key", maxImageTrustPublicKeySize)
 }
 
 func authenticatePinnedFile(pin FilePin, label string, maxSize int64) (FileSnapshot, error) {
