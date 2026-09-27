@@ -79,7 +79,7 @@ The minimum delivery gate for a code change is:
 | Enterprise policy | **Foundation and signed registry shipped / image trust remains** | PRs #75 and #84 shipped the machine-owned constraint layer and authenticated registry; image trust remains |
 | Image trust | **Policy, evidence schema and online invocation implemented / integration remains** | Wire verification into lock/update evidence production, add runtime freshness authorization, then add fully pinned offline inputs and private-registry credentials |
 | Plugin/provider architecture | **Intentionally deferred** | Reopen only after at least two real integrations cannot fit the declarative model |
-| WSL2 | **Host boundary and layout identity shipped / implementation remaining** | PRs #77 and #83 shipped the fail-closed host boundary and fixed native layout/state identity; explicit read-only/apply filesystem preparation and namespace-prefixed/labeled volume identity are available, while Docker lifecycle/frontend wiring, Docker Desktop integration and real WSL qualification remain |
+| WSL2 | **Host boundary and layout identity shipped / implementation remaining** | PRs #77 and #83 shipped the fail-closed host boundary and fixed native layout/state identity; explicit read-only/apply filesystem preparation, namespace-prefixed/labeled volume identity and Docker Desktop integration proof are available, while Docker lifecycle/frontend wiring and real WSL qualification remain |
 | Per-project overlays | **Completed in PR #80** | Add-only digest-bound trust model shipped on the merged enterprise-policy foundation |
 | Release SBOM | **Conditionally deferred** | Trigger on shipped third-party/runtime dependencies or concrete compliance/consumer demand |
 | Snyk | **Conditionally deferred** | Trigger only for a real coverage gap plus owner/account/token and triage/outage policy |
@@ -597,9 +597,10 @@ the supported WSL models.
 
 PR #77 shipped the fail-closed host runtime boundary and explicit Windows/WSL
 separation. The fixed native Linux config/shim/state layout can now be checked
-or prepared explicitly without enabling tool execution. Installer/runtime
-wiring, Docker Desktop WSL integration, project behavior and real WSL
-qualification remain.
+or prepared explicitly without enabling tool execution, and fail-closed Docker
+Desktop WSL integration proof is implemented but not yet wired into an enabled
+frontend. Installer/runtime wiring, project behavior and real WSL qualification
+remain.
 
 Implementation must define native config/shim location, Docker endpoint,
 project identity, named-volume behavior, file permissions, case sensitivity,

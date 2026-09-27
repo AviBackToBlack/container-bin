@@ -93,6 +93,13 @@ readable, and dangerous to let others edit.
   native-WSL exception is `cb wsl prepare --check|--apply`: it validates or
   creates only the fixed current-user layout, loads no registry or machine
   policy, performs no Docker work, and does not enable tool execution.
+- **Native WSL Docker provenance fails closed.** The unexposed detector uses a
+  direct Engine API request on the pinned local Unix socket, never an ambient
+  CLI/config/context. It rejects Docker endpoint/TLS/API overrides, validates
+  root ownership, non-world-writable permissions, a root socket peer and stable
+  device/inode identity, then requires Docker Desktop name, OS, Microsoft WSL2
+  kernel and address-label evidence. The proof must be repeated per operation;
+  merely reaching an in-distribution or remote Docker Engine is not accepted.
 - **Native WSL volumes are namespace-bound.** The unexposed volume contract
   places the opaque distribution/machine/user namespace in both every managed
   name and `cb.wsl_namespace` label, and length-delimits owner components so

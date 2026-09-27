@@ -101,6 +101,29 @@ state listing, garbage collection, backup and restore must filter on the exact
 namespace. Reinstalling a distribution, changing users or selecting another
 distribution therefore cannot silently adopt existing state.
 
+## Docker Desktop integration proof
+
+The implemented detector issues a direct, bounded Engine API request only over
+`unix:///var/run/docker.sock`. It does not execute a `docker` binary, search
+`PATH`, or read Docker CLI config/context state. `DOCKER_HOST`, `DOCKER_CONTEXT`,
+`DOCKER_CONFIG`, Docker TLS/certificate variables and `DOCKER_API_VERSION` must
+still be unset so later execution cannot silently target or downgrade a
+different daemon. The socket must resolve to a root-owned Unix socket that is
+not world-writable; the connected peer must also be root, and the socket device
+and inode must remain unchanged across the identity request.
+
+The bounded engine query then requires all of the independent signals Docker
+Desktop exposes: Linux `OSType`, operating system `Docker Desktop`, engine name
+`docker-desktop`, an explicit Microsoft WSL2 kernel and exactly one supported
+`com.docker.desktop.address` label. A reachable in-distribution Docker Engine,
+remote context, TCP endpoint, Windows-container engine or ambiguous response
+fails closed. A successful request is not a durable authorization: later wiring
+must repeat the check for every Docker operation. This detector is not exposed
+or wired into tool execution yet; real WSL2 + Docker Desktop qualification
+remains mandatory before support.
+
+## Native WSL volume identity
+
 The implemented pure volume contract names every object
 `cb-<namespace>-<group-length>-<group>-<logical-length>-<logical>`; project
 volumes add a 12-hex project hash. Length delimiters keep hyphenated group and
@@ -123,8 +146,8 @@ Later reviewable slices must still implement and qualify all of the following:
 2. wire the implemented distribution/machine/user volume identity contract
    into shared/project creation and every lifecycle command;
 3. native Linux path, symlink, case, stdin/TTY and signal semantics;
-4. Docker Desktop WSL-integration detection without accepting a separate local
-   Docker Engine by accident;
+4. wire the implemented Docker Desktop WSL-integration proof into every Docker
+   operation without accepting ambient endpoint overrides;
 5. Windows-filesystem and WSL-filesystem project tests plus mixed-invocation
    rejection; and
 6. real WSL2 + Docker Desktop end-to-end qualification before any support claim.
