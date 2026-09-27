@@ -55,6 +55,13 @@ error. A failure to start Docker is a ContainerBin infrastructure error; the
 internal runner returns status 1 plus the start error, and the top-level command
 maps infrastructure failures through ContainerBin's documented exit policy.
 
+A signal-terminated Unix child is a separate, unresolved case:
+`exec.ExitError.ExitCode()` returns `-1`, and the current pre-frontend path would
+pass that value to `os.Exit`, surfacing as status 255 rather than a conventional
+`128 + signal` status. This is not accepted as the final native-WSL contract.
+The real WSL qualification slice must select and test an explicit mapping before
+the frontend is enabled.
+
 These stream, TTY and exit rules are covered by portable tests using a real
 child process; they do not require Docker.
 
