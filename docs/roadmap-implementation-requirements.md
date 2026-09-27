@@ -556,13 +556,17 @@ old-binary/new-lock tests and security-model documentation.
 strict repository/digest/evidence validation, schema-1 compatibility,
 old-parser/new-lock rejection tests and security-model documentation. The
 internal online invocation slice authenticates pinned verifier/key snapshots,
-stages them under current-user-only permissions, runs a bounded exact-digest
-verification with a minimal environment, and independently checks the JSON
-digest and keyless identity. It does not yet produce lock evidence or authorize
-runtime use. Offline mode remains blocked until all trusted-root inputs can be
-pinned, and private-registry credentials require an explicit non-ambient bridge.
-Until those integration slices land, policy-covered images continue to fail
-with `policy.image_trust_unverified`.
+stages them under current-user-only permissions, downloads bounded signature
+bundles for the exact digest with a minimal environment, and locally re-verifies
+each bundle against the digest, cosign predicate and configured identity/key.
+Lock/update integration now resolves the exact
+digest first and promotes the document to schema 2 only after one authenticated
+transparency bundle can be recorded; zero/multiple bundle results and verifier
+failures abort without a digest-only fallback. Runtime freshness authorization
+remains unimplemented, so policy-covered images still fail execution with
+`policy.image_trust_unverified`. Offline mode remains blocked until all
+trusted-root inputs can be pinned, and private-registry credentials require an
+explicit non-ambient bridge.
 
 ## Plugin/provider architecture
 

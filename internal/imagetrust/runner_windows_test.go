@@ -51,34 +51,39 @@ func runImageTrustVerifierHelper() error {
 	if os.Getenv(imageTrustLeakSentinel) != "" {
 		return errors.New("ambient parent environment leaked into verifier")
 	}
-	if len(os.Args) != 7 || os.Args[1] != "verify" || os.Args[2] != "--output=json" || os.Args[3] != "--max-workers=1" {
+	switch {
+	case len(os.Args) == 4 && os.Args[1] == "download" && os.Args[2] == "signature":
+		if _, _, err := splitResolvedDigest(os.Args[3]); err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(map[string]any{
+			"mediaType": "application/vnd.dev.sigstore.bundle.v0.3+json",
+			"testID":    "native-windows-test",
+		})
+	case len(os.Args) == 8 && os.Args[1] == "verify-blob-attestation":
+		bundlePath, ok := strings.CutPrefix(os.Args[2], "--bundle=")
+		if !ok || filepath.Dir(bundlePath) != dir {
+			return errors.New("bundle is not privately staged")
+		}
+		if _, err := os.ReadFile(bundlePath); err != nil {
+			return fmt.Errorf("read staged bundle: %w", err)
+		}
+		if digest, ok := strings.CutPrefix(os.Args[3], "--digest="); !ok || len(digest) != 64 {
+			return errors.New("missing exact sha256 digest")
+		}
+		if os.Args[4] != "--digestAlg=sha256" || os.Args[5] != "--type="+cosignPayloadType {
+			return errors.New("missing exact digest algorithm or predicate type")
+		}
+		if subject, ok := strings.CutPrefix(os.Args[6], "--certificate-identity="); !ok || subject == "" {
+			return errors.New("missing exact certificate identity")
+		}
+		if issuer, ok := strings.CutPrefix(os.Args[7], "--certificate-oidc-issuer="); !ok || issuer == "" {
+			return errors.New("missing exact certificate issuer")
+		}
+		return nil
+	default:
 		return fmt.Errorf("unexpected verifier arguments: %q", os.Args[1:])
 	}
-	subject, ok := strings.CutPrefix(os.Args[4], "--certificate-identity=")
-	if !ok || subject == "" {
-		return errors.New("missing exact certificate identity")
-	}
-	issuer, ok := strings.CutPrefix(os.Args[5], "--certificate-oidc-issuer=")
-	if !ok || issuer == "" {
-		return errors.New("missing exact certificate issuer")
-	}
-	_, digest, err := splitResolvedDigest(os.Args[6])
-	if err != nil {
-		return err
-	}
-	payload := []any{map[string]any{
-		"Critical": map[string]any{
-			"Identity": map[string]any{"docker-reference": ""},
-			"Image":    map[string]any{"Docker-manifest-digest": digest},
-			"Type":     cosignPayloadType,
-		},
-		"Optional": map[string]any{
-			"Subject": subject,
-			"Issuer":  issuer,
-			"Bundle":  map[string]any{"SignedEntryTimestamp": "native-windows-test"},
-		},
-	}}
-	return json.NewEncoder(os.Stdout).Encode(payload)
 }
 
 func TestCommandRunnerExecutesProtectedSnapshotWithMinimalEnvironment(t *testing.T) {

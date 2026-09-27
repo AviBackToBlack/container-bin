@@ -29,14 +29,15 @@ const (
 	publicKeyName       = "policy-key.pub"
 	verificationTimeout = 2 * time.Minute
 	maxVerifierOutput   = 1 << 20
-	cosignPayloadType   = "cosign container image signature"
+	maxSignatureBundles = 32
+	cosignPayloadType   = "https://sigstore.dev/cosign/sign/v1"
 )
 
-// Result is an opaque record of one successful isolated cosign invocation.
-// BundleSHA256s identifies any authenticated Rekor bundles cosign returned;
-// an online verification may instead have used a live Rekor lookup and return
-// no bundle. Callers must not turn Result into lock authorization without the
-// later evidence-production policy deciding how that distinction is recorded.
+// Result is an opaque record of one successful isolated cosign verification.
+// BundleSHA256s identifies the exact downloaded bundles that the staged cosign
+// snapshot reverified against the requested digest, predicate and identity/key.
+// Callers still decide how many authenticated bundles their evidence schema can
+// represent.
 type Result struct {
 	mechanism         policy.ImageTrustMechanism
 	networkMode       policy.ImageTrustNetworkMode
@@ -161,30 +162,23 @@ func (v verifier) verifyAuthenticated(ctx context.Context, request verificationR
 	if err != nil {
 		return Result{}, err
 	}
-	args := []string{"verify", "--output=json", "--max-workers=1"}
 	signer, issuer := request.rule.Subject, request.rule.Issuer
 	var keyPath string
 	switch request.rule.Mechanism {
 	case policy.ImageTrustKeyless:
-		args = append(args,
-			"--certificate-identity="+request.rule.Subject,
-			"--certificate-oidc-issuer="+request.rule.Issuer,
-		)
 	case policy.ImageTrustKey:
 		keyPath, err = stageSnapshot(stageDir, publicKeyName, request.key, 0o600)
 		if err != nil {
 			return Result{}, err
 		}
-		args = append(args, "--key="+keyPath)
 		signer, issuer = request.key.SHA256(), ""
 	default:
 		return Result{}, fmt.Errorf("image trust rule for %q has unsupported mechanism %q", request.rule.Repository, request.rule.Mechanism)
 	}
-	args = append(args, request.resolved)
 
 	verifyCtx, cancel := context.WithTimeout(ctx, verificationTimeout)
 	defer cancel()
-	stdout, stderr, runErr := v.runner.Run(verifyCtx, verifierPath, args, stageDir)
+	stdout, stderr, runErr := v.runner.Run(verifyCtx, verifierPath, []string{"download", "signature", request.resolved}, stageDir)
 	stageErr := verifyStagedSnapshot(verifierPath, request.verifier)
 	if keyPath != "" {
 		stageErr = errors.Join(stageErr, verifyStagedSnapshot(keyPath, request.key))
@@ -196,22 +190,70 @@ func (v verifier) verifyAuthenticated(ctx context.Context, request verificationR
 		return Result{}, errors.New("cosign verifier output exceeded the safety limit")
 	}
 	if runErr != nil {
-		if errors.Is(verifyCtx.Err(), context.DeadlineExceeded) {
-			return Result{}, errors.New("cosign image verification timed out")
-		}
-		message := strings.TrimSpace(string(stderr))
-		if len(message) > 4096 {
-			message = message[:4096] + "..."
-		}
-		if message != "" {
-			return Result{}, fmt.Errorf("cosign image verification failed: %w: %s", runErr, strconv.Quote(message))
-		}
-		return Result{}, fmt.Errorf("cosign image verification failed: %w", runErr)
+		return Result{}, verifierRunError(verifyCtx, "download image signature bundles", stderr, runErr)
 	}
-	count, bundles, err := validateOutput(stdout, request.digest, request.rule)
+	downloaded, err := parseDownloadedBundles(stdout)
 	if err != nil {
 		return Result{}, err
 	}
+	bundleSet := make(map[string]bool, len(downloaded))
+	signatureCount := 0
+	var lastVerifyErr error
+	for i, bundle := range downloaded {
+		bundleSum := sha256.Sum256(bundle)
+		bundleDigest := hex.EncodeToString(bundleSum[:])
+		bundlePath, stageBundleErr := stageSnapshot(stageDir, fmt.Sprintf("bundle-%03d.sigstore.json", i+1), authenticatedSnapshot{contents: bundle, digest: bundleDigest}, 0o600)
+		if stageBundleErr != nil {
+			return Result{}, stageBundleErr
+		}
+		args := []string{
+			"verify-blob-attestation",
+			"--bundle=" + bundlePath,
+			"--digest=" + strings.TrimPrefix(request.digest, "sha256:"),
+			"--digestAlg=sha256",
+			"--type=" + cosignPayloadType,
+		}
+		if request.rule.Mechanism == policy.ImageTrustKeyless {
+			args = append(args,
+				"--certificate-identity="+request.rule.Subject,
+				"--certificate-oidc-issuer="+request.rule.Issuer,
+			)
+		} else {
+			args = append(args, "--key="+keyPath)
+		}
+		verifyStdout, verifyStderr, verifyErr := v.runner.Run(verifyCtx, verifierPath, args, stageDir)
+		stageErr = errors.Join(stageErr, verifyStagedSnapshot(bundlePath, authenticatedSnapshot{contents: bundle, digest: bundleDigest}))
+		if len(verifyStdout) > maxVerifierOutput || len(verifyStderr) > maxVerifierOutput {
+			return Result{}, errors.New("cosign verifier output exceeded the safety limit")
+		}
+		if verifyErr != nil {
+			if verifyCtx.Err() != nil {
+				return Result{}, verifierRunError(verifyCtx, fmt.Sprintf("verify image signature bundle %d", i+1), verifyStderr, verifyErr)
+			}
+			lastVerifyErr = verifierRunError(verifyCtx, fmt.Sprintf("verify image signature bundle %d", i+1), verifyStderr, verifyErr)
+			continue
+		}
+		signatureCount++
+		bundleSet[bundleDigest] = true
+	}
+	stageErr = errors.Join(stageErr, verifyStagedSnapshot(verifierPath, request.verifier))
+	if keyPath != "" {
+		stageErr = errors.Join(stageErr, verifyStagedSnapshot(keyPath, request.key))
+	}
+	if stageErr != nil {
+		return Result{}, fmt.Errorf("authenticated image trust material changed during verification: %w", stageErr)
+	}
+	if signatureCount == 0 {
+		if lastVerifyErr != nil {
+			return Result{}, fmt.Errorf("no downloaded image signature bundle satisfied machine policy: %w", lastVerifyErr)
+		}
+		return Result{}, errors.New("no downloaded image signature bundle satisfied machine policy")
+	}
+	bundles := make([]string, 0, len(bundleSet))
+	for bundleDigest := range bundleSet {
+		bundles = append(bundles, bundleDigest)
+	}
+	sort.Strings(bundles)
 	outputSum := sha256.Sum256(stdout)
 	return Result{
 		mechanism:         request.rule.Mechanism,
@@ -225,8 +267,52 @@ func (v verifier) verifyAuthenticated(ctx context.Context, request verificationR
 		outputSHA256:      hex.EncodeToString(outputSum[:]),
 		bundleSHA256s:     bundles,
 		verifiedAt:        v.now().UTC().Truncate(time.Second),
-		signatureCount:    count,
+		signatureCount:    signatureCount,
 	}, nil
+}
+
+func verifierRunError(ctx context.Context, action string, stderr []byte, runErr error) error {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("cosign %s timed out", action)
+	}
+	message := strings.TrimSpace(string(stderr))
+	if len(message) > 4096 {
+		message = message[:4096] + "..."
+	}
+	if message != "" {
+		return fmt.Errorf("cosign %s failed: %w: %s", action, runErr, strconv.Quote(message))
+	}
+	return fmt.Errorf("cosign %s failed: %w", action, runErr)
+}
+
+func parseDownloadedBundles(data []byte) ([][]byte, error) {
+	if len(data) == 0 || len(data) > maxVerifierOutput {
+		return nil, errors.New("cosign returned invalid signature bundle output")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	bundles := make([][]byte, 0, 1)
+	for {
+		var raw json.RawMessage
+		err := decoder.Decode(&raw)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("parse cosign signature bundle output: %w", err)
+		}
+		var object map[string]json.RawMessage
+		if len(raw) == 0 || json.Unmarshal(raw, &object) != nil || len(object) == 0 {
+			return nil, errors.New("cosign returned a malformed signature bundle")
+		}
+		if len(bundles) == maxSignatureBundles {
+			return nil, fmt.Errorf("cosign returned more than %d signature bundles", maxSignatureBundles)
+		}
+		bundles = append(bundles, append([]byte(nil), raw...))
+	}
+	if len(bundles) == 0 {
+		return nil, errors.New("cosign returned no signature bundles")
+	}
+	return bundles, nil
 }
 
 func validateRequest(machinePolicy policy.Policy, configured, resolved string) (string, string, string, policy.ImageTrustRule, error) {
@@ -372,76 +458,6 @@ func verifyStagedSnapshot(path string, snapshot authenticatedSnapshot) error {
 	post, err := os.Lstat(path)
 	if err != nil || post.Mode()&os.ModeSymlink != 0 || !post.Mode().IsRegular() || !os.SameFile(info, post) || post.Size() != n {
 		return errors.New("staged file changed while hashing")
-	}
-	return nil
-}
-
-type cosignPayload struct {
-	Critical struct {
-		Image struct {
-			Digest string `json:"Docker-manifest-digest"`
-		} `json:"Image"`
-		Type string `json:"Type"`
-	} `json:"Critical"`
-	Optional map[string]json.RawMessage `json:"Optional"`
-}
-
-func validateOutput(data []byte, digest string, rule policy.ImageTrustRule) (int, []string, error) {
-	if len(data) == 0 || len(data) > maxVerifierOutput {
-		return 0, nil, errors.New("cosign verifier returned invalid output")
-	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	var payloads []cosignPayload
-	if err := decoder.Decode(&payloads); err != nil {
-		return 0, nil, fmt.Errorf("parse cosign verification result: %w", err)
-	}
-	if decoder.Decode(&struct{}{}) != io.EOF {
-		return 0, nil, errors.New("cosign verifier returned trailing JSON data")
-	}
-	if len(payloads) == 0 {
-		return 0, nil, errors.New("cosign verifier returned no verified signatures")
-	}
-	bundleSet := map[string]bool{}
-	for i, payload := range payloads {
-		if payload.Critical.Type != cosignPayloadType {
-			return 0, nil, fmt.Errorf("cosign signature %d has unexpected payload type %q", i+1, payload.Critical.Type)
-		}
-		if payload.Critical.Image.Digest != digest {
-			return 0, nil, fmt.Errorf("cosign signature %d covers digest %q, expected %q", i+1, payload.Critical.Image.Digest, digest)
-		}
-		if rule.Mechanism == policy.ImageTrustKeyless {
-			if err := requireJSONString(payload.Optional, "Subject", rule.Subject); err != nil {
-				return 0, nil, fmt.Errorf("cosign signature %d: %w", i+1, err)
-			}
-			if err := requireJSONString(payload.Optional, "Issuer", rule.Issuer); err != nil {
-				return 0, nil, fmt.Errorf("cosign signature %d: %w", i+1, err)
-			}
-		}
-		if raw, ok := payload.Optional["Bundle"]; ok {
-			var bundle map[string]json.RawMessage
-			if len(raw) == 0 || bytes.Equal(raw, []byte("null")) || json.Unmarshal(raw, &bundle) != nil || len(bundle) == 0 {
-				return 0, nil, fmt.Errorf("cosign signature %d returned a malformed transparency bundle", i+1)
-			}
-			sum := sha256.Sum256(raw)
-			bundleSet[hex.EncodeToString(sum[:])] = true
-		}
-	}
-	bundles := make([]string, 0, len(bundleSet))
-	for digest := range bundleSet {
-		bundles = append(bundles, digest)
-	}
-	sort.Strings(bundles)
-	return len(payloads), bundles, nil
-}
-
-func requireJSONString(values map[string]json.RawMessage, key, expected string) error {
-	raw, ok := values[key]
-	if !ok {
-		return fmt.Errorf("verified keyless output is missing %s", key)
-	}
-	var actual string
-	if err := json.Unmarshal(raw, &actual); err != nil || actual != expected {
-		return fmt.Errorf("verified keyless output %s does not match machine policy", key)
 	}
 	return nil
 }

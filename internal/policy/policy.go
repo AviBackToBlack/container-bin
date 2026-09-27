@@ -928,9 +928,45 @@ func (p Policy) AuthorizeLockTarget(configured string, local bool) error {
 	if !p.Managed() {
 		return nil
 	}
+	// Repository-backed lock production is the operation that creates the
+	// signature evidence required by an image-trust rule. Authorize its origin
+	// here, then require the caller to run the verifier before writing the entry.
+	// Local image IDs can never satisfy repository trust and retain the ordinary
+	// fail-closed authorization path.
 	copy := p
 	copy.RequireLock = false
-	return copy.AuthorizeImage(configured, true, local)
+	if local {
+		return copy.AuthorizeImage(configured, true, true)
+	}
+	if len(p.AllowedRepositories) != 0 {
+		if _, err := p.authorizeRepository(configured); err != nil {
+			return policyError("repository_denied", "image %q: %v", configured, err)
+		}
+	}
+	if len(p.imageTrustRules) != 0 {
+		if _, _, err := p.ImageTrustFor(configured); err != nil {
+			return policyError("repository_denied", "image %q: %v", configured, err)
+		}
+	}
+	return nil
+}
+
+// AuthorizeResolvedLockTarget validates both sides of an existing lock entry
+// for preservation during an unrelated refresh. Unlike runtime authorization,
+// it deliberately does not consume trust evidence; stale evidence can remain
+// stored but cannot authorize execution until the runtime freshness gate accepts
+// it. Lockfile parsing has already bound the configured and resolved repository.
+func (p Policy) AuthorizeResolvedLockTarget(configured, resolved string, local bool) error {
+	if err := p.AuthorizeLockTarget(configured, local); err != nil {
+		return err
+	}
+	if local || !p.Managed() {
+		return nil
+	}
+	if err := p.AuthorizeLockTarget(resolved, false); err != nil {
+		return policyError("repository_denied", "resolved lock reference %q is not authorized: %v", resolved, err)
+	}
+	return nil
 }
 
 // CanonicalRepository returns the registry-qualified repository without a tag
