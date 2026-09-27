@@ -286,6 +286,46 @@ func TestAuthenticateCosignVerifierRejectsUnsafeFiles(t *testing.T) {
 	})
 }
 
+func TestAuthenticateImageTrustPublicKeyPinsSelectedRuleBytes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "release.pub")
+	contents := []byte("pinned image trust public key")
+	if err := os.WriteFile(path, contents, 0600); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(contents)
+	p := Policy{imageTrustRules: []ImageTrustRule{{
+		Repository: "ghcr.io/acme",
+		Mechanism:  ImageTrustKey,
+		PublicKey:  FilePin{Path: path, SHA256: hex.EncodeToString(sum[:])},
+	}}}
+	snapshot, err := p.AuthenticateImageTrustPublicKey("ghcr.io/acme/tool:v1")
+	if err != nil || !bytes.Equal(snapshot.Bytes(), contents) || snapshot.SHA256() != hex.EncodeToString(sum[:]) {
+		t.Fatalf("AuthenticateImageTrustPublicKey() = (%q, %q, %v)", snapshot.Bytes(), snapshot.SHA256(), err)
+	}
+	if err := os.WriteFile(path, []byte("changed key bytes"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(snapshot.Bytes(), contents) {
+		t.Fatal("authenticated public-key snapshot changed with its source path")
+	}
+	if _, err := p.AuthenticateImageTrustPublicKey("ghcr.io/acme/tool:v1"); err == nil {
+		t.Fatal("mutated image trust public key was accepted")
+	} else {
+		assertPolicyCode(t, err, "image_trust_verifier_invalid")
+	}
+	if _, err := p.AuthenticateImageTrustPublicKey("ghcr.io/other/tool:v1"); err == nil {
+		t.Fatal("reference without an image trust rule was accepted")
+	} else {
+		assertPolicyCode(t, err, "image_trust_verifier_invalid")
+	}
+	keyless := Policy{imageTrustRules: []ImageTrustRule{{Repository: "ghcr.io/acme", Mechanism: ImageTrustKeyless}}}
+	if _, err := keyless.AuthenticateImageTrustPublicKey("ghcr.io/acme/tool:v1"); err == nil {
+		t.Fatal("keyless rule was treated as a public-key rule")
+	} else {
+		assertPolicyCode(t, err, "image_trust_verifier_invalid")
+	}
+}
+
 func authenticateCosignError(p Policy) error {
 	_, err := p.AuthenticateCosignVerifier()
 	return err

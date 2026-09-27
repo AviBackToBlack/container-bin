@@ -75,11 +75,15 @@ readable, and dangerous to let others edit.
   executable and declares exact keyless or public-key trust for canonical
   repository boundaries. Lock schema 2 can retain strictly validated,
   repository/digest/verifier/policy-bound structured evidence; schema 1 remains
-  the digest-only compatibility format. Covered repositories still fail closed
-  until that evidence can be produced and consumed; missing implementation is
-  never permission to fall back to digest-only locking. Transparency-log
-  verification is mandatory, and offline rules require bundled evidence rather
-  than network fallback.
+  the digest-only compatibility format. The invocation layer executes only
+  authenticated verifier/key snapshots from a protected private directory,
+  bounds time and output, scrubs ambient environment state, checks staged bytes
+  again after execution and independently binds JSON results to the exact
+  digest and keyless identity. Covered repositories still fail closed until
+  that result can be recorded and consumed; missing implementation is never
+  permission to fall back to digest-only locking. Transparency-log verification
+  is mandatory. Offline rules refuse process execution until policy can pin the
+  complete trusted-root and bundle inputs needed to forbid network fallback.
 - **Fail-closed host boundary.** Non-bootstrap work currently runs only in a
   native Windows process. Windows binaries launched through detected WSL
   interoperability, WSL1, recognized-but-not-yet-enabled native WSL2,

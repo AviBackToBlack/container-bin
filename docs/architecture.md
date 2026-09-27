@@ -233,14 +233,24 @@ Rule lookup reuses Docker Hub normalization and selects the most-specific
 repository boundary. The policy layer can authenticate the exact configured
 cosign file as a bounded regular non-symlink file with the pinned digest, but
 does not invoke external code. Authentication yields an immutable byte snapshot,
-not a path that could be replaced between checking and execution. The later
-invocation layer must materialize that snapshot inside a protected private
-directory and execute only the staged copy. Lock schema 2 can validate and
-retain structured evidence, but no command produces or consumes it for
-authorization yet. Until a later package verifies exact resolved digests and
-runtime proves that stored evidence is current, every covered image fails
-authorization with `policy.image_trust_unverified`; no existing digest-only
-path can silently bypass the new control.
+not a path that could be replaced between checking and execution.
+
+`internal/imagetrust` owns the invocation boundary. It authenticates and stages
+only immutable verifier/key snapshots in a protected current-user directory,
+uses a bounded two-minute child process with a minimal environment, and invokes
+the staged verifier for one exact canonical `repository@sha256` value. It then
+re-hashes the staged material and independently checks bounded JSON output for
+the expected payload type, digest and keyless identity. Only online rules are
+accepted in this slice. `offline-bundle` fails before process execution until
+policy can pin the complete trusted-root material needed to guarantee a truly
+network-independent verification; inherited registry credentials are also not
+passed to the verifier yet.
+
+Lock schema 2 can validate and retain structured evidence, but no command
+produces or consumes it for authorization yet. Until `cb lock` records this
+result and runtime proves that stored evidence is current, every covered image
+fails authorization with `policy.image_trust_unverified`; no existing
+digest-only path can silently bypass the new control.
 
 ## Atomic writes
 
