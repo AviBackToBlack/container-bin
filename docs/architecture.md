@@ -321,6 +321,7 @@ internal/atomicio    crash-safe write + .bak recovery                (leaf)
 internal/mutationlock  the registry mutation lock primitive          (leaf)
 internal/hostenv       host classification and gated WSL layout       (leaf)
 internal/wslfs         native WSL filesystem ownership/mode preflight
+internal/wsldocker     native WSL Docker Desktop integration proof
 internal/selfupdate    release selection, staging, verification and replacement
 ```
 
@@ -340,6 +341,7 @@ pathmap      -> registry
 registry     -> atomicio, toml
 policy       -> toml
 wslfs       -> hostenv
+wsldocker   -> hostenv
 selfupdate  -> mutationlock, registry
 atomicio, dockervol, hostenv, mutationlock, toml -> (leaves)
 ```
@@ -374,6 +376,15 @@ directories without repairing existing objects, and validates strict modes for
 managed registry, lock, binary and management-shim endpoints. The non-Linux
 build-tagged implementation always rejects the operation. Frontend wiring,
 registry-derived tool shims and Docker integration remain later WSL slices.
+
+`internal/wsldocker` is an unexposed native-WSL detector for Docker Desktop's
+supported distribution integration. It rejects Docker endpoint/TLS/API
+environment overrides, probes only the root-owned, non-world-writable
+`/var/run/docker.sock`, and requires the engine to report the exact Linux
+Docker Desktop name/OS, a Microsoft WSL2 kernel and Docker Desktop's address
+label. The probe has fixed time and output bounds. A reachable local or remote
+Docker Engine is deliberately insufficient; later frontend wiring must retain
+the returned explicit Unix endpoint for every Docker invocation.
 
 After the host runtime boundary is enforced, `cb self-update --check` is
 dispatched before machine policy and registry loading. Release selection

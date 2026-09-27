@@ -79,7 +79,7 @@ The minimum delivery gate for a code change is:
 | Enterprise policy | **Foundation and signed registry shipped / image trust remains** | PRs #75 and #84 shipped the machine-owned constraint layer and authenticated registry; image trust remains |
 | Image trust | **Design complete / sequenced** | Implement after signed-registry policy using policy-driven Sigstore/cosign verification |
 | Plugin/provider architecture | **Intentionally deferred** | Reopen only after at least two real integrations cannot fit the declarative model |
-| WSL2 | **Host boundary and layout identity shipped / implementation remaining** | PRs #77 and #83 shipped the fail-closed host boundary and fixed native layout/state identity; filesystem preparation is implemented but unexposed, while frontend wiring, Docker Desktop integration and real WSL qualification remain |
+| WSL2 | **Host boundary and layout identity shipped / implementation remaining** | PRs #77 and #83 shipped the fail-closed host boundary and fixed native layout/state identity; filesystem preparation and Docker Desktop integration proof are implemented but unexposed, while frontend wiring and real WSL qualification remain |
 | Per-project overlays | **Completed in PR #80** | Add-only digest-bound trust model shipped on the merged enterprise-policy foundation |
 | Release SBOM | **Conditionally deferred** | Trigger on shipped third-party/runtime dependencies or concrete compliance/consumer demand |
 | Snyk | **Conditionally deferred** | Trigger only for a real coverage gap plus owner/account/token and triage/outage policy |
@@ -583,8 +583,9 @@ interop and a Windows client talking to a Docker engine exposed by WSL are not
 the supported WSL models.
 
 PR #77 shipped the fail-closed host runtime boundary and explicit Windows/WSL
-separation. Native Linux config/shim/state layout, Docker Desktop WSL
-integration, project behavior and real WSL qualification remain.
+separation. Native Linux config/shim/state layout and fail-closed Docker Desktop
+WSL integration proof are implemented but not yet wired into an enabled
+frontend. Project behavior and real WSL qualification remain.
 
 Implementation must define native config/shim location, Docker endpoint,
 project identity, named-volume behavior, file permissions, case sensitivity,

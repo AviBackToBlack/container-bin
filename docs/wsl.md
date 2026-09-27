@@ -90,6 +90,23 @@ state listing, garbage collection, backup and restore must filter on the exact
 namespace. Reinstalling a distribution, changing users or selecting another
 distribution therefore cannot silently adopt existing state.
 
+## Docker Desktop integration proof
+
+The implemented detector probes only `unix:///var/run/docker.sock` with an
+explicit Docker CLI `--host`; ambient contexts never select the endpoint.
+`DOCKER_HOST`, `DOCKER_CONTEXT`, Docker TLS/certificate variables and
+`DOCKER_API_VERSION` must be unset so later execution cannot silently target or
+downgrade a different daemon. The socket must resolve to a root-owned Unix
+socket that is not world-writable.
+
+The bounded engine query then requires all of the independent signals Docker
+Desktop exposes: Linux `OSType`, operating system `Docker Desktop`, engine name
+`docker-desktop`, an explicit Microsoft WSL2 kernel and exactly one supported
+`com.docker.desktop.address` label. A reachable in-distribution Docker Engine,
+remote context, TCP endpoint, Windows-container engine or ambiguous response
+fails closed. This detector is not exposed or wired into tool execution yet;
+real WSL2 + Docker Desktop qualification remains mandatory before support.
+
 ## Required before WSL execution can be enabled
 
 Later reviewable slices must still implement and qualify all of the following:
@@ -100,8 +117,8 @@ Later reviewable slices must still implement and qualify all of the following:
 2. wiring the accepted distribution/machine/user namespace into shared and
    project volume creation and lifecycle commands;
 3. native Linux path, symlink, case, stdin/TTY and signal semantics;
-4. Docker Desktop WSL-integration detection without accepting a separate local
-   Docker Engine by accident;
+4. wire the implemented Docker Desktop WSL-integration proof into every Docker
+   operation without accepting ambient endpoint overrides;
 5. Windows-filesystem and WSL-filesystem project tests plus mixed-invocation
    rejection; and
 6. real WSL2 + Docker Desktop end-to-end qualification before any support claim.
