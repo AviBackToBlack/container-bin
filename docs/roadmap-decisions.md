@@ -16,7 +16,7 @@ items from being repeatedly rediscovered as if they were immediately actionable.
 | RM-24 Python / uv | **Keep both** | Decision complete. Built-in `python`/`pip` keep the dedicated Python provider; `uv`/`uvx` remain separate opt-in stateful profiles. |
 | RM-26 Python global CLI exposure | **pipx yes; plain pip expose no** | Completed in PR #74. The separate stateful pipx profile and managed store shipped; project/compat `/venv/bin` remains intentionally unexposed. |
 | RM-34 Cargo expose enhancement | **Intentionally deferred** | Existing expose-all and explicit binary selection are sufficient. Reopen only for a concrete unmet use case. |
-| WSL2 | **Native WSL frontend** | Host boundary shipped in PR #77. Native layout, Docker Desktop WSL integration and real WSL qualification remain. No Windows↔WSL path/state guessing. |
+| WSL2 | **Native WSL frontend** | Host boundary shipped in PR #77. Fixed-layout preflight is explicitly available, while native install/runtime wiring, Docker Desktop integration and real WSL qualification remain. No Windows↔WSL path/state guessing. |
 | Enterprise policy | **Machine-owned constraint layer** | Foundation shipped in PR #75. Authenticated registry and image-trust follow-ups must extend this boundary and cannot be weakened by lower layers. |
 | Image trust | **Policy-driven Sigstore/cosign at lock time** | Ready after signed-registry policy. Digest locking remains default where policy permits. Required trust never silently falls back to digest-only. |
 | Per-project overlays | **Explicit digest-bound, add-only trust model** | Implementation-ready on the merged policy foundation. Initial overlays exclude host mounts, env prefixes and shared cross-project volumes. |
@@ -133,9 +133,12 @@ issuer where applicable, log/bundle identity, verification time, verifier
 identity/hash and effective trust-policy fingerprint.
 
 Lock schema 2 now defines and strictly validates that evidence shape while
-preserving schema-1 reads and fail-closed old-binary/new-lock behavior. Verifier
-execution, evidence production and runtime staleness enforcement remain the
-next slices; policy-covered repositories do not become runnable from schema
+preserving schema-1 reads and fail-closed old-binary/new-lock behavior. The
+internal verifier now executes authenticated staged cosign/key snapshots for
+online exact-digest checks and independently validates bounded JSON output.
+Evidence production and runtime staleness enforcement remain the next slices;
+offline verification remains closed until policy can pin complete trusted-root
+inputs. Policy-covered repositories do not become runnable from invocation
 support alone.
 
 Runtime still executes the pinned digest and does not invoke cosign on every
@@ -328,8 +331,9 @@ is not completion.
 3. **Remaining WSL2**
    - narrow reusable Linux host interfaces, fail-closed boundary and native
      layout/state identity are merged in PRs #77 and #83;
-   - Linux layout and registry-derived tool-shim preflights are implemented but
-     not yet wired into an enabled frontend; race-safe shim mutation remains;
+   - explicit read-only/apply Linux ownership, permission and symlink layout
+     preparation and registry-derived tool-shim preflight are implemented;
+     installer/runtime integration and race-safe shim mutation remain;
    - Docker Desktop WSL integration;
    - project identity and cross-boundary rejection tests;
    - real WSL Docker E2E.

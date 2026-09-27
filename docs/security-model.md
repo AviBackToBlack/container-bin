@@ -75,22 +75,29 @@ readable, and dangerous to let others edit.
   executable and declares exact keyless or public-key trust for canonical
   repository boundaries. Lock schema 2 can retain strictly validated,
   repository/digest/verifier/policy-bound structured evidence; schema 1 remains
-  the digest-only compatibility format. Covered repositories still fail closed
-  until that evidence can be produced and consumed; missing implementation is
-  never permission to fall back to digest-only locking. Transparency-log
-  verification is mandatory, and offline rules require bundled evidence rather
-  than network fallback.
+  the digest-only compatibility format. The invocation layer executes only
+  authenticated verifier/key snapshots from a protected private directory,
+  bounds time and output, scrubs ambient environment state, checks staged bytes
+  again after execution and independently binds JSON results to the exact
+  digest and keyless identity. Covered repositories still fail closed until
+  that result can be recorded and consumed; missing implementation is never
+  permission to fall back to digest-only locking. Transparency-log verification
+  is mandatory. Offline rules refuse process execution until policy can pin the
+  complete trusted-root and bundle inputs needed to forbid network fallback.
 - **Fail-closed host boundary.** Non-bootstrap work currently runs only in a
   native Windows process. Windows binaries launched through detected WSL
-  interoperability, WSL1, recognized-but-not-yet-enabled native WSL2,
+  interoperability, WSL1, ordinary work on recognized-but-not-yet-enabled native WSL2,
   standalone Linux and other hosts refuse before registry or Docker work.
   WSL2 classification requires Microsoft WSL2 kernel markers; environment
-  variables alone cannot turn ordinary Linux into a supported host.
-- **Native WSL tool shims have explicit provenance.** The unexposed read-only
-  preflight derives direct-child paths only from valid registry names and the
-  fixed layout. Existing tool shims must be current-user-owned symlinks to the
-  fixed managed binary; foreign files, owners or targets fail closed. Missing
-  shims are reported without creating or replacing anything.
+  variables alone cannot turn ordinary Linux into a supported host. The sole
+  native-WSL exception is `cb wsl prepare --check|--apply`: it validates or
+  creates only the fixed current-user layout, loads no registry or machine
+  policy, performs no Docker work, and does not enable tool execution.
+- **Native WSL tool shims have explicit provenance.** The read-only preflight
+  derives direct-child paths only from valid registry names and the fixed
+  layout. Existing tool shims must be current-user-owned symlinks to the fixed
+  managed binary; foreign files, owners or targets fail closed. Missing shims
+  are reported without creating or replacing anything.
 - **Machine policy cannot be redirected or weakened.** A present enterprise
   policy is loaded only from the fixed OS path, requires administrator/root
   ownership and restrictive permissions, and authorizes the already-resolved

@@ -19,6 +19,7 @@ import (
 	"github.com/AviBackToBlack/container-bin/internal/registry"
 	"github.com/AviBackToBlack/container-bin/internal/selfupdate"
 	"github.com/AviBackToBlack/container-bin/internal/state"
+	"github.com/AviBackToBlack/container-bin/internal/wslfs"
 )
 
 // version is injected at release time via:
@@ -42,9 +43,20 @@ var requireHostFrontend = hostenv.RequireFrontend
 // available before policy or registry I/O. Production always uses selfupdate.Check.
 var runSelfUpdateCheck = selfupdate.Check
 
+// runWSL is a test seam for the native-WSL filesystem preflight. This narrow
+// management command must remain available while the general WSL frontend is
+// still gated, and it must not load Windows policy or registry state.
+var runWSL = wslfs.Run
+
 func main() {
 	invoked := invokedName(os.Args[0])
 	if isManagementInvocation(invoked) && handleBootstrapCommand(os.Args[1:]) {
+		return
+	}
+	if isManagementInvocation(invoked) && len(os.Args) > 1 && os.Args[1] == "wsl" {
+		if err := runWSL(os.Args[2:], os.Stdout); err != nil {
+			fatalf("wsl: %v", err)
+		}
 		return
 	}
 	if err := requireHostFrontend(); err != nil {
@@ -395,6 +407,8 @@ Commands:
   cb self-test [--json] [--release] run offline end-to-end compatibility checks
   cb self-update --check [--prerelease | --version VERSION] [--allow-downgrade]
                 report a release update plan without downloading or changing files
+  cb wsl prepare (--check | --apply)
+                validate or create the fixed native-WSL filesystem layout
   cb list      list configured tool profiles
   cb default   list defaults; "cb default set FAMILY VERSION" switches a family
   cb trace     show raw/normalized/mapped argv for a tool without running it

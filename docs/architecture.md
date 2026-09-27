@@ -233,14 +233,24 @@ Rule lookup reuses Docker Hub normalization and selects the most-specific
 repository boundary. The policy layer can authenticate the exact configured
 cosign file as a bounded regular non-symlink file with the pinned digest, but
 does not invoke external code. Authentication yields an immutable byte snapshot,
-not a path that could be replaced between checking and execution. The later
-invocation layer must materialize that snapshot inside a protected private
-directory and execute only the staged copy. Lock schema 2 can validate and
-retain structured evidence, but no command produces or consumes it for
-authorization yet. Until a later package verifies exact resolved digests and
-runtime proves that stored evidence is current, every covered image fails
-authorization with `policy.image_trust_unverified`; no existing digest-only
-path can silently bypass the new control.
+not a path that could be replaced between checking and execution.
+
+`internal/imagetrust` owns the invocation boundary. It authenticates and stages
+only immutable verifier/key snapshots in a protected current-user directory,
+uses a bounded two-minute child process with a minimal environment, and invokes
+the staged verifier for one exact canonical `repository@sha256` value. It then
+re-hashes the staged material and independently checks bounded JSON output for
+the expected payload type, digest and keyless identity. Only online rules are
+accepted in this slice. `offline-bundle` fails before process execution until
+policy can pin the complete trusted-root material needed to guarantee a truly
+network-independent verification; inherited registry credentials are also not
+passed to the verifier yet.
+
+Lock schema 2 can validate and retain structured evidence, but no command
+produces or consumes it for authorization yet. Until `cb lock` records this
+result and runtime proves that stored evidence is current, every covered image
+fails authorization with `policy.image_trust_unverified`; no existing
+digest-only path can silently bypass the new control.
 
 ## Atomic writes
 
@@ -369,12 +379,15 @@ release workflow inject it with `-ldflags "-X main.version=..."`, so that symbol
 path is part of the release contract. Packages that need it take it as a
 parameter.
 
-`internal/wslfs` is an unexposed Linux-only preflight over the fixed layout
-derived by `internal/hostenv`. It accepts only a real current-user-owned home on
-the distribution root filesystem device, creates missing ContainerBin layout
-directories without repairing existing objects, and validates strict modes for
-managed registry, lock, binary and management-shim endpoints. The non-Linux
-build-tagged implementation always rejects the operation. Frontend wiring,
+`internal/wslfs` provides the narrowly exposed `cb wsl prepare --check|--apply`
+preflight over the fixed layout derived by `internal/hostenv`. It accepts only
+a real current-user-owned home on the distribution root filesystem device;
+check mode is read-only, while apply mode creates missing ContainerBin layout
+directories without repairing existing objects and then revalidates them. Both
+modes validate strict modes for managed registry, lock, binary and
+management-shim endpoints. The non-Linux build-tagged implementation always
+rejects the operation. This exact management dispatch precedes the general host
+gate but performs no policy, registry or Docker I/O. Frontend wiring,
 registry-derived tool shims and Docker integration remain later WSL slices.
 
 `internal/wslshim` is the read-only registry-derived tool-shim identity and
