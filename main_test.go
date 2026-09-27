@@ -107,6 +107,46 @@ func TestBootstrapCommandsSkipHostPolicyAndRegistry(t *testing.T) {
 	}
 }
 
+func TestWSLPreflightSkipsGeneralHostPolicyAndRegistry(t *testing.T) {
+	oldArgs := os.Args
+	oldRunWSL := runWSL
+	oldLoadRegistry := loadRegistry
+	oldRequireHostFrontend := requireHostFrontend
+	oldLoadPolicy := loadPolicy
+	defer func() {
+		os.Args = oldArgs
+		runWSL = oldRunWSL
+		loadRegistry = oldLoadRegistry
+		requireHostFrontend = oldRequireHostFrontend
+		loadPolicy = oldLoadPolicy
+	}()
+
+	loadRegistry = func(registry.Authenticator) (registry.Registry, string, error) {
+		panic("WSL preflight attempted to load the registry")
+	}
+	requireHostFrontend = func() error {
+		panic("WSL preflight attempted general host enforcement")
+	}
+	loadPolicy = func() (policy.Policy, error) {
+		panic("WSL preflight attempted to load machine policy")
+	}
+	var gotArgs []string
+	runWSL = func(args []string, out io.Writer) error {
+		gotArgs = append([]string(nil), args...)
+		_, err := io.WriteString(out, "native WSL preflight\n")
+		return err
+	}
+	os.Args = []string{"cb", "wsl", "prepare", "--check"}
+
+	out := captureMainStdout(t, main)
+	if got := strings.Join(gotArgs, " "); got != "prepare --check" {
+		t.Fatalf("WSL preflight args = %q, want %q", got, "prepare --check")
+	}
+	if out != "native WSL preflight\n" {
+		t.Fatalf("WSL preflight output = %q", out)
+	}
+}
+
 func TestHostBoundaryPrecedesPolicyAndRegistryLoad(t *testing.T) {
 	oldArgs := os.Args
 	oldLoadRegistry := loadRegistry

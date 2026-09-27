@@ -367,12 +367,15 @@ release workflow inject it with `-ldflags "-X main.version=..."`, so that symbol
 path is part of the release contract. Packages that need it take it as a
 parameter.
 
-`internal/wslfs` is an unexposed Linux-only preflight over the fixed layout
-derived by `internal/hostenv`. It accepts only a real current-user-owned home on
-the distribution root filesystem device, creates missing ContainerBin layout
-directories without repairing existing objects, and validates strict modes for
-managed registry, lock, binary and management-shim endpoints. The non-Linux
-build-tagged implementation always rejects the operation. Frontend wiring,
+`internal/wslfs` provides the narrowly exposed `cb wsl prepare --check|--apply`
+preflight over the fixed layout derived by `internal/hostenv`. It accepts only
+a real current-user-owned home on the distribution root filesystem device;
+check mode is read-only, while apply mode creates missing ContainerBin layout
+directories without repairing existing objects and then revalidates them. Both
+modes validate strict modes for managed registry, lock, binary and
+management-shim endpoints. The non-Linux build-tagged implementation always
+rejects the operation. This exact management dispatch precedes the general host
+gate but performs no policy, registry or Docker I/O. Frontend wiring,
 registry-derived tool shims and Docker integration remain later WSL slices.
 
 After the host runtime boundary is enforced, `cb self-update --check` is
