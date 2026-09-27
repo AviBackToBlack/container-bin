@@ -122,6 +122,20 @@ must repeat the check for every Docker operation. This detector is not exposed
 or wired into tool execution yet; real WSL2 + Docker Desktop qualification
 remains mandatory before support.
 
+## Native WSL volume identity
+
+The implemented pure volume contract names every object
+`cb-<namespace>-<group-length>-<group>-<logical-length>-<logical>`; project
+volumes add a 12-hex project hash. Length delimiters keep hyphenated group and
+logical names injective rather than allowing two owners to collide. Every
+volume also carries `cb.wsl_namespace=<namespace>` in addition to the existing
+`cb.managed`, `cb.kind`, `cb.owner` and project identity labels. Project hashing
+uses a versioned WSL domain and the exact canonical absolute Linux path: it is
+case-sensitive and performs no Unicode normalization. Namespace prefix/label
+filters are discovery-only; adoption or mutation requires an exact constructed
+name and complete label-set match. Docker creation and lifecycle commands are
+not wired to this contract yet.
+
 ## Required before WSL execution can be enabled
 
 Later reviewable slices must still implement and qualify all of the following:
@@ -129,8 +143,8 @@ Later reviewable slices must still implement and qualify all of the following:
 1. integrate the prepared layout into the native installer/config lifecycle,
    revalidate each mutation boundary and extend validation to registry-derived
    tool shims;
-2. wiring the accepted distribution/machine/user namespace into shared and
-   project volume creation and lifecycle commands;
+2. wire the implemented distribution/machine/user volume identity contract
+   into shared/project creation and every lifecycle command;
 3. native Linux path, symlink, case, stdin/TTY and signal semantics;
 4. wire the implemented Docker Desktop WSL-integration proof into every Docker
    operation without accepting ambient endpoint overrides;

@@ -335,6 +335,8 @@ is not completion.
      preparation is implemented, but install/runtime integration remains gated;
    - Docker Desktop WSL integration proof is implemented but not yet wired into
      an enabled frontend;
+   - namespace-prefixed/labeled WSL volume identity is implemented, but Docker
+     creation and lifecycle commands are not yet wired to it;
    - project identity and cross-boundary rejection tests;
    - real WSL Docker E2E.
 
