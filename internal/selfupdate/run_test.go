@@ -50,6 +50,11 @@ func TestUpdateCommandApplyStagesVerifiesAndTransfersOwnership(t *testing.T) {
 	if err := os.WriteFile(gh, []byte("GitHub CLI"), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	canonicalGH, _, err := canonicalVerificationFile(gh, "GitHub CLI fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gh = canonicalGH
 	plan := stagingPlan()
 	stageDir, err := os.MkdirTemp(filepath.Dir(installed), stagingPrefix)
 	if err != nil {

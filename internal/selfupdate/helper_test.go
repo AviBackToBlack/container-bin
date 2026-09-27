@@ -264,6 +264,10 @@ func newHelperFixture(t *testing.T) helperFixture {
 			t.Fatal(err)
 		}
 	}
+	gh, _, err = canonicalVerificationFile(gh, "GitHub CLI fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
 	stageDir, err := os.MkdirTemp(installDir, stagingPrefix)
 	if err != nil {
 		t.Fatal(err)
