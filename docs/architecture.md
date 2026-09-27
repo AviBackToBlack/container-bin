@@ -379,12 +379,14 @@ registry-derived tool shims and Docker integration remain later WSL slices.
 
 `internal/wsldocker` is an unexposed native-WSL detector for Docker Desktop's
 supported distribution integration. It rejects Docker endpoint/TLS/API
-environment overrides, probes only the root-owned, non-world-writable
-`/var/run/docker.sock`, and requires the engine to report the exact Linux
-Docker Desktop name/OS, a Microsoft WSL2 kernel and Docker Desktop's address
-label. The probe has fixed time and output bounds. A reachable local or remote
-Docker Engine is deliberately insufficient; later frontend wiring must retain
-the returned explicit Unix endpoint for every Docker invocation.
+environment overrides and uses a direct Engine API request on the root-owned,
+non-world-writable `/var/run/docker.sock`, without loading an ambient Docker CLI
+or context. The connected peer must be root and the socket device/inode must be
+stable across the request. The engine must report the exact Linux Docker
+Desktop name/OS, a Microsoft WSL2 kernel and Docker Desktop's address label.
+The probe has fixed time and output bounds. A reachable local or remote Docker
+Engine is deliberately insufficient; later frontend wiring must repeat this
+proof and retain the explicit Unix endpoint for every Docker operation.
 
 After the host runtime boundary is enforced, `cb self-update --check` is
 dispatched before machine policy and registry loading. Release selection

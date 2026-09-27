@@ -86,11 +86,13 @@ readable, and dangerous to let others edit.
   standalone Linux and other hosts refuse before registry or Docker work.
   WSL2 classification requires Microsoft WSL2 kernel markers; environment
   variables alone cannot turn ordinary Linux into a supported host.
-- **Native WSL Docker provenance fails closed.** The unexposed detector pins
-  the local Unix socket, rejects Docker endpoint/TLS/API overrides, validates
-  root ownership and non-world-writable socket permissions, and requires
-  Docker Desktop name, OS, Microsoft WSL2 kernel and address-label evidence.
-  Merely reaching an in-distribution or remote Docker Engine is not accepted.
+- **Native WSL Docker provenance fails closed.** The unexposed detector uses a
+  direct Engine API request on the pinned local Unix socket, never an ambient
+  CLI/config/context. It rejects Docker endpoint/TLS/API overrides, validates
+  root ownership, non-world-writable permissions, a root socket peer and stable
+  device/inode identity, then requires Docker Desktop name, OS, Microsoft WSL2
+  kernel and address-label evidence. The proof must be repeated per operation;
+  merely reaching an in-distribution or remote Docker Engine is not accepted.
 - **Machine policy cannot be redirected or weakened.** A present enterprise
   policy is loaded only from the fixed OS path, requires administrator/root
   ownership and restrictive permissions, and authorizes the already-resolved

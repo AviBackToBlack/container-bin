@@ -3,13 +3,13 @@
 package wsldocker
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
 	"os"
-	"os/exec"
-	"strings"
 	"syscall"
 	"time"
 
@@ -27,9 +27,8 @@ func Check(ctx context.Context) (Result, error) {
 	return check(ctx, dependencies{
 		currentRuntime: hostenv.Current,
 		lookupEnv:      os.LookupEnv,
-		lookPath:       exec.LookPath,
 		statSocket:     statDockerSocket,
-		runInfo:        runDockerInfo,
+		probeInfo:      probeDockerInfo,
 	})
 }
 
@@ -42,55 +41,88 @@ func statDockerSocket(path string) (socketInfo, error) {
 	if !ok {
 		return socketInfo{}, errors.New("Docker socket ownership could not be determined")
 	}
-	return socketInfo{Mode: info.Mode(), UID: stat.Uid}, nil
+	return socketInfo{Mode: info.Mode(), UID: stat.Uid, Dev: uint64(stat.Dev), Ino: stat.Ino}, nil
 }
 
-func runDockerInfo(ctx context.Context, dockerPath, host string) ([]byte, error) {
+func probeDockerInfo(ctx context.Context, socketPath string) (probeResult, error) {
 	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(probeCtx, dockerPath,
-		"--host", host,
-		"info", "--format", "{{json .}}",
-	)
-	var stdout, stderr cappedBuffer
-	stdout.max = maxProbeOutput
-	stderr.max = maxProbeOutput
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-	if probeCtx.Err() != nil {
-		return nil, fmt.Errorf("query Docker Desktop engine through %s: %w", host, probeCtx.Err())
+
+	var peerUID uint32
+	transport := &http.Transport{
+		DisableCompression:     true,
+		DisableKeepAlives:      true,
+		MaxResponseHeaderBytes: 16 << 10,
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			conn, err := (&net.Dialer{}).DialContext(ctx, "unix", socketPath)
+			if err != nil {
+				return nil, err
+			}
+			uid, err := unixPeerUID(conn)
+			if err != nil {
+				_ = conn.Close()
+				return nil, err
+			}
+			peerUID = uid
+			return conn, nil
+		},
 	}
-	if stdout.exceeded || stderr.exceeded {
-		return nil, fmt.Errorf("Docker Desktop engine probe output exceeds %d bytes", maxProbeOutput)
+	defer transport.CloseIdleConnections()
+	client := &http.Client{
+		Transport: transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
 	}
+	request, err := http.NewRequestWithContext(probeCtx, http.MethodGet, "http://docker/info", nil)
 	if err != nil {
-		detail := strings.TrimSpace(stderr.String())
-		if detail == "" {
-			return nil, fmt.Errorf("query Docker Desktop engine through %s: %w", host, err)
+		return probeResult{}, fmt.Errorf("build Docker Desktop engine identity request: %w", err)
+	}
+	request.Close = true
+	response, err := client.Do(request)
+	if err != nil {
+		if probeCtx.Err() != nil {
+			return probeResult{}, fmt.Errorf("query Docker Desktop engine through %s: %w", DockerHost, probeCtx.Err())
 		}
-		return nil, fmt.Errorf("query Docker Desktop engine through %s: %w: %s", host, err, detail)
+		return probeResult{}, fmt.Errorf("query Docker Desktop engine through %s: %w", DockerHost, err)
 	}
-	return stdout.Bytes(), nil
+	defer response.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(response.Body, maxProbeOutput+1))
+	if err != nil {
+		return probeResult{}, fmt.Errorf("read Docker Desktop engine identity: %w", err)
+	}
+	if len(raw) > maxProbeOutput {
+		return probeResult{}, fmt.Errorf("Docker Desktop engine probe output exceeds %d bytes", maxProbeOutput)
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return probeResult{}, fmt.Errorf("Docker Desktop engine identity request returned HTTP %d", response.StatusCode)
+	}
+	return probeResult{Raw: raw, PeerUID: peerUID}, nil
 }
 
-type cappedBuffer struct {
-	bytes.Buffer
-	max      int
-	exceeded bool
-}
-
-func (b *cappedBuffer) Write(data []byte) (int, error) {
-	written := len(data)
-	remaining := b.max - b.Len()
-	if remaining <= 0 {
-		b.exceeded = true
-		return written, nil
+func unixPeerUID(conn net.Conn) (uint32, error) {
+	unix, ok := conn.(*net.UnixConn)
+	if !ok {
+		return 0, errors.New("Docker Desktop endpoint did not create a Unix connection")
 	}
-	if len(data) > remaining {
-		b.exceeded = true
-		data = data[:remaining]
+	raw, err := unix.SyscallConn()
+	if err != nil {
+		return 0, fmt.Errorf("inspect Docker Desktop socket peer: %w", err)
 	}
-	_, _ = b.Buffer.Write(data)
-	return written, nil
+	var (
+		credentials *syscall.Ucred
+		controlErr  error
+	)
+	if err := raw.Control(func(fd uintptr) {
+		credentials, controlErr = syscall.GetsockoptUcred(int(fd), syscall.SOL_SOCKET, syscall.SO_PEERCRED)
+	}); err != nil {
+		return 0, fmt.Errorf("inspect Docker Desktop socket peer: %w", err)
+	}
+	if controlErr != nil {
+		return 0, fmt.Errorf("inspect Docker Desktop socket peer: %w", controlErr)
+	}
+	if credentials == nil {
+		return 0, errors.New("Docker Desktop socket peer credentials are unavailable")
+	}
+	return credentials.Uid, nil
 }

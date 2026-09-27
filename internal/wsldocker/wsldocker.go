@@ -23,6 +23,7 @@ const (
 var dockerRedirectVariables = []string{
 	"DOCKER_API_VERSION",
 	"DOCKER_CERT_PATH",
+	"DOCKER_CONFIG",
 	"DOCKER_CONTEXT",
 	"DOCKER_HOST",
 	"DOCKER_TLS",
@@ -30,10 +31,10 @@ var dockerRedirectVariables = []string{
 }
 
 // Result is the exact Docker Desktop endpoint and server identity accepted by
-// the WSL integration check. Later frontend wiring must retain DockerHost for
-// every Docker invocation rather than falling back to ambient contexts.
+// the WSL integration check. It is not a durable authorization: later frontend
+// wiring must recheck the socket for each operation and retain DockerHost rather
+// than falling back to ambient contexts.
 type Result struct {
-	DockerPath     string
 	Host           string
 	ServerVersion  string
 	KernelVersion  string
@@ -43,14 +44,20 @@ type Result struct {
 type socketInfo struct {
 	Mode os.FileMode
 	UID  uint32
+	Dev  uint64
+	Ino  uint64
+}
+
+type probeResult struct {
+	Raw     []byte
+	PeerUID uint32
 }
 
 type dependencies struct {
 	currentRuntime func() (hostenv.Runtime, error)
 	lookupEnv      func(string) (string, bool)
-	lookPath       func(string) (string, error)
 	statSocket     func(string) (socketInfo, error)
-	runInfo        func(context.Context, string, string) ([]byte, error)
+	probeInfo      func(context.Context, string) (probeResult, error)
 }
 
 func check(ctx context.Context, d dependencies) (Result, error) {
@@ -77,37 +84,49 @@ func check(ctx context.Context, d dependencies) (Result, error) {
 			return Result{}, fmt.Errorf("%s is set; refusing ambiguous Docker endpoint configuration", name)
 		}
 	}
-	dockerPath, err := d.lookPath("docker")
-	if err != nil {
-		return Result{}, fmt.Errorf("find native Linux Docker CLI: %w", err)
-	}
-	if !strings.HasPrefix(dockerPath, "/") || strings.ContainsRune(dockerPath, '\x00') {
-		return Result{}, fmt.Errorf("native Linux Docker CLI resolved to non-absolute path %q", dockerPath)
-	}
-	socket, err := d.statSocket(DockerSocketPath)
+	before, err := d.statSocket(DockerSocketPath)
 	if err != nil {
 		return Result{}, fmt.Errorf("inspect Docker Desktop WSL socket %s: %w", DockerSocketPath, err)
 	}
-	if socket.Mode&os.ModeSocket == 0 {
-		return Result{}, fmt.Errorf("Docker Desktop WSL endpoint %s is not a Unix socket", DockerSocketPath)
+	if err := validateSocket(before); err != nil {
+		return Result{}, err
 	}
-	if socket.UID != 0 {
-		return Result{}, fmt.Errorf("Docker Desktop WSL endpoint %s is owned by UID %d, expected root", DockerSocketPath, socket.UID)
-	}
-	if socket.Mode.Perm()&0o002 != 0 {
-		return Result{}, fmt.Errorf("Docker Desktop WSL endpoint %s is world-writable (mode %04o)", DockerSocketPath, socket.Mode.Perm())
-	}
-	raw, err := d.runInfo(ctx, dockerPath, DockerHost)
+	probe, err := d.probeInfo(ctx, DockerSocketPath)
 	if err != nil {
 		return Result{}, err
 	}
-	result, err := validateInfo(raw)
+	if probe.PeerUID != 0 {
+		return Result{}, fmt.Errorf("Docker Desktop WSL socket peer is UID %d, expected root", probe.PeerUID)
+	}
+	after, err := d.statSocket(DockerSocketPath)
+	if err != nil {
+		return Result{}, fmt.Errorf("reinspect Docker Desktop WSL socket %s: %w", DockerSocketPath, err)
+	}
+	if err := validateSocket(after); err != nil {
+		return Result{}, err
+	}
+	if before.Dev != after.Dev || before.Ino != after.Ino {
+		return Result{}, errors.New("Docker Desktop WSL socket changed during the engine identity probe")
+	}
+	result, err := validateInfo(probe.Raw)
 	if err != nil {
 		return Result{}, err
 	}
-	result.DockerPath = dockerPath
 	result.Host = DockerHost
 	return result, nil
+}
+
+func validateSocket(socket socketInfo) error {
+	if socket.Mode&os.ModeSocket == 0 {
+		return fmt.Errorf("Docker Desktop WSL endpoint %s is not a Unix socket", DockerSocketPath)
+	}
+	if socket.UID != 0 {
+		return fmt.Errorf("Docker Desktop WSL endpoint %s is owned by UID %d, expected root", DockerSocketPath, socket.UID)
+	}
+	if socket.Mode.Perm()&0o002 != 0 {
+		return fmt.Errorf("Docker Desktop WSL endpoint %s is world-writable (mode %04o)", DockerSocketPath, socket.Mode.Perm())
+	}
+	return nil
 }
 
 type engineInfo struct {

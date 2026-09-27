@@ -25,7 +25,7 @@ func TestCheckAcceptsExactDockerDesktopWSLIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.DockerPath != "/usr/bin/docker" || result.Host != DockerHost || result.ServerVersion != "29.1.0" || result.DesktopAddress != "unix:///var/run/docker-cli.sock" {
+	if result.Host != DockerHost || result.ServerVersion != "29.1.0" || result.DesktopAddress != "unix:///var/run/docker-cli.sock" {
 		t.Fatalf("Check() = %+v", result)
 	}
 }
@@ -75,23 +75,33 @@ func TestCheckRejectsAmbiguousBoundaries(t *testing.T) {
 		"runtime error": func(d *dependencies) {
 			d.currentRuntime = func() (hostenv.Runtime, error) { return hostenv.Runtime{}, errors.New("kernel unavailable") }
 		},
-		"relative CLI": func(d *dependencies) {
-			d.lookPath = func(string) (string, error) { return "docker", nil }
-		},
-		"missing CLI": func(d *dependencies) {
-			d.lookPath = func(string) (string, error) { return "", errors.New("not found") }
-		},
 		"regular endpoint": func(d *dependencies) {
-			d.statSocket = func(string) (socketInfo, error) { return socketInfo{Mode: 0o660, UID: 0}, nil }
+			d.statSocket = func(string) (socketInfo, error) { return socketInfo{Mode: 0o660, UID: 0, Dev: 1, Ino: 2}, nil }
 		},
 		"user owned endpoint": func(d *dependencies) {
-			d.statSocket = func(string) (socketInfo, error) { return socketInfo{Mode: os.ModeSocket | 0o660, UID: 1000}, nil }
+			d.statSocket = func(string) (socketInfo, error) {
+				return socketInfo{Mode: os.ModeSocket | 0o660, UID: 1000, Dev: 1, Ino: 2}, nil
+			}
 		},
 		"world writable endpoint": func(d *dependencies) {
-			d.statSocket = func(string) (socketInfo, error) { return socketInfo{Mode: os.ModeSocket | 0o666, UID: 0}, nil }
+			d.statSocket = func(string) (socketInfo, error) {
+				return socketInfo{Mode: os.ModeSocket | 0o666, UID: 0, Dev: 1, Ino: 2}, nil
+			}
 		},
 		"probe error": func(d *dependencies) {
-			d.runInfo = func(context.Context, string, string) ([]byte, error) { return nil, errors.New("unreachable") }
+			d.probeInfo = func(context.Context, string) (probeResult, error) { return probeResult{}, errors.New("unreachable") }
+		},
+		"untrusted socket peer": func(d *dependencies) {
+			d.probeInfo = func(context.Context, string) (probeResult, error) {
+				return probeResult{Raw: []byte(validInfo), PeerUID: 1000}, nil
+			}
+		},
+		"socket replaced during probe": func(d *dependencies) {
+			calls := 0
+			d.statSocket = func(string) (socketInfo, error) {
+				calls++
+				return socketInfo{Mode: os.ModeSocket | 0o660, UID: 0, Dev: 1, Ino: uint64(calls)}, nil
+			}
 		},
 	}
 	for name, mutate := range tests {
@@ -149,18 +159,17 @@ func validDependencies() dependencies {
 			return hostenv.Runtime{Kind: hostenv.WSL2Native, Distro: "Ubuntu-24.04"}, nil
 		},
 		lookupEnv: func(string) (string, bool) { return "", false },
-		lookPath:  func(string) (string, error) { return "/usr/bin/docker", nil },
 		statSocket: func(path string) (socketInfo, error) {
 			if path != DockerSocketPath {
 				return socketInfo{}, errors.New("unexpected Docker socket path")
 			}
-			return socketInfo{Mode: os.ModeSocket | 0o660, UID: 0}, nil
+			return socketInfo{Mode: os.ModeSocket | 0o660, UID: 0, Dev: 1, Ino: 2}, nil
 		},
-		runInfo: func(_ context.Context, dockerPath, host string) ([]byte, error) {
-			if dockerPath != "/usr/bin/docker" || host != DockerHost {
-				return nil, errors.New("unexpected Docker probe target")
+		probeInfo: func(_ context.Context, path string) (probeResult, error) {
+			if path != DockerSocketPath {
+				return probeResult{}, errors.New("unexpected Docker probe target")
 			}
-			return []byte(validInfo), nil
+			return probeResult{Raw: []byte(validInfo), PeerUID: 0}, nil
 		},
 	}
 }
