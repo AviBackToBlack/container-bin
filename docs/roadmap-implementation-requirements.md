@@ -593,10 +593,11 @@ not share registry/lock/state identity implicitly, and ContainerBin never guesse
 equivalence between Windows paths and `/mnt/<drive>` paths.
 
 The implemented volume contract prefixes names and labels with the opaque
-distribution/machine/user namespace, and hashes canonical Linux project roots
-case-sensitively under a versioned WSL domain. Later Docker lifecycle wiring
-must require both the exact name prefix and namespace label for selection,
-adoption, backup, restore, GC or deletion.
+distribution/machine/user namespace, length-delimits group/logical segments,
+and hashes canonical Linux project roots case-sensitively under a versioned WSL
+domain. Later Docker lifecycle wiring may use the exact prefix and namespace
+label for discovery, but adoption, backup, restore, GC or deletion must match
+the complete constructed name and label identity.
 
 Qualification must include both Windows-filesystem and WSL-filesystem projects
 plus mixed invocation rejection cases.

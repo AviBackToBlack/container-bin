@@ -91,14 +91,16 @@ namespace. Reinstalling a distribution, changing users or selecting another
 distribution therefore cannot silently adopt existing state.
 
 The implemented pure volume contract names every object
-`cb-<namespace>-<group>-<logical>`; project volumes add a 12-hex project hash.
-Every volume also carries `cb.wsl_namespace=<namespace>` in addition to the
-existing `cb.managed`, `cb.kind`, `cb.owner` and project identity labels.
-Project hashing uses a versioned WSL domain and the exact canonical absolute
-Linux path: it is case-sensitive and performs no Unicode normalization. A
-volume belongs to the active scope only when both its name prefix and namespace
-label match. Docker creation and lifecycle commands are not wired to this
-contract yet.
+`cb-<namespace>-<group-length>-<group>-<logical-length>-<logical>`; project
+volumes add a 12-hex project hash. Length delimiters keep hyphenated group and
+logical names injective rather than allowing two owners to collide. Every
+volume also carries `cb.wsl_namespace=<namespace>` in addition to the existing
+`cb.managed`, `cb.kind`, `cb.owner` and project identity labels. Project hashing
+uses a versioned WSL domain and the exact canonical absolute Linux path: it is
+case-sensitive and performs no Unicode normalization. Namespace prefix/label
+filters are discovery-only; adoption or mutation requires an exact constructed
+name and complete label-set match. Docker creation and lifecycle commands are
+not wired to this contract yet.
 
 ## Required before WSL execution can be enabled
 

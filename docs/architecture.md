@@ -378,13 +378,14 @@ build-tagged implementation always rejects the operation. Frontend wiring,
 registry-derived tool shims and Docker integration remain later WSL slices.
 
 `internal/wslvolume` defines the pure WSL Docker-volume identity contract. A
-volume name starts with `cb-<wsl-namespace>-`, and exact namespace ownership is
+volume name starts with `cb-<wsl-namespace>-`; length-delimited group/logical
+segments prevent ambiguous owner encodings, and exact namespace ownership is
 duplicated in the `cb.wsl_namespace` label. Shared and project volumes retain
 the existing managed/kind/owner labels; project roots are canonical absolute
 Linux paths hashed case-sensitively under a separate versioned domain. The
-package does not contact Docker. Creation, listing, GC, backup and restore must
-all consume this contract in a later wiring slice and require both the name
-prefix and label before adopting or mutating state.
+package does not contact Docker. Prefix/label filtering is discovery-only;
+creation, adoption, GC, backup, restore and deletion must use an exact identity
+constructed by this package and match its complete label set.
 
 After the host runtime boundary is enforced, `cb self-update --check` is
 dispatched before machine policy and registry loading. Release selection

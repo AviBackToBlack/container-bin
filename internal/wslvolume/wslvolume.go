@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -18,15 +19,34 @@ import (
 )
 
 const (
-	NamespaceLabel = "cb.wsl_namespace"
-	projectDomain  = "container-bin/wsl2-project/v1\x00"
+	NamespaceLabel      = "cb.wsl_namespace"
+	projectDomain       = "container-bin/wsl2-project/v1\x00"
+	maxVolumeNameLength = 255
 )
 
-// Volume is a deterministic name plus the complete ownership labels required
-// when the volume is created.
+// Volume is an immutable deterministic name plus its complete ownership labels.
 type Volume struct {
-	Name   string
-	Labels map[string]string
+	name   string
+	labels map[string]string
+}
+
+func (v Volume) Name() string { return v.name }
+
+// Labels returns a copy of the complete label set required at creation time.
+func (v Volume) Labels() map[string]string { return cloneLabels(v.labels) }
+
+// Matches requires the exact constructed name and complete label set. A broad
+// namespace prefix/label match is suitable for discovery, never adoption.
+func (v Volume) Matches(name string, labels map[string]string) bool {
+	if name != v.name || len(labels) != len(v.labels) {
+		return false
+	}
+	for key, value := range v.labels {
+		if labels[key] != value {
+			return false
+		}
+	}
+	return true
 }
 
 // Scope is the opaque distribution/machine/user namespace used by every WSL
@@ -54,23 +74,19 @@ func (s Scope) Prefix() string { return s.prefix }
 // FilterLabel is the exact Docker label filter for this WSL namespace.
 func (s Scope) FilterLabel() string { return NamespaceLabel + "=" + s.namespace }
 
-// Owns requires both the namespace name prefix and exact ownership labels.
-// Either signal alone is insufficient for mutation or adoption.
-func (s Scope) Owns(name string, labels map[string]string) bool {
-	return len(name) > len(s.prefix) && strings.HasPrefix(name, s.prefix) &&
-		labels["cb.managed"] == "true" &&
-		labels[NamespaceLabel] == s.namespace
-}
-
 // Shared returns identity for state intentionally shared across projects only
 // inside this exact WSL distribution/machine/user namespace.
 func (s Scope) Shared(group, logical string) (Volume, error) {
 	if err := validateOwner(group, logical); err != nil {
 		return Volume{}, err
 	}
+	name, err := s.volumeName(group, logical, "")
+	if err != nil {
+		return Volume{}, err
+	}
 	return Volume{
-		Name: s.prefix + group + "-" + logical,
-		Labels: map[string]string{
+		name: name,
+		labels: map[string]string{
 			"cb.managed":   "true",
 			"cb.kind":      "shared",
 			"cb.owner":     group + "/" + logical,
@@ -90,9 +106,13 @@ func (s Scope) Project(group, logical, root string) (Volume, error) {
 	if err != nil {
 		return Volume{}, err
 	}
+	name, err := s.volumeName(group, logical, "-"+hash)
+	if err != nil {
+		return Volume{}, err
+	}
 	return Volume{
-		Name: s.prefix + group + "-" + logical + "-" + hash,
-		Labels: map[string]string{
+		name: name,
+		labels: map[string]string{
 			"cb.managed":      "true",
 			"cb.kind":         "project",
 			"cb.owner":        group + "/" + logical,
@@ -101,6 +121,26 @@ func (s Scope) Project(group, logical, root string) (Volume, error) {
 			NamespaceLabel:    s.namespace,
 		},
 	}, nil
+}
+
+func (s Scope) volumeName(group, logical, suffix string) (string, error) {
+	name := s.prefix + ownerName(group, logical) + suffix
+	if len(name) > maxVolumeNameLength {
+		return "", fmt.Errorf("WSL volume name for owner %q exceeds %d bytes", group+"/"+logical, maxVolumeNameLength)
+	}
+	return name, nil
+}
+
+func ownerName(group, logical string) string {
+	return strconv.Itoa(len(group)) + "-" + group + "-" + strconv.Itoa(len(logical)) + "-" + logical
+}
+
+func cloneLabels(labels map[string]string) map[string]string {
+	clone := make(map[string]string, len(labels))
+	for key, value := range labels {
+		clone[key] = value
+	}
+	return clone
 }
 
 // ProjectHash hashes one already-canonical absolute Linux path without case

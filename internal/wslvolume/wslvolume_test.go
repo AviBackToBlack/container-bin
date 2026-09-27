@@ -16,18 +16,18 @@ func TestScopeBuildsNamespacedSharedVolume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if volume.Name != "cb-"+testNamespace+"-node24-npm-cache" {
-		t.Fatalf("Shared() name = %q", volume.Name)
+	if volume.Name() != "cb-"+testNamespace+"-6-node24-9-npm-cache" {
+		t.Fatalf("Shared() name = %q", volume.Name())
 	}
 	wantLabels := map[string]string{
 		"cb.managed": "true", "cb.kind": "shared", "cb.owner": "node24/npm-cache",
 		NamespaceLabel: testNamespace,
 	}
-	if !reflect.DeepEqual(volume.Labels, wantLabels) {
-		t.Fatalf("Shared() labels = %#v, want %#v", volume.Labels, wantLabels)
+	if !reflect.DeepEqual(volume.Labels(), wantLabels) {
+		t.Fatalf("Shared() labels = %#v, want %#v", volume.Labels(), wantLabels)
 	}
-	if !scope.Owns(volume.Name, volume.Labels) {
-		t.Fatal("Scope does not recognize its shared volume")
+	if !volume.Matches(volume.Name(), volume.Labels()) {
+		t.Fatal("Volume does not recognize its exact shared identity")
 	}
 }
 
@@ -41,17 +41,18 @@ func TestScopeBuildsCaseSensitiveProjectVolume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if lower.Name == upper.Name || lower.Labels["cb.project_hash"] == upper.Labels["cb.project_hash"] {
+	lowerLabels, upperLabels := lower.Labels(), upper.Labels()
+	if lower.Name() == upper.Name() || lowerLabels["cb.project_hash"] == upperLabels["cb.project_hash"] {
 		t.Fatal("case-distinct Linux project roots share volume identity")
 	}
-	if lower.Labels["cb.project_path"] != "/home/alice/project" || !strings.HasSuffix(lower.Name, "-"+lower.Labels["cb.project_hash"]) {
+	if lowerLabels["cb.project_path"] != "/home/alice/project" || !strings.HasSuffix(lower.Name(), "-"+lowerLabels["cb.project_hash"]) {
 		t.Fatalf("Project() = %#v", lower)
 	}
-	if lower.Labels["cb.project_hash"] != "e9b06e6a6ea9" {
-		t.Fatalf("stable project hash = %q", lower.Labels["cb.project_hash"])
+	if lowerLabels["cb.project_hash"] != "e9b06e6a6ea9" {
+		t.Fatalf("stable project hash = %q", lowerLabels["cb.project_hash"])
 	}
-	if !scope.Owns(lower.Name, lower.Labels) {
-		t.Fatal("Scope does not recognize its project volume")
+	if !lower.Matches(lower.Name(), lowerLabels) {
+		t.Fatal("Volume does not recognize its exact project identity")
 	}
 }
 
@@ -62,18 +63,38 @@ func TestScopeRequiresNameAndLabelNamespaceProof(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, mutate := range map[string]func(*Volume){
-		"wrong prefix": func(v *Volume) { v.Name = "cb-other-go124-gomodcache" },
-		"prefix only":  func(v *Volume) { v.Name = scope.Prefix() },
-		"unmanaged":    func(v *Volume) { delete(v.Labels, "cb.managed") },
-		"wrong label":  func(v *Volume) { v.Labels[NamespaceLabel] = "wsl2-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+		"wrong prefix": func(v *Volume) { v.name = "cb-other-go124-gomodcache" },
+		"prefix only":  func(v *Volume) { v.name = scope.Prefix() },
+		"unmanaged":    func(v *Volume) { delete(v.labels, "cb.managed") },
+		"wrong owner":  func(v *Volume) { v.labels["cb.owner"] = "go124/other" },
+		"wrong label":  func(v *Volume) { v.labels[NamespaceLabel] = "wsl2-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+		"extra label":  func(v *Volume) { v.labels["cb.unexpected"] = "true" },
 	} {
 		t.Run(name, func(t *testing.T) {
-			candidate := Volume{Name: volume.Name, Labels: cloneLabels(volume.Labels)}
+			candidate := Volume{name: volume.Name(), labels: volume.Labels()}
 			mutate(&candidate)
-			if scope.Owns(candidate.Name, candidate.Labels) {
-				t.Fatal("Scope accepted incomplete ownership proof")
+			if volume.Matches(candidate.name, candidate.labels) {
+				t.Fatal("Volume accepted an inexact identity")
 			}
 		})
+	}
+}
+
+func TestOwnerEncodingIsUnambiguous(t *testing.T) {
+	scope := testScope(t)
+	first, err := scope.Shared("a-b", "c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := scope.Shared("a", "b-c")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Name() == second.Name() {
+		t.Fatalf("distinct owners collided at %q", first.Name())
+	}
+	if first.Matches(second.Name(), second.Labels()) || second.Matches(first.Name(), first.Labels()) {
+		t.Fatal("one owner accepted another owner's identity")
 	}
 }
 
@@ -87,14 +108,11 @@ func TestScopesRemainIndependent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.Owns(volume.Name, volume.Labels) {
-		t.Fatal("another WSL scope adopted the first scope's project volume")
-	}
 	other, err := second.Project("node24", "node-modules", "/home/alice/project")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if volume.Name == other.Name {
+	if volume.Name() == other.Name() || volume.Matches(other.Name(), other.Labels()) {
 		t.Fatal("distinct WSL scopes produced the same project volume name")
 	}
 }
@@ -120,6 +138,9 @@ func TestScopeRejectsInvalidIdentityInputs(t *testing.T) {
 			t.Errorf("Shared(%q, %q) succeeded", tc.group, tc.logical)
 		}
 	}
+	if _, err := scope.Shared(strings.Repeat("a", maxVolumeNameLength), "cache"); err == nil {
+		t.Fatal("Shared() accepted an overlong Docker volume name")
+	}
 	for _, root := range []string{"", "/", "relative", "/home/alice/../bob", "/home/alice/", `/home\alice`, "/home/alice\nproject"} {
 		if _, err := scope.Project("node24", "modules", root); err == nil {
 			t.Errorf("Project(%q) succeeded", root)
@@ -144,12 +165,4 @@ func testScope(t *testing.T) Scope {
 		t.Fatal(err)
 	}
 	return scope
-}
-
-func cloneLabels(labels map[string]string) map[string]string {
-	clone := make(map[string]string, len(labels))
-	for key, value := range labels {
-		clone[key] = value
-	}
-	return clone
 }
