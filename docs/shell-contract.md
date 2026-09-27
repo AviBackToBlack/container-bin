@@ -1,5 +1,9 @@
 # Windows shell/process compatibility contract
 
+For the separately gated native-WSL frontend, see the
+[native WSL process contract](wsl-process-contract.md). Its argv and
+environment-name rules deliberately follow Linux rather than Windows semantics.
+
 This is the reference for the process-launcher semantics ContainerBin preserves,
 rejects, or deliberately leaves unsupported when a Windows shell or process
 spawns a `cb.exe` shim. It exists because these semantics have no dedicated test
