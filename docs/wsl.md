@@ -73,8 +73,15 @@ be a regular non-symlink file with mode `0755`. The shim directory must be
 current-user-owned, owner-accessible and not group- or world-writable. Existing
 permissions and ownership are never repaired by guessing intent. The management
 shim, when present, must be a current-user-owned symlink to the fixed managed
-binary; unrelated files or links fail closed. Tool-shim enumeration remains a
-later registry/install wiring concern.
+binary; unrelated files or links fail closed.
+
+The unexposed `internal/wslshim` preflight extends that identity contract to
+registry-derived tool names. It plans only sorted direct children of the fixed
+shim directory, requires every existing tool shim to be a current-user-owned
+symlink to the fixed managed binary, and reports missing shims separately.
+This slice is deliberately read-only: safe descriptor-relative creation,
+removal and registry lifecycle wiring remain later work, and unrelated directory
+entries are never adopted or enumerated as managed shims.
 
 Every ContainerBin-managed Docker object in WSL is scoped to one exact tuple:
 
@@ -94,9 +101,8 @@ distribution therefore cannot silently adopt existing state.
 
 Later reviewable slices must still implement and qualify all of the following:
 
-1. wire the implemented Linux ownership, permission and symlink preflight into
-   the native installer/config lifecycle and extend it to registry-derived tool
-   shims;
+1. wire the implemented Linux layout and registry-derived tool-shim preflights
+   into the native installer/config lifecycle, then add race-safe shim mutation;
 2. wiring the accepted distribution/machine/user namespace into shared and
    project volume creation and lifecycle commands;
 3. native Linux path, symlink, case, stdin/TTY and signal semantics;

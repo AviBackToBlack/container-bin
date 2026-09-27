@@ -328,8 +328,8 @@ is not completion.
 3. **Remaining WSL2**
    - narrow reusable Linux host interfaces, fail-closed boundary and native
      layout/state identity are merged in PRs #77 and #83;
-   - Linux ownership, permission and symlink preflight is implemented but not
-     yet wired into an enabled frontend;
+   - Linux layout and registry-derived tool-shim preflights are implemented but
+     not yet wired into an enabled frontend; race-safe shim mutation remains;
    - Docker Desktop WSL integration;
    - project identity and cross-boundary rejection tests;
    - real WSL Docker E2E.

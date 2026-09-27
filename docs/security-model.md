@@ -86,6 +86,11 @@ readable, and dangerous to let others edit.
   standalone Linux and other hosts refuse before registry or Docker work.
   WSL2 classification requires Microsoft WSL2 kernel markers; environment
   variables alone cannot turn ordinary Linux into a supported host.
+- **Native WSL tool shims have explicit provenance.** The unexposed read-only
+  preflight derives direct-child paths only from valid registry names and the
+  fixed layout. Existing tool shims must be current-user-owned symlinks to the
+  fixed managed binary; foreign files, owners or targets fail closed. Missing
+  shims are reported without creating or replacing anything.
 - **Machine policy cannot be redirected or weakened.** A present enterprise
   policy is loaded only from the fixed OS path, requires administrator/root
   ownership and restrictive permissions, and authorizes the already-resolved

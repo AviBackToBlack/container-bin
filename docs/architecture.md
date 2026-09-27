@@ -321,6 +321,7 @@ internal/atomicio    crash-safe write + .bak recovery                (leaf)
 internal/mutationlock  the registry mutation lock primitive          (leaf)
 internal/hostenv       host classification and gated WSL layout       (leaf)
 internal/wslfs         native WSL filesystem ownership/mode preflight
+internal/wslshim       native WSL registry-derived shim preflight
 internal/selfupdate    release selection, staging, verification and replacement
 ```
 
@@ -340,6 +341,7 @@ pathmap      -> registry
 registry     -> atomicio, toml
 policy       -> toml
 wslfs       -> hostenv
+wslshim     -> hostenv, registry
 selfupdate  -> mutationlock, registry
 atomicio, dockervol, hostenv, mutationlock, toml -> (leaves)
 ```
@@ -374,6 +376,14 @@ directories without repairing existing objects, and validates strict modes for
 managed registry, lock, binary and management-shim endpoints. The non-Linux
 build-tagged implementation always rejects the operation. Frontend wiring,
 registry-derived tool shims and Docker integration remain later WSL slices.
+
+`internal/wslshim` is the read-only registry-derived tool-shim identity and
+preflight boundary. It derives only direct children of the fixed native shim
+directory, validates names through the registry rules, and requires the fixed
+managed binary, shim directory and management symlink to retain their expected
+owner/mode/target identity. Existing tool shims must be current-user-owned
+symlinks to the fixed managed binary; missing shims are reported explicitly.
+It never creates, replaces, removes or discovers unrelated directory entries.
 
 After the host runtime boundary is enforced, `cb self-update --check` is
 dispatched before machine policy and registry loading. Release selection
