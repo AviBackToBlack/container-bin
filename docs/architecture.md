@@ -187,10 +187,12 @@ canonical repository, locked digest, signer/key identity, optional keyless
 issuer, authenticated bundle SHA-256, canonical UTC verification time, cosign
 identity/hash and the full policy-byte fingerprint. The parser binds that
 evidence back to the configured and resolved repository plus digest and rejects
-partial evidence, duplicates and evidence on local image IDs. New code keeps
-schema 1 as the write default until the verification producer explicitly opts
-into schema 2; a parser capped at schema 1 rejects schema 2. This provides a
-one-way, fail-closed migration boundary instead of silently discarding evidence.
+partial evidence, duplicates and evidence on local image IDs. Digest-only
+refreshes retain schema 1 unless an existing schema-2 document is being
+preserved. An online policy-covered repository is resolved first, verified at
+that exact digest, and then promotes the document to schema 2. A parser capped
+at schema 1 rejects schema 2. This provides a one-way, fail-closed migration
+boundary instead of silently discarding evidence.
 
 Runtime resolution is fail-closed: lockfile present + configured image missing
 from it = refuse to run and say exactly which command fixes it. Tools sharing
@@ -246,11 +248,15 @@ policy can pin the complete trusted-root material needed to guarantee a truly
 network-independent verification; inherited registry credentials are also not
 passed to the verifier yet.
 
-Lock schema 2 can validate and retain structured evidence, but no command
-produces or consumes it for authorization yet. Until `cb lock` records this
-result and runtime proves that stored evidence is current, every covered image
-fails authorization with `policy.image_trust_unverified`; no existing
-digest-only path can silently bypass the new control.
+`cb lock` and `cb update` now invoke this boundary after exact digest resolution
+for every policy-covered repository. Evidence production requires exactly one
+authenticated transparency bundle; zero or multiple distinct bundles abort the
+refresh because schema 2 cannot represent them without ambiguity. The completed
+record promotes the lockfile to schema 2, while project-scoped refresh can
+preserve unrelated evidence without treating it as runtime authorization.
+Runtime still fails with `policy.image_trust_unverified` until it proves stored
+evidence current against the effective policy; no digest-only path can silently
+bypass the control.
 
 ## Atomic writes
 

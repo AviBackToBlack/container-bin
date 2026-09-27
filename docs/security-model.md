@@ -29,9 +29,10 @@ An optional administrator-owned machine policy sits above this user-controlled
 boundary. Its fixed path, owner and permissions are validated before use. It
 can require locking, restrict image origins and authenticate exact registry
 bytes through a detached Ed25519 signature. Schema 3 can declare exact
-repository-bound image-signature requirements; covered images currently fail
-closed until the evidence-producing lock slice lands. Policy cannot grant
-mounts, environment access or commands. See [enterprise machine
+repository-bound image-signature requirements; lock/update can produce
+schema-2 evidence, while covered image execution remains fail closed until the
+runtime freshness gate consumes it. Policy cannot grant mounts, environment
+access or commands. See [enterprise machine
 policy](enterprise-policy.md).
 
 Treat the registry and lockfile like your PowerShell `$PROFILE`: yours,
@@ -79,11 +80,13 @@ readable, and dangerous to let others edit.
   authenticated verifier/key snapshots from a protected private directory,
   bounds time and output, scrubs ambient environment state, checks staged bytes
   again after execution and independently binds JSON results to the exact
-  digest and keyless identity. Covered repositories still fail closed until
-  that result can be recorded and consumed; missing implementation is never
-  permission to fall back to digest-only locking. Transparency-log verification
-  is mandatory. Offline rules refuse process execution until policy can pin the
-  complete trusted-root and bundle inputs needed to forbid network fallback.
+  digest and keyless identity. Lock/update records an online result only when
+  exactly one authenticated transparency bundle fits the schema-2 evidence
+  contract. Covered repositories still fail closed at runtime until that result
+  can be consumed; missing implementation is never permission to fall back to
+  digest-only locking. Offline rules refuse process execution until policy can
+  pin the complete trusted-root and bundle inputs needed to forbid network
+  fallback.
 - **Fail-closed host boundary.** Non-bootstrap work currently runs only in a
   native Windows process. Windows binaries launched through detected WSL
   interoperability, WSL1, ordinary work on recognized-but-not-yet-enabled native WSL2,

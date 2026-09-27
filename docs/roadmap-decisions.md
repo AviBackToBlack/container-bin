@@ -314,10 +314,10 @@ native Windows ARM64 CI in PR #78, reproducible ARM64 release packaging in PR
 is not completion.
 
 1. **Image trust**
-   - cosign verifier configuration and verifier hash validation;
-   - per-repository trust policy;
-   - lock schema/evidence migration;
-   - online/offline verification and stale-evidence behavior.
+   - cosign verifier configuration, per-repository policy, schema-2 storage and
+     online lock-evidence production are implemented;
+   - runtime freshness authorization, offline verification and explicit
+     private-registry credential bridging remain.
 
 2. **Remaining RM-31 self-update**
    - selection/check, bounded staging and `gh attestation verify` are merged in

@@ -716,19 +716,23 @@ Runtime behavior is fail-closed:
 - an image configured in the registry but missing from the lock → execution
   **fails** and asks for `cb update TOOL` or `cb lock`.
 
-Lock schema 1 remains the default digest-only format. Schema 2 adds optional,
-structured repository-signature evidence to an entry: evidence version,
+Lock schema 1 remains the default digest-only format for images outside an
+image-trust rule. Schema 2 adds structured repository-signature evidence to an
+entry: evidence version,
 `keyless`/`key` mechanism, canonical repository, exact locked digest,
 signer/administrator-key SHA-256, keyless issuer where applicable, the
 authenticated bundle SHA-256, canonical UTC verification time, verifier
 identity/hash and the complete effective machine-policy fingerprint. Partial,
 duplicate, malformed, cross-repository or local-image evidence is rejected.
-Schema 2 storage is implemented before verifier execution on purpose: new
-`cb lock`/`cb update` results continue using schema 1, while a project-scoped
-refresh preserves an existing shared schema-2 document and its unrelated
-evidence. Covered policy schema 3 images still fail closed until the
-verification producer and runtime staleness check land. Old ContainerBin builds
-reject schema 2 as unsupported; there is no silent down-conversion.
+For an online policy-covered repository, `cb lock` and `cb update` resolve the
+exact digest first, execute only the authenticated staged cosign snapshot, and
+promote the lockfile to schema 2 after one authenticated transparency bundle is
+available. Zero or multiple distinct bundles, verifier failure, malformed
+output, or unavailable policy material aborts the refresh without a digest-only
+fallback. Project-scoped refresh preserves unrelated schema-2 evidence. Runtime
+freshness authorization is still fail closed, so covered tools cannot execute
+yet and `cb lock --check` reports them denied. Old ContainerBin builds reject
+schema 2 as unsupported; there is no silent down-conversion.
 
 Tools sharing an image share one lock entry. The Node 24 family
 (`node24`, `npm24`, `npx24`, its aliases when selected, and anything exposed
@@ -768,13 +772,12 @@ Policy schema 2 can also require a strict detached Ed25519 signature over the
 exact `container-bin.toml` bytes, with machine-owned key validity, revocation
 and overlap rotation. Signed registries are read-only to `cb`; updates must be
 provisioned with a matching signature by the administrator. Policy schema 3 can
-add repository-bound image-signature requirements; covered images fail closed
-until `cb lock` records verification evidence from the pinned cosign verifier.
-The internal verification boundary can now authenticate and privately stage
-the pinned verifier and key bytes, run online verification against one exact
-repository digest, and independently validate bounded JSON results. It is not
-yet wired into `cb lock`; offline bundles, evidence production and runtime
-freshness authorization remain fail closed.
+add repository-bound image-signature requirements. `cb lock` and `cb update`
+now authenticate and privately stage the pinned verifier and key bytes, run
+online verification against the resolved exact repository digest, independently
+validate bounded JSON results, and record the result as schema-2 evidence.
+Offline rules, private-registry credential bridging and runtime freshness
+authorization remain fail closed.
 Lower-precedence registry or command-line choices cannot weaken policy. See
 [enterprise machine policy](docs/enterprise-policy.md) for the schema,
 ownership rules, normalization behavior and stable diagnostic codes.

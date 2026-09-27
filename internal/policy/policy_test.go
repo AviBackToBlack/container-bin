@@ -369,7 +369,7 @@ func TestParseRejectsInvalidImageTrustPolicies(t *testing.T) {
 	}
 }
 
-func TestImageTrustPolicyFailsClosedUntilEvidenceIsSupported(t *testing.T) {
+func TestImageTrustPolicyAllowsEvidenceProductionButRuntimeFailsClosed(t *testing.T) {
 	verifierPath := filepath.Join(t.TempDir(), "cosign")
 	verifierHash := strings.Repeat("a", 64)
 	rule := "ghcr.io/acme|keyless|https://token.actions.githubusercontent.com|https://github.com/acme/tools/.github/workflows/release.yml@refs/tags/v1|online"
@@ -379,9 +379,15 @@ func TestImageTrustPolicyFailsClosedUntilEvidenceIsSupported(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertPolicyCode(t, p.AuthorizeImage("ghcr.io/acme/tool:v1", true, false), "image_trust_unverified")
-	assertPolicyCode(t, p.AuthorizeLockTarget("ghcr.io/acme/tool:v1", false), "image_trust_unverified")
+	if err := p.AuthorizeLockTarget("ghcr.io/acme/tool:v1", false); err != nil {
+		t.Fatalf("repository lock evidence production rejected: %v", err)
+	}
+	if err := p.AuthorizeResolvedLockTarget("ghcr.io/acme/tool:v1", "ghcr.io/acme/tool@sha256:"+strings.Repeat("a", 64), false); err != nil {
+		t.Fatalf("repository lock evidence preservation rejected: %v", err)
+	}
 	p.AllowLocalImages = true
 	assertPolicyCode(t, p.AuthorizeImage("ghcr.io/acme/tool:v1", true, true), "image_trust_unverified")
+	assertPolicyCode(t, p.AuthorizeLockTarget("ghcr.io/acme/tool:v1", true), "image_trust_unverified")
 	if err := p.AuthorizeImage("docker.io/library/python:3.13", true, false); err != nil {
 		t.Fatalf("unconfigured digest-only repository rejected: %v", err)
 	}
