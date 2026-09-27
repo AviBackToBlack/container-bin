@@ -183,8 +183,11 @@ gated on real Windows ARM64 + Docker Desktop E2E evidence.
 The self-update pipeline selects the ARM64 archive from native `GOARCH`,
 verifies its canonical three-entry checksum manifest and GitHub provenance,
 then extracts only the exact `cb.exe` entry inside the private staging
-directory. This qualifies architecture selection and artifact handling, not
-Docker-backed runtime behavior or the final user-facing apply/helper flow.
+directory. The final apply path copies the proven installed binary into a
+protected wait helper, repeats verification after the parent exits, and applies
+the rollback-safe complete managed-set transaction. Hosted CI qualifies that
+control flow and native process boundary, not Docker-backed runtime behavior or
+real published-release E2E.
 
 So CI validates compilation and pure/unit logic on a GitHub-hosted Windows
 runner. The matrix is what validates the `docs/shell-contract.md` semantics on a

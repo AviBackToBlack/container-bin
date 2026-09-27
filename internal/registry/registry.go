@@ -878,12 +878,12 @@ func ValidToolName(s string) bool {
 	return true
 }
 
-// ReservedToolName rejects names whose NAME.exe shim would collide with the
-// cb binary itself, or which are Windows reserved device names (creating
-// con.exe / nul.exe etc. misbehaves across Windows tooling).
+// ReservedToolName rejects names whose NAME.exe shim would collide with a
+// ContainerBin management dispatch name, or which are Windows reserved device
+// names (creating con.exe / nul.exe etc. misbehaves across Windows tooling).
 func ReservedToolName(s string) bool {
 	switch s {
-	case "cb", "container-bin", "con", "prn", "aux", "nul":
+	case "cb", "container-bin", "cb-update-helper", "con", "prn", "aux", "nul":
 		return true
 	}
 	// main() uses the same predicate for argv[0] dispatch, so a versioned cb

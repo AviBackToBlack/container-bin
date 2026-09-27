@@ -1,7 +1,6 @@
 // Package selfupdate implements release selection, same-volume staging,
 // artifact verification and rollback-safe installed-set replacement for
-// ContainerBin's transactional self-update. The temporary helper that waits
-// for the invoking process and the user-facing apply command remain separate.
+// ContainerBin's explicit transactional self-update.
 package selfupdate
 
 import (
@@ -11,6 +10,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
@@ -29,9 +30,11 @@ const (
 
 type Options struct {
 	Check          bool
+	Apply          bool
 	Prerelease     bool
 	Version        string
 	AllowDowngrade bool
+	GitHubCLI      string
 }
 
 type Asset struct {
@@ -101,6 +104,11 @@ func ParseArgs(args []string) (Options, error) {
 				return Options{}, errors.New("--check may be specified only once")
 			}
 			opts.Check = true
+		case "--apply":
+			if opts.Apply {
+				return Options{}, errors.New("--apply may be specified only once")
+			}
+			opts.Apply = true
 		case "--prerelease":
 			if opts.Prerelease {
 				return Options{}, errors.New("--prerelease may be specified only once")
@@ -117,12 +125,24 @@ func ParseArgs(args []string) (Options, error) {
 				return Options{}, errors.New("--allow-downgrade may be specified only once")
 			}
 			opts.AllowDowngrade = true
+		case "--gh-executable":
+			if opts.GitHubCLI != "" || i+1 == len(args) || args[i+1] == "" || strings.HasPrefix(args[i+1], "-") {
+				return Options{}, errors.New("--gh-executable requires one absolute GitHub CLI path")
+			}
+			i++
+			opts.GitHubCLI = args[i]
 		default:
 			return Options{}, fmt.Errorf("unknown self-update option %q", args[i])
 		}
 	}
-	if !opts.Check {
-		return Options{}, errors.New("this build implements only the read-only selection phase; use `cb self-update --check`")
+	if opts.Check == opts.Apply {
+		return Options{}, errors.New("exactly one of --check or --apply is required")
+	}
+	if opts.Check && opts.GitHubCLI != "" {
+		return Options{}, errors.New("--gh-executable is valid only with --apply")
+	}
+	if opts.Apply && opts.GitHubCLI == "" {
+		return Options{}, errors.New("--apply requires --gh-executable with an absolute Authenticode-valid gh.exe path")
 	}
 	if opts.Prerelease && opts.Version != "" {
 		return Options{}, errors.New("--prerelease and --version are mutually exclusive")
@@ -135,7 +155,11 @@ func ParseArgs(args []string) (Options, error) {
 	return opts, nil
 }
 
-func Check(ctx context.Context, current string, args []string, out io.Writer) error {
+// Run selects a release and either reports the read-only plan or completes the
+// pre-mutation apply phases before handing ownership to the private wait-helper.
+// A successful apply return means the authenticated helper was launched; the
+// helper reports the final transaction result after this process exits.
+func Run(ctx context.Context, current string, args []string, out io.Writer) error {
 	opts, err := ParseArgs(args)
 	if err != nil {
 		return err
@@ -146,11 +170,88 @@ func Check(ctx context.Context, current string, args []string, out io.Writer) er
 			return http.ErrUseLastResponse
 		},
 	}
-	plan, err := (checker{doer: client}).Plan(ctx, current, runtime.GOOS, runtime.GOARCH, opts)
+	return (updateCommand{
+		plan: func(ctx context.Context, current, goos, goarch string, opts Options) (Plan, error) {
+			return (checker{doer: client}).Plan(ctx, current, goos, goarch, opts)
+		},
+		currentExecutable: os.Executable,
+		stage:             Stage,
+		verify:            Verify,
+		launch:            LaunchHelper,
+		goos:              runtime.GOOS,
+		goarch:            runtime.GOARCH,
+	}).run(ctx, current, opts, out)
+}
+
+type updateCommand struct {
+	plan              func(context.Context, string, string, string, Options) (Plan, error)
+	currentExecutable func() (string, error)
+	stage             func(context.Context, Plan, string) (Staged, error)
+	verify            func(context.Context, Plan, string, string, string, string) (Verified, error)
+	launch            func(context.Context, Plan, Staged, Verified, string, string) error
+	goos              string
+	goarch            string
+}
+
+func (c updateCommand) run(ctx context.Context, current string, opts Options, out io.Writer) (err error) {
+	if c.plan == nil {
+		return errors.New("self-update release planner is unavailable")
+	}
+	var installedExecutable string
+	var githubCLI string
+	if opts.Apply {
+		if c.currentExecutable == nil || c.stage == nil || c.verify == nil || c.launch == nil {
+			return errors.New("self-update apply pipeline is incomplete")
+		}
+		installedExecutable, err = c.currentExecutable()
+		if err != nil {
+			return fmt.Errorf("resolve installed management executable: %w", err)
+		}
+		installedExecutable, _, err = canonicalApplyFile(installedExecutable, "installed management executable")
+		if err != nil {
+			return err
+		}
+		if !strings.EqualFold(filepath.Base(installedExecutable), "cb.exe") {
+			return fmt.Errorf("self-update --apply must be invoked from cb.exe, got %q", filepath.Base(installedExecutable))
+		}
+		githubCLI, _, err = canonicalVerificationFile(opts.GitHubCLI, "GitHub CLI executable")
+		if err != nil {
+			return err
+		}
+	}
+	plan, err := c.plan(ctx, current, c.goos, c.goarch, opts)
 	if err != nil {
 		return err
 	}
-	printPlan(out, plan)
+	printPlan(out, plan, opts.Apply)
+	if opts.Check {
+		return nil
+	}
+	if plan.Current == plan.Target {
+		fmt.Fprintln(out, "apply:        already current; no files changed")
+		return nil
+	}
+	staged, err := c.stage(ctx, plan, installedExecutable)
+	if err != nil {
+		return err
+	}
+	launched := false
+	defer func() {
+		if !launched {
+			if cleanupErr := staged.Cleanup(); cleanupErr != nil {
+				err = errors.Join(err, cleanupErr)
+			}
+		}
+	}()
+	verified, err := c.verify(ctx, plan, staged.BinaryPath, staged.ChecksumsPath, installedExecutable, githubCLI)
+	if err != nil {
+		return err
+	}
+	if err := c.launch(ctx, plan, staged, verified, installedExecutable, githubCLI); err != nil {
+		return err
+	}
+	launched = true
+	fmt.Fprintf(out, "apply:        verified %s; private helper launched, waiting for this process to exit\n", plan.Target)
 	return nil
 }
 
@@ -178,7 +279,7 @@ func (c checker) Plan(ctx context.Context, current, goos, goarch string, opts Op
 	case comparison > 0 && !opts.AllowDowngrade:
 		return Plan{}, fmt.Errorf("selected target %s is older than current %s; pass --allow-downgrade explicitly", target.raw, currentParsed.raw)
 	case comparison > 0:
-		status = "DOWNGRADE AUTHORIZED (CHECK ONLY)"
+		status = "DOWNGRADE AUTHORIZED"
 	}
 	binary, archive, checksums, layout, err := validateRelease(selected, goarch)
 	if err != nil {
@@ -340,8 +441,12 @@ func validateRelease(selected release, goarch string) (Asset, Asset, Asset, chec
 	return found["cb.exe"], found[amd64Archive], found["SHA256SUMS"], layout, nil
 }
 
-func printPlan(out io.Writer, plan Plan) {
-	fmt.Fprintln(out, "self-update check (read-only; no files changed)")
+func printPlan(out io.Writer, plan Plan, apply bool) {
+	if apply {
+		fmt.Fprintln(out, "self-update apply (no installed files change before verification)")
+	} else {
+		fmt.Fprintln(out, "self-update check (read-only; no files changed)")
+	}
 	fmt.Fprintf(out, "current:      %s\n", plan.Current)
 	fmt.Fprintf(out, "target:       %s\n", plan.Target)
 	fmt.Fprintf(out, "channel:      %s\n", plan.Channel)
@@ -354,5 +459,7 @@ func printPlan(out io.Writer, plan Plan) {
 	}
 	fmt.Fprintf(out, "checksums:    %s (%d bytes)\n", plan.Checksums.Name, plan.Checksums.Size)
 	fmt.Fprintf(out, "verification: gh attestation verify; repository=%s workflow=%s ref=%s; checksums additionally required; no fallback\n", plan.ExpectedRepo, plan.Workflow, plan.ExpectedRef)
-	fmt.Fprintln(out, "apply:        unavailable in this slice; verified download and transactional replacement are separate roadmap phases")
+	if !apply {
+		fmt.Fprintln(out, "apply:        use --apply --gh-executable ABSOLUTE_GH_EXE to download, verify, and launch replacement")
+	}
 }
