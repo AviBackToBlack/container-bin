@@ -86,6 +86,12 @@ readable, and dangerous to let others edit.
   standalone Linux and other hosts refuse before registry or Docker work.
   WSL2 classification requires Microsoft WSL2 kernel markers; environment
   variables alone cannot turn ordinary Linux into a supported host.
+- **Native WSL project roots are proven, not translated.** The unexposed
+  classifier accepts only canonical existing directories with no symlink
+  components. Native projects stay on the distribution root device; Windows
+  projects require a proven default `/mnt/<drive>` DrvFs/virtiofs mount and
+  cannot select an entire drive. Custom mounts and mixed Windows spellings fail
+  closed, and exact Linux case remains part of project identity.
 - **Machine policy cannot be redirected or weakened.** A present enterprise
   policy is loaded only from the fixed OS path, requires administrator/root
   ownership and restrictive permissions, and authorizes the already-resolved

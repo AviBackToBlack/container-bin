@@ -90,6 +90,22 @@ state listing, garbage collection, backup and restore must filter on the exact
 namespace. Reinstalling a distribution, changing users or selecting another
 distribution therefore cannot silently adopt existing state.
 
+## Project storage boundary
+
+The unexposed `internal/wslproject` classifier accepts an already-selected
+project root only when it is a canonical, existing Linux directory and no path
+component resolves through a symlink. It never accepts Windows drive/UNC
+spelling and never translates a Windows path into a WSL path. Exact Linux case
+and spelling remain the project identity.
+
+A WSL-filesystem project must be on the same filesystem device as the
+distribution root. A Windows-filesystem project must be below a proven default
+`/mnt/<lowercase-drive>` mount reported as 9p DrvFs or WSL's `drvfs*` virtiofs
+share. The drive root itself, a lookalike `/mnt` directory, custom DrvFs
+automount roots, nested mounts and separate unqualified native filesystems fail
+closed. This deliberately supports the standard WSL boundary first instead of
+guessing how a custom mount maps back to Windows.
+
 ## Required before WSL execution can be enabled
 
 Later reviewable slices must still implement and qualify all of the following:
@@ -99,7 +115,8 @@ Later reviewable slices must still implement and qualify all of the following:
    shims;
 2. wiring the accepted distribution/machine/user namespace into shared and
    project volume creation and lifecycle commands;
-3. native Linux path, symlink, case, stdin/TTY and signal semantics;
+3. wire the implemented project storage boundary, then complete native Linux
+   argument mapping, stdin/TTY and signal semantics;
 4. Docker Desktop WSL-integration detection without accepting a separate local
    Docker Engine by accident;
 5. Windows-filesystem and WSL-filesystem project tests plus mixed-invocation

@@ -583,14 +583,22 @@ interop and a Windows client talking to a Docker engine exposed by WSL are not
 the supported WSL models.
 
 PR #77 shipped the fail-closed host runtime boundary and explicit Windows/WSL
-separation. Native Linux config/shim/state layout, Docker Desktop WSL
-integration, project behavior and real WSL qualification remain.
+separation. Native Linux config/shim/state layout is defined, and canonical
+project storage classification is implemented but unexposed. Docker Desktop
+integration, argument/process behavior and real WSL qualification remain.
 
 Implementation must define native config/shim location, Docker endpoint,
 project identity, named-volume behavior, file permissions, case sensitivity,
 symlinks, stdin/TTY/signals and mixed-invocation rejection. Windows and WSL do
 not share registry/lock/state identity implicitly, and ContainerBin never guesses
 equivalence between Windows paths and `/mnt/<drive>` paths.
+
+The project classifier preserves exact canonical Linux spelling, rejects every
+symlink component, and accepts only distribution-root-device projects or paths
+below a proven default `/mnt/<drive>` 9p DrvFs/WSL virtiofs mount. It rejects
+entire-drive roots, custom DrvFs roots, lookalike `/mnt` paths and unqualified
+separate filesystems. Later argument mapping must consume this boundary without
+turning it into a Windows-path equivalence rule.
 
 Qualification must include both Windows-filesystem and WSL-filesystem projects
 plus mixed invocation rejection cases.

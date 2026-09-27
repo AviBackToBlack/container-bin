@@ -331,7 +331,8 @@ is not completion.
    - Linux ownership, permission and symlink preflight is implemented but not
      yet wired into an enabled frontend;
    - Docker Desktop WSL integration;
-   - project identity and cross-boundary rejection tests;
+   - canonical project storage classification and cross-boundary rejection are
+     implemented but not yet wired into argument mapping or an enabled frontend;
    - real WSL Docker E2E.
 
 4. **RM-30 Authenticode**

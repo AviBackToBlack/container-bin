@@ -321,6 +321,7 @@ internal/atomicio    crash-safe write + .bak recovery                (leaf)
 internal/mutationlock  the registry mutation lock primitive          (leaf)
 internal/hostenv       host classification and gated WSL layout       (leaf)
 internal/wslfs         native WSL filesystem ownership/mode preflight
+internal/wslproject    native WSL project storage boundary
 internal/selfupdate    release selection, staging, verification and replacement
 ```
 
@@ -340,6 +341,7 @@ pathmap      -> registry
 registry     -> atomicio, toml
 policy       -> toml
 wslfs       -> hostenv
+wslproject  -> hostenv
 selfupdate  -> mutationlock, registry
 atomicio, dockervol, hostenv, mutationlock, toml -> (leaves)
 ```
@@ -374,6 +376,14 @@ directories without repairing existing objects, and validates strict modes for
 managed registry, lock, binary and management-shim endpoints. The non-Linux
 build-tagged implementation always rejects the operation. Frontend wiring,
 registry-derived tool shims and Docker integration remain later WSL slices.
+
+`internal/wslproject` is an unexposed classifier for already-selected native
+WSL project roots. It requires a canonical existing directory with no symlink
+components. Distribution projects must stay on the distribution root device;
+Windows-filesystem projects must be below a proven default `/mnt/<drive>` 9p
+DrvFs or WSL virtiofs mount. Custom DrvFs roots, entire-drive roots, ambiguous
+`/mnt` paths and Windows spellings fail closed. The package preserves the exact
+Linux spelling and does not translate between Windows and WSL path identities.
 
 After the host runtime boundary is enforced, `cb self-update --check` is
 dispatched before machine policy and registry loading. Release selection
