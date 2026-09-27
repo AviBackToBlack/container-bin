@@ -79,7 +79,7 @@ The minimum delivery gate for a code change is:
 | Enterprise policy | **Foundation and signed registry shipped / image trust remains** | PRs #75 and #84 shipped the machine-owned constraint layer and authenticated registry; image trust remains |
 | Image trust | **Policy, evidence schema and online invocation implemented / integration remains** | Wire verification into lock/update evidence production, add runtime freshness authorization, then add fully pinned offline inputs and private-registry credentials |
 | Plugin/provider architecture | **Intentionally deferred** | Reopen only after at least two real integrations cannot fit the declarative model |
-| WSL2 | **Host boundary and layout identity shipped / implementation remaining** | PRs #77 and #83 shipped the fail-closed host boundary and fixed native layout/state identity; explicit read-only/apply filesystem preparation is available, while installer/runtime wiring, Docker Desktop integration and real WSL qualification remain |
+| WSL2 | **Host boundary and layout identity shipped / implementation remaining** | PRs #77 and #83 shipped the fail-closed host boundary and fixed native layout/state identity; explicit read-only/apply filesystem preparation and namespace-prefixed/labeled volume identity are available, while Docker lifecycle/frontend wiring, Docker Desktop integration and real WSL qualification remain |
 | Per-project overlays | **Completed in PR #80** | Add-only digest-bound trust model shipped on the merged enterprise-policy foundation |
 | Release SBOM | **Conditionally deferred** | Trigger on shipped third-party/runtime dependencies or concrete compliance/consumer demand |
 | Snyk | **Conditionally deferred** | Trigger only for a real coverage gap plus owner/account/token and triage/outage policy |
@@ -606,6 +606,13 @@ project identity, named-volume behavior, file permissions, case sensitivity,
 symlinks, stdin/TTY/signals and mixed-invocation rejection. Windows and WSL do
 not share registry/lock/state identity implicitly, and ContainerBin never guesses
 equivalence between Windows paths and `/mnt/<drive>` paths.
+
+The implemented volume contract prefixes names and labels with the opaque
+distribution/machine/user namespace, length-delimits group/logical segments,
+and hashes canonical Linux project roots case-sensitively under a versioned WSL
+domain. Later Docker lifecycle wiring may use the exact prefix and namespace
+label for discovery, but adoption, backup, restore, GC or deletion must match
+the complete constructed name and label identity.
 
 Qualification must include both Windows-filesystem and WSL-filesystem projects
 plus mixed invocation rejection cases.
