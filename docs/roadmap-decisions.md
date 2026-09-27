@@ -133,9 +133,12 @@ issuer where applicable, log/bundle identity, verification time, verifier
 identity/hash and effective trust-policy fingerprint.
 
 Lock schema 2 now defines and strictly validates that evidence shape while
-preserving schema-1 reads and fail-closed old-binary/new-lock behavior. Verifier
-execution, evidence production and runtime staleness enforcement remain the
-next slices; policy-covered repositories do not become runnable from schema
+preserving schema-1 reads and fail-closed old-binary/new-lock behavior. The
+internal verifier now executes authenticated staged cosign/key snapshots for
+online exact-digest checks and independently validates bounded JSON output.
+Evidence production and runtime staleness enforcement remain the next slices;
+offline verification remains closed until policy can pin complete trusted-root
+inputs. Policy-covered repositories do not become runnable from invocation
 support alone.
 
 Runtime still executes the pinned digest and does not invoke cosign on every
