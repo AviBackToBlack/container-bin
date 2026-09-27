@@ -189,7 +189,6 @@ func (c helperCoordinator) launch(plan Plan, staged Staged, verified Verified, i
 		Plan:                helperPlanFromPlan(plan),
 		Expected:            helperVerificationFromVerified(verified),
 	}
-	request.Staged.owned = false
 	data, err := json.Marshal(request)
 	if err != nil {
 		return fmt.Errorf("encode self-update helper request: %w", err)
@@ -342,7 +341,6 @@ func (r helperRunner) run(ctx context.Context, requestPath string, out io.Writer
 			err = errors.Join(err, fmt.Errorf("launch self-update helper cleanup: %w", cleanupErr))
 		}
 	}()
-	request.Staged.owned = true
 	defer func() {
 		if cleanupErr := r.cleanupStaged(request.Staged); cleanupErr != nil {
 			err = errors.Join(err, cleanupErr)

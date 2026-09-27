@@ -93,12 +93,12 @@ readable, and dangerous to let others edit.
   unmanaged; unreadable, malformed, expired or unsupported means stop.
 - **Reserved shim names.** Tool names that would collide with `cb` itself or
   Windows device names (`con`, `nul`, `com1`, …) are rejected at validation,
-  as are versioned management-binary names beginning with `cb-v` plus a digit.
-  Names such as `cb-vault` that lack that version digit remain available to
-  registered tools. The same validation applies to binaries discovered from
-  managed global stores or selected from a shared volume (which are untrusted
-  input). Case-colliding names fail closed because Windows shims cannot
-  represent both safely.
+  as are the private `cb-update-helper` dispatch name and versioned
+  management-binary names beginning with `cb-v` plus a digit. Names such as
+  `cb-vault` that lack that version digit remain available to registered tools.
+  The same validation applies to binaries discovered from managed global stores
+  or selected from a shared volume (which are untrusted input). Case-colliding
+  names fail closed because Windows shims cannot represent both safely.
 - **Conservative deletion.** `cb gc` is dry-run by default, deletes only
   explicitly selected current-project state with `--apply`, and only considers
   a volume an orphan when *its own labels* record a project path that no
