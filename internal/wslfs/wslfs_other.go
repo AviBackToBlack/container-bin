@@ -13,3 +13,13 @@ import (
 func Prepare(hostenv.WSLLayout) error {
 	return errors.New("native WSL filesystem preparation requires Linux")
 }
+
+// Check is unavailable outside native Linux because Unix ownership and mode
+// checks are part of the WSL trust boundary.
+func Check(hostenv.WSLLayout) (Plan, error) {
+	return Plan{}, errors.New("native WSL filesystem validation requires Linux")
+}
+
+func currentLayout() (hostenv.WSLLayout, error) {
+	return hostenv.WSLLayout{}, errors.New("native WSL layout discovery requires Linux")
+}

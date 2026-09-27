@@ -3,6 +3,7 @@
 package wslfs
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,6 +49,88 @@ func testLayout(t *testing.T) hostenv.WSLLayout {
 
 func prepareTest(layout hostenv.WSLLayout) error {
 	return prepare(layout, hostenv.Runtime{Kind: hostenv.WSL2Native, Distro: layout.Distro}, testMachineID)
+}
+
+func checkTest(layout hostenv.WSLLayout) (Plan, error) {
+	return check(layout, hostenv.Runtime{Kind: hostenv.WSL2Native, Distro: layout.Distro}, testMachineID)
+}
+
+func TestReadMachineIDFileIsBounded(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "machine-id")
+	if err := os.WriteFile(path, []byte(testMachineID+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readMachineIDFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != testMachineID {
+		t.Fatalf("readMachineIDFile() = %q, want %q", got, testMachineID)
+	}
+
+	if err := os.WriteFile(path, []byte(strings.Repeat("a", maxMachineIDFileSize+1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readMachineIDFile(path); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("oversized readMachineIDFile() error = %v", err)
+	}
+}
+
+func TestCheckReportsMissingDirectoriesWithoutMutation(t *testing.T) {
+	layout := testLayout(t)
+	plan, err := checkTest(layout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Layout != layout {
+		t.Fatalf("Check() layout = %#v, want %#v", plan.Layout, layout)
+	}
+	want := layoutDirectories(layout)
+	if len(plan.MissingDirectories) != len(want) {
+		t.Fatalf("Check() missing directories = %v, want %d entries", plan.MissingDirectories, len(want))
+	}
+	for i, directory := range want {
+		if plan.MissingDirectories[i] != directory.path {
+			t.Errorf("Check() missing directory %d = %q, want %q", i, plan.MissingDirectories[i], directory.path)
+		}
+		if _, err := os.Lstat(directory.path); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("read-only Check() changed %s: %v", directory.path, err)
+		}
+	}
+}
+
+func TestCheckAcceptsPreparedLayout(t *testing.T) {
+	layout := testLayout(t)
+	if err := prepareTest(layout); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := checkTest(layout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.MissingDirectories) != 0 {
+		t.Fatalf("Check() missing directories after Prepare() = %v", plan.MissingDirectories)
+	}
+}
+
+func TestCheckRejectsUnsafeObjectWithoutRepairingIt(t *testing.T) {
+	layout := testLayout(t)
+	if err := os.Mkdir(filepath.Join(layout.Home, ".config"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), layout.ConfigDir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := checkTest(layout); err == nil || !strings.Contains(err.Error(), "not a symlink") {
+		t.Fatalf("symlinked config Check() error = %v", err)
+	}
+	info, err := os.Lstat(layout.ConfigDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("read-only Check() replaced unsafe symlink")
+	}
 }
 
 func TestPrepareCreatesFixedDirectoriesAndIsIdempotent(t *testing.T) {
