@@ -55,6 +55,27 @@ func checkTest(layout hostenv.WSLLayout) (Plan, error) {
 	return check(layout, hostenv.Runtime{Kind: hostenv.WSL2Native, Distro: layout.Distro}, testMachineID)
 }
 
+func TestReadMachineIDFileIsBounded(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "machine-id")
+	if err := os.WriteFile(path, []byte(testMachineID+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readMachineIDFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != testMachineID {
+		t.Fatalf("readMachineIDFile() = %q, want %q", got, testMachineID)
+	}
+
+	if err := os.WriteFile(path, []byte(strings.Repeat("a", maxMachineIDFileSize+1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readMachineIDFile(path); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("oversized readMachineIDFile() error = %v", err)
+	}
+}
+
 func TestCheckReportsMissingDirectoriesWithoutMutation(t *testing.T) {
 	layout := testLayout(t)
 	plan, err := checkTest(layout)

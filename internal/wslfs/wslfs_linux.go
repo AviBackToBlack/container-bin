@@ -30,11 +30,11 @@ func Prepare(layout hostenv.WSLLayout) error {
 	if err != nil {
 		return fmt.Errorf("classify native WSL runtime: %w", err)
 	}
-	machineID, err := os.ReadFile("/etc/machine-id")
+	machineID, err := readMachineIDFile("/etc/machine-id")
 	if err != nil {
 		return fmt.Errorf("read native WSL machine identity: %w", err)
 	}
-	return prepare(layout, runtime, strings.TrimSpace(string(machineID)))
+	return prepare(layout, runtime, machineID)
 }
 
 // Check validates the fixed native-WSL layout without changing it and reports
@@ -44,11 +44,11 @@ func Check(layout hostenv.WSLLayout) (Plan, error) {
 	if err != nil {
 		return Plan{}, fmt.Errorf("classify native WSL runtime: %w", err)
 	}
-	machineID, err := os.ReadFile("/etc/machine-id")
+	machineID, err := readMachineIDFile("/etc/machine-id")
 	if err != nil {
 		return Plan{}, fmt.Errorf("read native WSL machine identity: %w", err)
 	}
-	return check(layout, runtime, strings.TrimSpace(string(machineID)))
+	return check(layout, runtime, machineID)
 }
 
 func prepare(layout hostenv.WSLLayout, runtime hostenv.Runtime, machineID string) (err error) {

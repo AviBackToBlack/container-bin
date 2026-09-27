@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/AviBackToBlack/container-bin/internal/hostenv"
 )
@@ -57,30 +58,34 @@ func (c command) run(args []string, out io.Writer) error {
 	if args[1] == "--apply" && len(plan.MissingDirectories) != 0 {
 		return errors.New("native WSL layout preparation completed without creating every required directory")
 	}
-	printPlan(out, plan, args[1] == "--apply")
-	return nil
+	return printPlan(out, plan, args[1] == "--apply")
 }
 
-func printPlan(out io.Writer, plan Plan, applied bool) {
+func printPlan(out io.Writer, plan Plan, applied bool) error {
+	var report strings.Builder
 	if applied {
-		fmt.Fprintln(out, "native WSL layout prepared and revalidated")
+		fmt.Fprintln(&report, "native WSL layout prepared and revalidated")
 	} else {
-		fmt.Fprintln(out, "native WSL layout check (read-only; no files changed)")
+		fmt.Fprintln(&report, "native WSL layout check (read-only; no files changed)")
 	}
-	fmt.Fprintf(out, "distribution:  %s\n", plan.Layout.Distro)
-	fmt.Fprintf(out, "namespace:     %s\n", plan.Layout.StateNamespace)
-	fmt.Fprintf(out, "binary:        %s\n", plan.Layout.BinaryPath)
-	fmt.Fprintf(out, "management:    %s\n", plan.Layout.ManagementShim)
-	fmt.Fprintf(out, "registry:      %s\n", plan.Layout.RegistryPath)
-	fmt.Fprintf(out, "lockfile:      %s\n", plan.Layout.LockPath)
-	fmt.Fprintf(out, "state:         %s\n", plan.Layout.StateDir)
+	fmt.Fprintf(&report, "distribution:  %s\n", plan.Layout.Distro)
+	fmt.Fprintf(&report, "namespace:     %s\n", plan.Layout.StateNamespace)
+	fmt.Fprintf(&report, "binary:        %s\n", plan.Layout.BinaryPath)
+	fmt.Fprintf(&report, "management:    %s\n", plan.Layout.ManagementShim)
+	fmt.Fprintf(&report, "registry:      %s\n", plan.Layout.RegistryPath)
+	fmt.Fprintf(&report, "lockfile:      %s\n", plan.Layout.LockPath)
+	fmt.Fprintf(&report, "state:         %s\n", plan.Layout.StateDir)
 	if len(plan.MissingDirectories) == 0 {
-		fmt.Fprintln(out, "status:        LAYOUT READY")
-		return
+		fmt.Fprintln(&report, "status:        LAYOUT READY")
+	} else {
+		fmt.Fprintln(&report, "status:        LAYOUT PREPARATION REQUIRED")
+		for _, path := range plan.MissingDirectories {
+			fmt.Fprintf(&report, "create:        %s\n", path)
+		}
+		fmt.Fprintln(&report, "apply:         cb wsl prepare --apply")
 	}
-	fmt.Fprintln(out, "status:        LAYOUT PREPARATION REQUIRED")
-	for _, path := range plan.MissingDirectories {
-		fmt.Fprintf(out, "create:        %s\n", path)
+	if _, err := io.WriteString(out, report.String()); err != nil {
+		return fmt.Errorf("write native WSL layout report: %w", err)
 	}
-	fmt.Fprintln(out, "apply:         cb wsl prepare --apply")
+	return nil
 }

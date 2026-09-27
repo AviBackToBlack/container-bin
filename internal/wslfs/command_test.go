@@ -3,6 +3,7 @@ package wslfs
 import (
 	"bytes"
 	"errors"
+	"io"
 	"reflect"
 	"strings"
 	"testing"
@@ -129,6 +130,28 @@ func TestCommandFailsClosed(t *testing.T) {
 	}).run([]string{"prepare", "--check"}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "inconsistent identity") {
 		t.Fatalf("inconsistent layout error = %v", err)
 	}
+}
+
+func TestCommandPropagatesReportWriteFailure(t *testing.T) {
+	layout := commandTestLayout()
+	for _, mode := range []string{"--check", "--apply"} {
+		t.Run(mode, func(t *testing.T) {
+			err := (command{
+				currentLayout: func() (hostenv.WSLLayout, error) { return layout, nil },
+				check:         func(hostenv.WSLLayout) (Plan, error) { return Plan{Layout: layout}, nil },
+				prepare:       func(hostenv.WSLLayout) error { return nil },
+			}).run([]string{"prepare", mode}, failingWriter{})
+			if !errors.Is(err, io.ErrClosedPipe) {
+				t.Fatalf("run(%s) error = %v, want closed pipe", mode, err)
+			}
+		})
+	}
+}
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) {
+	return 0, io.ErrClosedPipe
 }
 
 func commandTestLayout() hostenv.WSLLayout {
