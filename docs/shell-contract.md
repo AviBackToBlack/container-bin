@@ -1,5 +1,9 @@
 # Windows shell/process compatibility contract
 
+For the separately gated native-WSL frontend, see the
+[native WSL process contract](wsl-process-contract.md). Its argv and
+environment-name rules deliberately follow Linux rather than Windows semantics.
+
 This is the reference for the process-launcher semantics ContainerBin preserves,
 rejects, or deliberately leaves unsupported when a Windows shell or process
 spawns a `cb.exe` shim. It exists because these semantics have no dedicated test
@@ -83,14 +87,31 @@ this way, so the repair is usually a no-op under `cmd.exe`.
 
 ## 4. Stdin/stdout/stderr passthrough
 
-`runTool` wires the streams directly to the `docker` child:
+`RunTool` passes the real process streams and environment to `runCommand`,
+which wires them directly to the `docker` child:
 
 ```go
-cmd.Stdin, cmd.Stdout, cmd.Stderr, cmd.Env = os.Stdin, os.Stdout, os.Stderr, os.Environ()
+return runCommand("docker", args, os.Stdin, os.Stdout, os.Stderr, os.Environ())
+
+func runCommand(executable string, args []string, stdin io.Reader, stdout, stderr io.Writer, env []string) (int, error) {
+	cmd := exec.Command(executable, args...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr, cmd.Env = stdin, stdout, stderr, env
+	err := cmd.Run()
+	if err == nil {
+		return 0, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode(), nil
+	}
+	return 1, err
+}
 ```
 
-(`internal/dockerrun/dockerrun.go`, `RunTool`). There is no cb-side buffering, line-editing, or encoding
-translation on the tool-run path.
+(`internal/dockerrun/dockerrun.go`, `RunTool` and `runCommand`). The interface
+parameters retain the dynamic `*os.File` values supplied by `RunTool`; there is
+no cb-side buffering, line-editing, pipe-copying or encoding translation on the
+tool-run path.
 
 This is not the same as `captureStdout` (`internal/diag/diag.go`), which is a different,
 narrow mechanism used only by `cb self-test` and `cb bugreport` to capture nested
@@ -107,11 +128,15 @@ cb:
 // when both stdin and stdout are character devices. Pipes/redirection and
 // process-captured output remain plain -i, preserving automation semantics.
 func interactiveTerminal() bool {
-	in, err := os.Stdin.Stat()
+	return interactiveTerminalFor(os.Stdin, os.Stdout)
+}
+
+func interactiveTerminalFor(stdin, stdout fileStatter) bool {
+	in, err := stdin.Stat()
 	if err != nil || in.Mode()&os.ModeCharDevice == 0 {
 		return false
 	}
-	out, err := os.Stdout.Stat()
+	out, err := stdout.Stat()
 	return err == nil && out.Mode()&os.ModeCharDevice != 0
 }
 ```
@@ -193,34 +218,33 @@ matches.
 
 ## 8. Environment variable case-folding
 
-`selectedHostEnv` (`internal/dockerrun/dockerrun.go`) matches `EnvNames` and `EnvPrefixes` against
-`os.Environ()` case-insensitively:
+`selectedHostEnv` (`internal/dockerrun/dockerrun.go`) delegates with the current
+host OS. The helper folds keys only on Windows, so `EnvNames` and `EnvPrefixes`
+are matched against `os.Environ()` case-insensitively on this frontend:
 
 ```go
-exact := map[string]bool{}
-for _, n := range t.EnvNames {
-	exact[strings.ToUpper(n)] = true
+func selectedHostEnv(t registry.Tool) []string {
+	return selectedHostEnvForHost(runtime.GOOS, t, os.Environ())
 }
-...
-upper := strings.ToUpper(name)
-match := exact[upper]
-if !match {
-	for _, p := range t.EnvPrefixes {
-		if strings.HasPrefix(upper, strings.ToUpper(p)) {
-			match = true
-			break
-		}
+
+key := func(value string) string {
+	if goos == "windows" {
+		return strings.ToUpper(value)
 	}
+	return value
 }
 ```
+
+That exact key function is used for declarations, host names, prefix matching
+and deduplication inside `selectedHostEnvForHost`.
 
 This matches Windows' own case-insensitive environment variable semantics. A
 profile author can declare `env_names = ["Path"]` and the host `PATH` or `Path`
 will match without enumerating every case variant.
 
-The actual host values are resolved through `cmd.Env = os.Environ()`
-(`internal/dockerrun/dockerrun.go`, `RunTool`); `selectedHostEnv` only decides which variable *names* are
-passed to `docker run` as `-e` flags.
+The actual host values are resolved through the unchanged environment passed
+from `RunTool` to `runCommand`; `selectedHostEnv` only decides which variable
+*names* are passed to `docker run` as `-e` flags.
 
 ## 9. What is deliberately NOT emulated
 
