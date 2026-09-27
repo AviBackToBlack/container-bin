@@ -13,7 +13,7 @@ ready items. Requirements below remain useful acceptance detail, but an older
 "decision required" sentence must not be interpreted as reopening an accepted
 decision.
 
-Status snapshot: **2026-09-25**. The earlier 2026-09-17 snapshot counted every
+Status snapshot: **2026-09-26**. The earlier 2026-09-17 snapshot counted every
 unchecked roadmap line as unfinished work; that is no longer an accurate model.
 RM-26 pipx, per-project overlay trust, signed-registry policy, the RM-31
 selection/check/staging/verification slices, the WSL host boundary and native
@@ -77,9 +77,9 @@ The minimum delivery gate for a code change is:
 | RM-34 Cargo expose enhancement | **Intentionally deferred** | Existing expose-all/explicit selection are sufficient; reopen only for concrete unmet use case |
 | Linux/macOS hosts | **Demand-gated** | WSL may factor reusable Linux host code; standalone support needs its own demand and qualification |
 | Enterprise policy | **Foundation and signed registry shipped / image trust remains** | PRs #75 and #84 shipped the machine-owned constraint layer and authenticated registry; image trust remains |
-| Image trust | **Design complete / sequenced** | Implement after signed-registry policy using policy-driven Sigstore/cosign verification |
+| Image trust | **Policy, evidence schema and online invocation implemented / integration remains** | Wire verification into lock/update evidence production, add runtime freshness authorization, then add fully pinned offline inputs and private-registry credentials |
 | Plugin/provider architecture | **Intentionally deferred** | Reopen only after at least two real integrations cannot fit the declarative model |
-| WSL2 | **Host boundary and layout identity shipped / implementation remaining** | PRs #77 and #83 shipped the fail-closed host boundary and fixed native layout/state identity; filesystem preparation and namespace-prefixed/labeled volume identity are implemented but unexposed, while Docker lifecycle/frontend wiring, Docker Desktop integration and real WSL qualification remain |
+| WSL2 | **Host boundary and layout identity shipped / implementation remaining** | PRs #77 and #83 shipped the fail-closed host boundary and fixed native layout/state identity; explicit read-only/apply filesystem preparation and namespace-prefixed/labeled volume identity are available, while Docker lifecycle/frontend wiring, Docker Desktop integration and real WSL qualification remain |
 | Per-project overlays | **Completed in PR #80** | Add-only digest-bound trust model shipped on the merged enterprise-policy foundation |
 | Release SBOM | **Conditionally deferred** | Trigger on shipped third-party/runtime dependencies or concrete compliance/consumer demand |
 | Snyk | **Conditionally deferred** | Trigger only for a real coverage gap plus owner/account/token and triage/outage policy |
@@ -546,10 +546,15 @@ old-binary/new-lock tests and security-model documentation.
 
 **Implementation status:** lock schema 2 now provides the structured storage,
 strict repository/digest/evidence validation, schema-1 compatibility,
-old-parser/new-lock rejection tests and security-model documentation. Cosign
-execution, evidence production and runtime freshness/policy matching remain
-separate follow-up slices; until they land, policy-covered images continue to
-fail with `policy.image_trust_unverified`.
+old-parser/new-lock rejection tests and security-model documentation. The
+internal online invocation slice authenticates pinned verifier/key snapshots,
+stages them under current-user-only permissions, runs a bounded exact-digest
+verification with a minimal environment, and independently checks the JSON
+digest and keyless identity. It does not yet produce lock evidence or authorize
+runtime use. Offline mode remains blocked until all trusted-root inputs can be
+pinned, and private-registry credentials require an explicit non-ambient bridge.
+Until those integration slices land, policy-covered images continue to fail
+with `policy.image_trust_unverified`.
 
 ## Plugin/provider architecture
 
@@ -583,8 +588,10 @@ interop and a Windows client talking to a Docker engine exposed by WSL are not
 the supported WSL models.
 
 PR #77 shipped the fail-closed host runtime boundary and explicit Windows/WSL
-separation. Native Linux config/shim/state layout, Docker Desktop WSL
-integration, project behavior and real WSL qualification remain.
+separation. The fixed native Linux config/shim/state layout can now be checked
+or prepared explicitly without enabling tool execution. Installer/runtime
+wiring, Docker Desktop WSL integration, project behavior and real WSL
+qualification remain.
 
 Implementation must define native config/shim location, Docker endpoint,
 project identity, named-volume behavior, file permissions, case sensitivity,
@@ -681,7 +688,7 @@ in PR #91.
 2. Signed-registry enterprise policy.
 3. Image trust at lock time, after signed-registry policy merges.
 4. Remaining RM-31 helper/user-facing transactional apply wiring and E2E.
-5. Remaining WSL2 native layout, Docker Desktop integration and real E2E.
+5. Remaining WSL2 installer/runtime wiring, Docker Desktop integration and real E2E.
 6. RM-30 Authenticode only after certificate/protected-signing prerequisites exist.
 7. RM-29 real Windows-on-Arm + Docker Desktop qualification last; do not delay
    higher-value work for it.
