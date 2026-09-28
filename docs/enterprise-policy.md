@@ -216,9 +216,11 @@ now privately stage authenticated verifier/key snapshots after exact digest
 resolution, validate bounded online cosign results and record one authenticated
 transparency bundle as schema-2 evidence. Zero or multiple distinct bundles,
 verification failure or malformed output aborts the refresh; a covered image
-never falls back to a digest-only lock. Execution remains rejected with
-`policy.image_trust_unverified` until the separate runtime freshness gate can
-consume the stored evidence.
+never falls back to a digest-only lock. At execution, the stored repository and
+digest must still match the lock, and its policy fingerprint, mechanism,
+signer/key identity, issuer and verifier hash must exactly match current machine
+policy. Missing or stale evidence is rejected with
+`policy.image_trust_unverified` before Docker execution.
 
 The repository includes an opt-in Windows qualification test for this producer
 path. Build it with the `image_trust_e2e` tag and set the five

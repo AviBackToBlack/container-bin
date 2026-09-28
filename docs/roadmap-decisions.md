@@ -134,12 +134,11 @@ identity/hash and effective trust-policy fingerprint.
 
 Lock schema 2 now defines and strictly validates that evidence shape while
 preserving schema-1 reads and fail-closed old-binary/new-lock behavior. The
-internal verifier now executes authenticated staged cosign/key snapshots for
-online exact-digest checks and independently validates bounded JSON output.
-Evidence production and runtime staleness enforcement remain the next slices;
-offline verification remains closed until policy can pin complete trusted-root
-inputs. Policy-covered repositories do not become runnable from invocation
-support alone.
+internal verifier executes authenticated staged cosign/key snapshots for online
+exact-digest checks and independently validates bounded JSON output. Lock/update
+produce that evidence, and runtime accepts it only while the digest, verifier,
+signer/key and complete policy fingerprint still match. Offline verification
+remains closed until policy can pin complete trusted-root inputs.
 
 Runtime still executes the pinned digest and does not invoke cosign on every
 tool launch. A changed digest, verifier or trust-policy fingerprint makes prior
@@ -325,8 +324,9 @@ is not completion.
 1. **Image trust**
    - cosign verifier configuration, per-repository policy, schema-2 storage and
      online lock-evidence production are implemented;
-   - runtime freshness authorization, offline verification and explicit
-     private-registry credential bridging remain.
+   - runtime freshness authorization is implemented;
+   - offline verification and explicit private-registry credential bridging
+     remain.
 
 2. **Remaining RM-31 self-update qualification**
    - selection/check, bounded staging and `gh attestation verify` are merged in

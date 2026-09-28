@@ -1401,16 +1401,18 @@ func authorizeRegistrySnapshot(reg registry.Registry, lf *lockfile.LockFile, mac
 	for _, image := range lockfile.ConfiguredImages(reg) {
 		locked, local := false, false
 		resolved := ""
+		var evidence *policy.RuntimeImageTrustEvidence
 		if lf != nil {
 			if entry, ok := lf.Images[image]; ok && entry.Configured == image {
 				locked = true
 				local = lockfile.IsLocalResolved(entry.Resolved)
 				resolved = entry.Resolved
+				evidence = entry.RuntimeTrustEvidence()
 			}
 		}
 		var err error
 		if locked {
-			err = machinePolicy.AuthorizeResolvedImage(image, resolved, local)
+			err = machinePolicy.AuthorizeResolvedImage(image, resolved, local, evidence)
 		} else {
 			err = machinePolicy.AuthorizeImage(image, false, false)
 		}
@@ -1567,7 +1569,7 @@ func checkLock(reg registry.Registry, path string, machinePolicy policy.Policy, 
 			failures++
 			continue
 		}
-		if err := machinePolicy.AuthorizeResolvedImage(image, e.Resolved, lockfile.IsLocalResolved(e.Resolved)); err != nil {
+		if err := machinePolicy.AuthorizeResolvedImage(image, e.Resolved, lockfile.IsLocalResolved(e.Resolved), e.RuntimeTrustEvidence()); err != nil {
 			fmt.Printf("DENIED   %s (%v)\n", image, err)
 			failures++
 			continue
