@@ -28,18 +28,31 @@ func Path() (string, error) {
 }
 
 func EnsureFile(path string) error {
+	return EnsureFileMode(path, 0o644)
+}
+
+// EnsureFileMode creates the built-in registry with the requested mode. It is
+// used by the native WSL installer, whose fixed registry is private user state.
+// Existing files are never chmodded or otherwise repaired implicitly.
+func EnsureFileMode(path string, mode os.FileMode) error {
 	if _, err := os.Stat(path); err == nil {
 		return nil
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	return atomicio.WriteFile(path, []byte(DefaultTOML), 0644)
+	return atomicio.WriteFile(path, []byte(DefaultTOML), mode)
 }
 
 // AppendMissingDefaultTools upgrades an existing registry non-destructively.
 // Existing tool sections are never rewritten; missing built-in sections are
 // appended, preserving user profiles and comments (e.g. jq2 from earlier tests).
 func AppendMissingDefaultTools(path, version string) error {
+	return AppendMissingDefaultToolsMode(path, version, 0o644)
+}
+
+// AppendMissingDefaultToolsMode is AppendMissingDefaultTools with an explicit
+// mode for the atomically replaced registry.
+func AppendMissingDefaultToolsMode(path, version string, mode os.FileMode) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -49,7 +62,7 @@ func AppendMissingDefaultTools(path, version string) error {
 		return err
 	}
 	if reg.SchemaVersion == 1 {
-		return upgradeV1Registry(path, data, reg, version)
+		return upgradeV1Registry(path, data, reg, version, mode)
 	}
 	defaults := DefaultToolSections()
 	var names []string
@@ -85,7 +98,7 @@ func AppendMissingDefaultTools(path, version string) error {
 	if _, err := ParseTOML(b.String()); err != nil {
 		return fmt.Errorf("refusing registry upgrade: %w", err)
 	}
-	return atomicio.WriteFile(path, []byte(b.String()), 0644)
+	return atomicio.WriteFile(path, []byte(b.String()), mode)
 }
 
 type v1DefaultMigration struct {
@@ -110,7 +123,7 @@ var v1NodeMigrations = []v1DefaultMigration{
 // migrated: a customized legacy profile may not actually represent Node 24,
 // so assigning it a version label would violate the registry's fail-closed
 // contract.
-func upgradeV1Registry(path string, data []byte, reg Registry, cbVersion string) error {
+func upgradeV1Registry(path string, data []byte, reg Registry, cbVersion string, mode os.FileMode) error {
 	desired := Default()
 	migrations := map[string]v1DefaultMigration{}
 	existingNames := map[string]bool{}
@@ -213,7 +226,7 @@ func upgradeV1Registry(path string, data []byte, reg Registry, cbVersion string)
 	if _, err := ParseTOML(out.String()); err != nil {
 		return fmt.Errorf("refusing registry v1 to v2 upgrade: %w", err)
 	}
-	return atomicio.WriteFile(path, []byte(out.String()), 0644)
+	return atomicio.WriteFile(path, []byte(out.String()), mode)
 }
 
 type Authenticator func(path string, exactBytes []byte) error
@@ -230,6 +243,12 @@ func loadAt(path string, authenticate Authenticator) (Registry, string, error) {
 	return loadPath(path, true, authenticate)
 }
 
+// LoadAt loads the fixed registry path selected by a non-Windows frontend.
+// The path remains caller-owned; this function never consults XDG or PATH.
+func LoadAt(path string, authenticate Authenticator) (Registry, string, error) {
+	return loadPath(path, true, authenticate)
+}
+
 // LoadReadOnly reads a valid backup in place when the primary registry is
 // missing. Unlike Load, it never renames recovery state and is safe for
 // commands whose contract forbids filesystem mutation.
@@ -238,6 +257,11 @@ func LoadReadOnly(authenticate Authenticator) (Registry, string, error) {
 	if err != nil {
 		return Registry{}, "", err
 	}
+	return loadPath(path, false, authenticate)
+}
+
+// LoadAtReadOnly is LoadAt without backup recovery mutation.
+func LoadAtReadOnly(path string, authenticate Authenticator) (Registry, string, error) {
 	return loadPath(path, false, authenticate)
 }
 

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -52,6 +53,42 @@ func TestLoadAtSignedMissingRegistryDoesNotRecoverBackup(t *testing.T) {
 func TestLoadAtRequiresAuthenticator(t *testing.T) {
 	if _, _, err := loadAt(filepath.Join(t.TempDir(), "container-bin.toml"), nil); err == nil || !strings.Contains(err.Error(), "authenticator") {
 		t.Fatalf("loadAt nil authenticator error = %v", err)
+	}
+}
+
+func TestExplicitRegistryModeSurvivesCreateAndUpgrade(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "container-bin.toml")
+	if err := EnsureFileMode(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != 0o600 {
+			t.Fatalf("created registry mode = %04o, want 0600", got)
+		}
+	}
+	for _, schema := range []string{"1", "2"} {
+		t.Run("schema_"+schema, func(t *testing.T) {
+			minimal := []byte("schema_version = " + schema + "\n\n[tools.custom]\nimage = \"example.test/custom:1\"\nprovider = \"stateless\"\n")
+			if err := os.WriteFile(path, minimal, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := AppendMissingDefaultToolsMode(path, "v-test", 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if runtime.GOOS != "windows" {
+				info, err := os.Stat(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := info.Mode().Perm(); got != 0o600 {
+					t.Fatalf("upgraded registry mode = %04o, want 0600", got)
+				}
+			}
+		})
 	}
 }
 

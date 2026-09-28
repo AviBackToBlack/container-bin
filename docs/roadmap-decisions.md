@@ -16,7 +16,7 @@ items from being repeatedly rediscovered as if they were immediately actionable.
 | RM-24 Python / uv | **Keep both** | Decision complete. Built-in `python`/`pip` keep the dedicated Python provider; `uv`/`uvx` remain separate opt-in stateful profiles. |
 | RM-26 Python global CLI exposure | **pipx yes; plain pip expose no** | Completed in PR #74. The separate stateful pipx profile and managed store shipped; project/compat `/venv/bin` remains intentionally unexposed. |
 | RM-34 Cargo expose enhancement | **Intentionally deferred** | Existing expose-all and explicit binary selection are sufficient. Reopen only for a concrete unmet use case. |
-| WSL2 | **Native WSL frontend** | Host boundary shipped in PR #77. Fixed-layout preflight is explicitly available, while native install/runtime wiring, Docker Desktop integration and real WSL qualification remain. No Windows↔WSL path/state guessing. |
+| WSL2 | **Native WSL frontend** | Host boundary shipped in PR #77. Fixed-layout preparation and the native install/config/shim lifecycle are explicitly available, while runtime/Docker wiring and real WSL qualification remain. No Windows↔WSL path/state guessing. |
 | Enterprise policy | **Machine-owned constraint layer** | Foundation shipped in PR #75. Authenticated registry and image-trust follow-ups must extend this boundary and cannot be weakened by lower layers. |
 | Image trust | **Policy-driven Sigstore/cosign at lock time** | Ready after signed-registry policy. Digest locking remains default where policy permits. Required trust never silently falls back to digest-only. |
 | Per-project overlays | **Explicit digest-bound, add-only trust model** | Implementation-ready on the merged policy foundation. Initial overlays exclude host mounts, env prefixes and shared cross-project volumes. |
@@ -341,8 +341,8 @@ is not completion.
    - narrow reusable Linux host interfaces, fail-closed boundary and native
      layout/state identity are merged in PRs #77 and #83;
    - explicit read-only/apply Linux ownership, permission and symlink layout
-     preparation plus registry-derived tool-shim preflight and race-safe
-     mutation are implemented; installer/runtime integration remains;
+     preparation plus the fixed-path native install/config lifecycle are
+     implemented; ordinary runtime integration remains gated;
    - Docker Desktop WSL integration proof and the proof-bound, bounded control
      request primitive are implemented but not yet wired into an enabled
      frontend; streaming/attach needs a separate contract;

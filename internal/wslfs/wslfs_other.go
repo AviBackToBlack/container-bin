@@ -23,3 +23,7 @@ func Check(hostenv.WSLLayout) (Plan, error) {
 func currentLayout() (hostenv.WSLLayout, error) {
 	return hostenv.WSLLayout{}, errors.New("native WSL layout discovery requires Linux")
 }
+
+func CurrentRegistryPath() (string, error) {
+	return "", errors.New("native WSL registry path discovery requires Linux")
+}

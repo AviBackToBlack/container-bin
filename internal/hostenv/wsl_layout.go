@@ -33,6 +33,20 @@ type WSLLayout struct {
 	StateNamespace string
 }
 
+// NativeWSLRegistryPath returns the fixed per-user registry path without
+// deriving Docker state identity. Bootstrap-safe help/config output must not
+// require /etc/machine-id merely to name a config location.
+func (r Runtime) NativeWSLRegistryPath(home string) (string, error) {
+	if r.Kind != WSL2Native {
+		return "", fmt.Errorf("native WSL registry path requires runtime kind %q, got %q", WSL2Native, r.Kind)
+	}
+	home, err := validateWSLHome(home)
+	if err != nil {
+		return "", err
+	}
+	return path.Join(home, ".config/container-bin/container-bin.toml"), nil
+}
+
 // NativeWSLLayout returns the WSL2 layout for a classified runtime. The
 // machine ID must be the canonical /etc/machine-id value; combining it with the
 // exact WSL distribution name and numeric Linux UID prevents distributions or

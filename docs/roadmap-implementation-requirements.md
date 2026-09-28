@@ -79,7 +79,7 @@ The minimum delivery gate for a code change is:
 | Enterprise policy | **Foundation and signed registry shipped / image trust remains** | PRs #75 and #84 shipped the machine-owned constraint layer and authenticated registry; image trust remains |
 | Image trust | **Online production and runtime authorization implemented / offline and private-registry work remains** | Add fully pinned offline inputs and an explicit private-registry credential bridge |
 | Plugin/provider architecture | **Intentionally deferred** | Reopen only after at least two real integrations cannot fit the declarative model |
-| WSL2 | **Host boundary and layout identity shipped / implementation remaining** | PRs #77 and #83 shipped the fail-closed host boundary and fixed native layout/state identity; explicit read-only/apply filesystem preparation, registry-derived tool-shim preflight and race-safe mutation, namespace-prefixed/labeled volume identity, Docker Desktop integration proof and a proof-bound bounded control-request primitive are available, while installer/Docker lifecycle/frontend wiring, streaming execution and real WSL qualification remain |
+| WSL2 | **Installer foundation implemented / runtime qualification remaining** | PRs #77 and #83 shipped the fail-closed host boundary and fixed native layout/state identity; explicit filesystem preparation and the fixed-path native install/config/shim lifecycle are available alongside namespace-prefixed/labeled volume identity, Docker Desktop integration proof and a proof-bound bounded control-request primitive, while Docker lifecycle/frontend wiring, streaming execution and real WSL qualification remain |
 | Per-project overlays | **Completed in PR #80** | Add-only digest-bound trust model shipped on the merged enterprise-policy foundation |
 | Release SBOM | **Conditionally deferred** | Trigger on shipped third-party/runtime dependencies or concrete compliance/consumer demand |
 | Snyk | **Conditionally deferred** | Trigger only for a real coverage gap plus owner/account/token and triage/outage policy |
@@ -601,12 +601,14 @@ the supported WSL models.
 
 PR #77 shipped the fail-closed host runtime boundary and explicit Windows/WSL
 separation. The fixed native Linux config/shim/state layout can now be checked
-or prepared explicitly without enabling tool execution, and canonical project
-storage classification, fail-closed Docker Desktop WSL integration proof and a
-proof-bound bounded Engine API control-request primitive are implemented but not
-yet wired into an enabled frontend. Streaming/attach remains a separate
-process/IO contract. Installer/runtime wiring, argument/process behavior and
-real WSL qualification remain.
+or prepared explicitly, and `cb wsl install --check|--apply` composes it with
+fixed-path policy/registry loading, managed-binary installation and
+registry-derived management/tool-shim reconciliation without enabling tool
+execution. Canonical project storage classification, fail-closed Docker Desktop
+WSL integration proof and a proof-bound bounded Engine API control-request
+primitive are implemented but not yet wired into an enabled frontend.
+Streaming/attach remains a separate process/IO contract. Runtime wiring,
+argument/process behavior and real WSL qualification remain.
 
 Implementation must define native config/shim location, Docker endpoint,
 project identity, named-volume behavior, file permissions, case sensitivity,
@@ -713,7 +715,7 @@ in PR #91.
 2. Signed-registry enterprise policy.
 3. Image trust at lock time, after signed-registry policy merges.
 4. Remaining RM-31 real published-release/self-test E2E qualification.
-5. Remaining WSL2 installer/runtime wiring, Docker Desktop integration and real E2E.
+5. Remaining WSL2 runtime/Docker wiring and real E2E.
 6. RM-30 Authenticode only after certificate/protected-signing prerequisites exist.
 7. RM-29 real Windows-on-Arm + Docker Desktop qualification last; do not delay
    higher-value work for it.

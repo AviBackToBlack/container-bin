@@ -65,6 +65,20 @@ func TestNativeWSLLayoutIsFixedAndDistributionScoped(t *testing.T) {
 	}
 }
 
+func TestNativeWSLRegistryPathDoesNotRequireMachineIdentity(t *testing.T) {
+	runtime := Runtime{Kind: WSL2Native, Distro: "Ubuntu-24.04"}
+	got, err := runtime.NativeWSLRegistryPath("/home/alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "/home/alice/.config/container-bin/container-bin.toml"; got != want {
+		t.Fatalf("NativeWSLRegistryPath = %q, want %q", got, want)
+	}
+	if _, err := (Runtime{Kind: LinuxNative}).NativeWSLRegistryPath("/home/alice"); err == nil {
+		t.Fatal("standalone Linux registry path was accepted as native WSL")
+	}
+}
+
 func TestNativeWSLLayoutRejectsAmbiguousInputs(t *testing.T) {
 	cases := []struct {
 		name      string

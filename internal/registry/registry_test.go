@@ -895,6 +895,22 @@ func TestNode22ProfilesParseAndVolumes(t *testing.T) {
 	}
 }
 
+func TestNeedsDefaultUpgrade(t *testing.T) {
+	reg := Default()
+	if reg.NeedsDefaultUpgrade() {
+		t.Fatal("current built-in registry unexpectedly needs an upgrade")
+	}
+	delete(reg.Tools, "jq")
+	if !reg.NeedsDefaultUpgrade() {
+		t.Fatal("registry missing a built-in tool did not need an upgrade")
+	}
+	reg = Default()
+	reg.SchemaVersion = 1
+	if !reg.NeedsDefaultUpgrade() {
+		t.Fatal("older registry schema did not need an upgrade")
+	}
+}
+
 func TestParseHostMount(t *testing.T) {
 	cases := []struct {
 		name      string
