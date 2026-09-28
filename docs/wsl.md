@@ -110,6 +110,27 @@ state listing, garbage collection, backup and restore must filter on the exact
 namespace. Reinstalling a distribution, changing users or selecting another
 distribution therefore cannot silently adopt existing state.
 
+## Project storage boundary
+
+The unexposed `internal/wslproject` classifier accepts an already-selected
+project root only when it is a canonical, existing Linux directory and no path
+component resolves through a symlink. It never accepts Windows drive/UNC
+spelling and never translates a Windows path into a WSL path. Exact Linux case
+and spelling remain the project identity.
+
+A WSL-filesystem project root must be on the same filesystem device as the
+distribution root. A Windows-filesystem project root must be below a proven default
+`/mnt/<lowercase-drive>` mount reported as 9p DrvFs or WSL's exact
+`drvfs<uppercase-drive><privilege-bit>` virtiofs share tag. The drive root
+itself, a lookalike `/mnt` directory, custom DrvFs
+automount roots, mounts masking a Windows drive and separate unqualified native
+filesystems fail closed. Same-device distribution bind mounts remain separate
+projects under their exact canonical spelling. This deliberately supports the
+standard WSL boundary first instead of guessing how a custom mount maps back to
+Windows. This classification proves the storage backing the root dentry only;
+consumers must resolve and classify each descendant path before mapping or
+executing it because a nested mount may cross the project-root boundary.
+
 ## Docker Desktop integration proof
 
 The implemented detector issues a direct, bounded Engine API request only over
@@ -154,7 +175,8 @@ Later reviewable slices must still implement and qualify all of the following:
    add race-safe shim mutation;
 2. wire the implemented distribution/machine/user volume identity contract
    into shared/project creation and every lifecycle command;
-3. native Linux path, symlink, case, stdin/TTY and signal semantics;
+3. wire the implemented project storage boundary, then complete native Linux
+   argument mapping, stdin/TTY and signal semantics;
 4. wire the implemented Docker Desktop WSL-integration proof into every Docker
    operation without accepting ambient endpoint overrides;
 5. Windows-filesystem and WSL-filesystem project tests plus mixed-invocation

@@ -341,6 +341,7 @@ internal/mutationlock  the registry mutation lock primitive          (leaf)
 internal/hostenv       host classification and gated WSL layout       (leaf)
 internal/wslfs         native WSL filesystem ownership/mode preflight
 internal/wslshim       native WSL registry-derived shim preflight
+internal/wslproject    native WSL project storage boundary
 internal/wsldocker     native WSL Docker Desktop integration proof
 internal/wslvolume     native WSL namespaced volume identity
 internal/selfupdate    release selection, staging, verification and replacement
@@ -363,6 +364,7 @@ registry     -> atomicio, toml
 policy       -> toml
 wslfs       -> hostenv
 wslshim     -> hostenv, registry
+wslproject  -> hostenv
 wsldocker   -> hostenv
 wslvolume   -> hostenv, registry
 selfupdate  -> mutationlock, registry
@@ -412,6 +414,14 @@ symlinks to the fixed managed binary; missing shims are reported explicitly.
 It must be composed after `internal/wslfs` validates the same layout's home,
 intermediate path and filesystem-device boundary. It never creates, replaces,
 removes or discovers unrelated directory entries.
+
+`internal/wslproject` is an unexposed classifier for already-selected native
+WSL project roots. It requires a canonical existing directory with no symlink
+components. Distribution projects must stay on the distribution root device;
+Windows-filesystem projects must be below a proven default `/mnt/<drive>` 9p
+DrvFs or WSL virtiofs mount. Custom DrvFs roots, entire-drive roots, ambiguous
+`/mnt` paths and Windows spellings fail closed. The package preserves the exact
+Linux spelling and does not translate between Windows and WSL path identities.
 
 `internal/wsldocker` is an unexposed native-WSL detector for Docker Desktop's
 supported distribution integration. It rejects Docker endpoint/TLS/API

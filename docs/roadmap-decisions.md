@@ -347,7 +347,9 @@ is not completion.
       an enabled frontend;
    - namespace-prefixed/labeled WSL volume identity is implemented, but Docker
      creation and lifecycle commands are not yet wired to it;
-   - project identity and cross-boundary rejection tests;
+   - canonical project storage classification and cross-boundary rejection are
+     implemented but not yet wired into argument mapping or an enabled frontend;
+   - project identity and cross-boundary rejection integration tests;
    - real WSL Docker E2E.
 
 4. **RM-30 Authenticode**

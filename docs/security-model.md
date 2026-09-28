@@ -102,6 +102,12 @@ readable, and dangerous to let others edit.
   layout. Existing tool shims must be current-user-owned symlinks to the fixed
   managed binary; foreign files, owners or targets fail closed. Missing shims
   are reported without creating or replacing anything.
+- **Native WSL project roots are proven, not translated.** The unexposed
+  classifier accepts only canonical existing directories with no symlink
+  components. Native projects stay on the distribution root device; Windows
+  projects require a proven default `/mnt/<drive>` DrvFs/virtiofs mount and
+  cannot select an entire drive. Custom mounts and mixed Windows spellings fail
+  closed, and exact Linux case remains part of project identity.
 - **Native WSL Docker provenance fails closed.** The unexposed detector uses a
   direct Engine API request on the pinned local Unix socket, never an ambient
   CLI/config/context. It rejects Docker endpoint/TLS/API overrides, validates
