@@ -27,6 +27,7 @@ import (
 
 const (
 	MaxSchemaVersion             = 3
+	ImageTrustVerifierCosign     = "cosign"
 	registrySignatureVersion     = 1
 	registrySignatureAlgorithm   = "ed25519"
 	maxRegistrySignatureFileSize = 16 << 10
@@ -78,6 +79,21 @@ type ImageTrustRule struct {
 	Subject     string
 	PublicKey   FilePin
 	NetworkMode ImageTrustNetworkMode
+}
+
+// RuntimeImageTrustEvidence is the subset of a validated lock record needed
+// to prove that its earlier signature verification still matches the current
+// machine policy. Storage-format validation remains the lockfile package's
+// responsibility.
+type RuntimeImageTrustEvidence struct {
+	Mechanism         ImageTrustMechanism
+	Repository        string
+	Digest            string
+	Signer            string
+	Issuer            string
+	Verifier          string
+	VerifierSHA256    string
+	PolicyFingerprint string
 }
 
 type Error struct {
@@ -892,20 +908,123 @@ func (p Policy) AuthorizeImage(configured string, locked, local bool) error {
 	return nil
 }
 
-// AuthorizeResolvedImage checks both sides of a lock entry. The configured
-// reference alone is not sufficient proof of origin because a hand-edited
-// lockfile could point its resolved digest at another repository.
-func (p Policy) AuthorizeResolvedImage(configured, resolved string, local bool) error {
-	if err := p.AuthorizeImage(configured, true, local); err != nil {
-		return err
-	}
-	if local || !p.Managed() || len(p.AllowedRepositories) == 0 {
+// AuthorizeResolvedImage checks both sides of a lock entry and, when current
+// policy requires signature verification, proves that the stored evidence is
+// still fresh for the exact digest, verifier and complete effective policy.
+// The configured reference alone is not sufficient proof of origin because a
+// hand-edited lockfile could point its resolved digest at another repository.
+func (p Policy) AuthorizeResolvedImage(configured, resolved string, local bool, evidence *RuntimeImageTrustEvidence) error {
+	if !p.Managed() {
 		return nil
 	}
-	if _, err := p.authorizeRepository(resolved); err != nil {
-		return policyError("repository_denied", "resolved lock reference %q is not authorized: %v", resolved, err)
+	var rule ImageTrustRule
+	var trustRequired bool
+	var trustErr error
+	if len(p.imageTrustRules) != 0 {
+		rule, trustRequired, trustErr = p.ImageTrustFor(configured)
+	}
+	if local {
+		if trustErr == nil && trustRequired {
+			return policyError("image_trust_unverified", "local image %q cannot satisfy the %s signature requirement for repository boundary %q", configured, rule.Mechanism, rule.Repository)
+		}
+		if !p.AllowLocalImages {
+			return policyError("local_image_denied", "local image %q has no authorized registry origin", configured)
+		}
+		return nil
+	}
+	if len(p.AllowedRepositories) != 0 {
+		if _, err := p.authorizeRepository(configured); err != nil {
+			return policyError("repository_denied", "image %q: %v", configured, err)
+		}
+		if _, err := p.authorizeRepository(resolved); err != nil {
+			return policyError("repository_denied", "resolved lock reference %q is not authorized: %v", resolved, err)
+		}
+	}
+	if trustErr != nil {
+		return policyError("repository_denied", "image %q: %v", configured, trustErr)
+	}
+	if trustRequired {
+		return p.authorizeRuntimeImageTrust(configured, resolved, rule, evidence)
 	}
 	return nil
+}
+
+func (p Policy) authorizeRuntimeImageTrust(configured, resolved string, rule ImageTrustRule, evidence *RuntimeImageTrustEvidence) error {
+	fail := func(format string, args ...any) error {
+		return policyError("image_trust_unverified", "image %q has stale or missing signature evidence: %s; run `cb update` or `cb lock` to re-verify it", configured, fmt.Sprintf(format, args...))
+	}
+	if evidence == nil {
+		return fail("evidence is missing")
+	}
+	configuredRepository, err := CanonicalRepository(configured)
+	if err != nil {
+		return fail("configured repository is invalid: %v", err)
+	}
+	resolvedRepository, resolvedDigest, err := splitResolvedImageDigest(resolved)
+	if err != nil {
+		return fail("%v", err)
+	}
+	if configuredRepository != resolvedRepository || evidence.Repository != configuredRepository {
+		return fail("repository identity no longer matches")
+	}
+	if evidence.Digest != resolvedDigest {
+		return fail("digest identity no longer matches")
+	}
+	if !validSHA256Hex(p.Fingerprint) {
+		return fail("current machine policy has no valid fingerprint")
+	}
+	if evidence.PolicyFingerprint != p.Fingerprint {
+		return fail("effective machine policy changed")
+	}
+	if evidence.Mechanism != rule.Mechanism {
+		return fail("signature mechanism changed")
+	}
+	if rule.NetworkMode != ImageTrustOnline {
+		return fail("current network mode %q has no supported runtime evidence producer", rule.NetworkMode)
+	}
+	if evidence.Verifier != ImageTrustVerifierCosign || evidence.VerifierSHA256 != p.cosignVerifier.SHA256 {
+		return fail("verifier identity changed")
+	}
+	switch rule.Mechanism {
+	case ImageTrustKeyless:
+		if evidence.Signer != rule.Subject || evidence.Issuer != rule.Issuer {
+			return fail("keyless signer identity changed")
+		}
+	case ImageTrustKey:
+		if evidence.Signer != rule.PublicKey.SHA256 || evidence.Issuer != "" {
+			return fail("public-key identity changed")
+		}
+	default:
+		return fail("unsupported signature mechanism %q", rule.Mechanism)
+	}
+	return nil
+}
+
+func splitResolvedImageDigest(resolved string) (string, string, error) {
+	if strings.Count(resolved, "@") != 1 {
+		return "", "", fmt.Errorf("resolved reference %q is not an exact repository digest", resolved)
+	}
+	repository, digest, _ := strings.Cut(resolved, "@")
+	lastSlash := strings.LastIndexByte(repository, '/')
+	if repository == "" || strings.LastIndexByte(repository, ':') > lastSlash {
+		return "", "", fmt.Errorf("resolved reference %q is not an exact repository digest", resolved)
+	}
+	canonical, err := CanonicalRepository(repository)
+	if err != nil {
+		return "", "", fmt.Errorf("resolved repository is invalid: %v", err)
+	}
+	if !strings.HasPrefix(digest, "sha256:") || !validSHA256Hex(strings.TrimPrefix(digest, "sha256:")) {
+		return "", "", fmt.Errorf("resolved digest %q is not a canonical SHA-256", digest)
+	}
+	return canonical, digest, nil
+}
+
+func validSHA256Hex(value string) bool {
+	if len(value) != sha256.Size*2 || value != strings.ToLower(value) {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
 }
 
 func (p Policy) authorizeRepository(ref string) (string, error) {

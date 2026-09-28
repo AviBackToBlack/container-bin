@@ -513,9 +513,103 @@ func TestAuthorizeImage(t *testing.T) {
 		t.Fatalf("unmanaged policy changed behavior: %v", err)
 	}
 	p = Policy{SchemaVersion: 1, AllowedRepositories: []string{"ghcr.io/team"}}
-	if err := p.AuthorizeResolvedImage("ghcr.io/team/tool:1", "evil.example/tool@sha256:"+strings.Repeat("a", 64), false); err == nil {
+	if err := p.AuthorizeResolvedImage("ghcr.io/team/tool:1", "evil.example/tool@sha256:"+strings.Repeat("a", 64), false, nil); err == nil {
 		t.Fatal("resolved lock repository bypassed allowlist")
 	}
+}
+
+func TestAuthorizeResolvedImageRequiresFreshTrustEvidence(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	verifierHash := strings.Repeat("c", 64)
+	policyFingerprint := strings.Repeat("d", 64)
+	issuer := "https://token.actions.githubusercontent.com"
+	subject := "https://github.com/acme/tools/.github/workflows/release.yml@refs/tags/v1.2.3"
+	p := Policy{
+		SchemaVersion:       3,
+		Fingerprint:         policyFingerprint,
+		cosignVerifier:      FilePin{Path: "cosign.exe", SHA256: verifierHash},
+		AllowedRepositories: []string{"ghcr.io/acme"},
+		imageTrustRules: []ImageTrustRule{{
+			Repository: "ghcr.io/acme", Mechanism: ImageTrustKeyless,
+			Issuer: issuer, Subject: subject, NetworkMode: ImageTrustOnline,
+		}},
+	}
+	configured := "ghcr.io/acme/tool:1"
+	resolved := "ghcr.io/acme/tool@" + digest
+	valid := RuntimeImageTrustEvidence{
+		Mechanism: ImageTrustKeyless, Repository: "ghcr.io/acme/tool", Digest: digest,
+		Signer: subject, Issuer: issuer, Verifier: ImageTrustVerifierCosign,
+		VerifierSHA256: verifierHash, PolicyFingerprint: policyFingerprint,
+	}
+	if err := p.AuthorizeResolvedImage(configured, resolved, false, &valid); err != nil {
+		t.Fatalf("fresh evidence rejected: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		edit func(*Policy, *RuntimeImageTrustEvidence)
+	}{
+		{name: "missing evidence", edit: func(_ *Policy, evidence *RuntimeImageTrustEvidence) { *evidence = RuntimeImageTrustEvidence{} }},
+		{name: "repository changed", edit: func(_ *Policy, evidence *RuntimeImageTrustEvidence) { evidence.Repository = "ghcr.io/acme/other" }},
+		{name: "digest changed", edit: func(_ *Policy, evidence *RuntimeImageTrustEvidence) {
+			evidence.Digest = "sha256:" + strings.Repeat("b", 64)
+		}},
+		{name: "policy changed", edit: func(_ *Policy, evidence *RuntimeImageTrustEvidence) {
+			evidence.PolicyFingerprint = strings.Repeat("e", 64)
+		}},
+		{name: "mechanism changed", edit: func(_ *Policy, evidence *RuntimeImageTrustEvidence) { evidence.Mechanism = ImageTrustKey }},
+		{name: "verifier kind changed", edit: func(_ *Policy, evidence *RuntimeImageTrustEvidence) { evidence.Verifier = "other" }},
+		{name: "verifier hash changed", edit: func(_ *Policy, evidence *RuntimeImageTrustEvidence) {
+			evidence.VerifierSHA256 = strings.Repeat("e", 64)
+		}},
+		{name: "subject changed", edit: func(_ *Policy, evidence *RuntimeImageTrustEvidence) { evidence.Signer += "-other" }},
+		{name: "issuer changed", edit: func(_ *Policy, evidence *RuntimeImageTrustEvidence) { evidence.Issuer = "https://issuer.example" }},
+		{name: "offline policy", edit: func(policy *Policy, _ *RuntimeImageTrustEvidence) {
+			policy.imageTrustRules[0].NetworkMode = ImageTrustOfflineBundle
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			currentPolicy := p
+			currentPolicy.imageTrustRules = append([]ImageTrustRule(nil), p.imageTrustRules...)
+			evidence := valid
+			tc.edit(&currentPolicy, &evidence)
+			var candidate *RuntimeImageTrustEvidence
+			if tc.name != "missing evidence" {
+				candidate = &evidence
+			}
+			err := currentPolicy.AuthorizeResolvedImage(configured, resolved, false, candidate)
+			assertPolicyCode(t, err, "image_trust_unverified")
+		})
+	}
+}
+
+func TestAuthorizeResolvedImageAcceptsCurrentKeyEvidence(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	keyHash := strings.Repeat("b", 64)
+	verifierHash := strings.Repeat("c", 64)
+	policyFingerprint := strings.Repeat("d", 64)
+	p := Policy{
+		SchemaVersion: 3,
+		Fingerprint:   policyFingerprint,
+		cosignVerifier: FilePin{
+			Path: "cosign.exe", SHA256: verifierHash,
+		},
+		imageTrustRules: []ImageTrustRule{{
+			Repository: "registry.example.com/team", Mechanism: ImageTrustKey,
+			PublicKey: FilePin{Path: "release.pub", SHA256: keyHash}, NetworkMode: ImageTrustOnline,
+		}},
+	}
+	evidence := &RuntimeImageTrustEvidence{
+		Mechanism: ImageTrustKey, Repository: "registry.example.com/team/tool", Digest: digest,
+		Signer: keyHash, Verifier: ImageTrustVerifierCosign,
+		VerifierSHA256: verifierHash, PolicyFingerprint: policyFingerprint,
+	}
+	if err := p.AuthorizeResolvedImage("registry.example.com/team/tool:1", "registry.example.com/team/tool@"+digest, false, evidence); err != nil {
+		t.Fatalf("fresh key evidence rejected: %v", err)
+	}
+	evidence.Signer = strings.Repeat("e", 64)
+	assertPolicyCode(t, p.AuthorizeResolvedImage("registry.example.com/team/tool:1", "registry.example.com/team/tool@"+digest, false, evidence), "image_trust_unverified")
 }
 
 func assertPolicyCode(t *testing.T, err error, want string) {

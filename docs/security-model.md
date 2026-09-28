@@ -83,11 +83,12 @@ readable, and dangerous to let others edit.
   against the exact digest, cosign predicate, and configured identity/key.
   Lock/update records an online result only when
   exactly one authenticated transparency bundle fits the schema-2 evidence
-  contract. Covered repositories still fail closed at runtime until that result
-  can be consumed; missing implementation is never permission to fall back to
-  digest-only locking. Offline rules refuse process execution until policy can
-  pin the complete trusted-root and bundle inputs needed to forbid network
-  fallback.
+  contract. Runtime accepts a covered digest only when that evidence still
+  matches the current repository, digest, verifier pin, complete policy
+  fingerprint, mechanism and signer/key identity. Missing or stale evidence
+  never falls back to digest-only locking. Offline rules refuse process
+  execution until policy can pin the complete trusted-root and bundle inputs
+  needed to forbid network fallback.
 - **Fail-closed host boundary.** Non-bootstrap work currently runs only in a
   native Windows process. Windows binaries launched through detected WSL
   interoperability, WSL1, ordinary work on recognized-but-not-yet-enabled native WSL2,
