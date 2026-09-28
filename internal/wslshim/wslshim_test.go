@@ -49,6 +49,22 @@ func TestInspectReportsReadyAndMissingWithoutMutation(t *testing.T) {
 	}
 }
 
+func TestInspectAcceptsCanonicalRelativeSymlinkTargets(t *testing.T) {
+	layout := testLayout()
+	deps := validDependencies(layout)
+	deps.links[layout.ManagementShim] = "../lib/container-bin/cb"
+	toolPath := pathFor(layout, "node24")
+	deps.files[toolPath] = fileInfo{Mode: os.ModeSymlink | 0o777, UID: layout.UID}
+	deps.links[toolPath] = "../lib/container-bin/cb"
+	result, err := inspect(layout, []string{"node24"}, deps.dependencies())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Shims) != 1 || result.Shims[0].State != Ready {
+		t.Fatalf("Inspect() = %#v", result.Shims)
+	}
+}
+
 func TestPlanRejectsRedirectedLayoutAndInvalidNames(t *testing.T) {
 	layoutMutations := map[string]func(*hostenv.WSLLayout){
 		"relative home":       func(l *hostenv.WSLLayout) { l.Home = "home/alice" },
@@ -154,12 +170,95 @@ func TestInspectPropagatesFilesystemErrors(t *testing.T) {
 	}
 }
 
+func TestReconcileInstallsOnlyMissingShimsAndRevalidates(t *testing.T) {
+	layout := testLayout()
+	deps := validDependencies(layout)
+	deps.files[pathFor(layout, "node24")] = fileInfo{Mode: os.ModeSymlink | 0o777, UID: layout.UID}
+	deps.links[pathFor(layout, "node24")] = layout.BinaryPath
+	directory := &fakeShimDirectory{dependencies: &deps}
+	result, err := reconcile(layout, []string{"python313", "node24"}, mutationDependencies{
+		dependencies:      deps.dependencies(),
+		openShimDirectory: func(hostenv.WSLLayout) (shimDirectory, error) { return directory, nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(directory.installed, []string{"python313"}) {
+		t.Fatalf("installed = %q, want [python313]", directory.installed)
+	}
+	for _, shim := range result.Shims {
+		if shim.State != Ready {
+			t.Fatalf("shim %s state = %s, want ready", shim.Name, shim.State)
+		}
+	}
+	if !directory.closed {
+		t.Fatal("shim directory was not closed")
+	}
+}
+
+func TestReconcileDoesNotOpenDirectoryWhenEveryShimIsReady(t *testing.T) {
+	layout := testLayout()
+	deps := validDependencies(layout)
+	deps.files[pathFor(layout, "node24")] = fileInfo{Mode: os.ModeSymlink | 0o777, UID: layout.UID}
+	deps.links[pathFor(layout, "node24")] = layout.BinaryPath
+	opened := false
+	if _, err := reconcile(layout, []string{"node24"}, mutationDependencies{
+		dependencies: deps.dependencies(),
+		openShimDirectory: func(hostenv.WSLLayout) (shimDirectory, error) {
+			opened = true
+			return nil, errors.New("unexpected open")
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if opened {
+		t.Fatal("ready reconciliation opened the shim directory")
+	}
+}
+
+func TestReconcileClosesDirectoryAfterMutationFailure(t *testing.T) {
+	layout := testLayout()
+	deps := validDependencies(layout)
+	directory := &fakeShimDirectory{dependencies: &deps, fail: errors.New("collision")}
+	if _, err := reconcile(layout, []string{"node24"}, mutationDependencies{
+		dependencies:      deps.dependencies(),
+		openShimDirectory: func(hostenv.WSLLayout) (shimDirectory, error) { return directory, nil },
+	}); err == nil || !strings.Contains(err.Error(), "collision") {
+		t.Fatalf("reconcile() error = %v", err)
+	}
+	if !directory.closed {
+		t.Fatal("shim directory was not closed after failure")
+	}
+}
+
 type fakeDependencies struct {
 	runtime  hostenv.Runtime
 	uid      uint32
 	files    map[string]fileInfo
 	links    map[string]string
 	failPath string
+}
+
+type fakeShimDirectory struct {
+	dependencies *fakeDependencies
+	installed    []string
+	fail         error
+	closed       bool
+}
+
+func (d *fakeShimDirectory) ensure(shim Shim) error {
+	if d.fail != nil {
+		return d.fail
+	}
+	d.installed = append(d.installed, shim.Name)
+	d.dependencies.files[shim.Path] = fileInfo{Mode: os.ModeSymlink | 0o777, UID: d.dependencies.uid}
+	d.dependencies.links[shim.Path] = shim.Target
+	return nil
+}
+
+func (d *fakeShimDirectory) close() error {
+	d.closed = true
+	return nil
 }
 
 func validDependencies(layout hostenv.WSLLayout) fakeDependencies {

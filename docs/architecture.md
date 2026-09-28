@@ -343,7 +343,7 @@ internal/atomicio    crash-safe write + .bak recovery                (leaf)
 internal/mutationlock  the registry mutation lock primitive          (leaf)
 internal/hostenv       host classification and gated WSL layout       (leaf)
 internal/wslfs         native WSL filesystem ownership/mode preflight
-internal/wslshim       native WSL registry-derived shim preflight
+internal/wslshim       native WSL registry-derived shim preflight/mutation
 internal/wslproject    native WSL project storage boundary
 internal/wsldocker     native WSL Docker Desktop integration proof
 internal/wslvolume     native WSL namespaced volume identity
@@ -408,15 +408,17 @@ rejects the operation. This exact management dispatch precedes the general host
 gate but performs no policy, registry or Docker I/O. Frontend wiring,
 registry-derived tool shims and Docker integration remain later WSL slices.
 
-`internal/wslshim` is the read-only registry-derived tool-shim identity and
-preflight boundary. It derives only direct children of the fixed native shim
-directory, validates names through the registry rules, and requires the fixed
-managed binary, shim directory and management symlink to retain their expected
-owner/mode/target identity. Existing tool shims must be current-user-owned
-symlinks to the fixed managed binary; missing shims are reported explicitly.
-It must be composed after `internal/wslfs` validates the same layout's home,
-intermediate path and filesystem-device boundary. It never creates, replaces,
-removes or discovers unrelated directory entries.
+`internal/wslshim` is the registry-derived tool-shim identity, preflight and
+race-safe mutation boundary. It derives only direct children of the fixed native
+shim directory, validates names through the registry rules, and requires the
+fixed managed binary, shim directory and management symlink to retain their
+expected owner/mode/target identity. Existing tool shims must be
+current-user-owned symlinks whose canonical target is the fixed managed binary;
+missing tool shims may be published without clobbering through a no-follow,
+inode-pinned directory handle and are fully revalidated afterward. It must be
+composed after `internal/wslfs` validates the same layout's home, intermediate
+path and filesystem-device boundary. It never replaces or removes foreign
+objects and never discovers unrelated directory entries.
 
 `internal/wslproject` is an unexposed classifier for already-selected native
 WSL project roots. It requires a canonical existing directory with no symlink
