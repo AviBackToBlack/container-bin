@@ -341,8 +341,8 @@ is not completion.
    - narrow reusable Linux host interfaces, fail-closed boundary and native
      layout/state identity are merged in PRs #77 and #83;
    - explicit read-only/apply Linux ownership, permission and symlink layout
-     preparation and registry-derived tool-shim preflight are implemented;
-     installer/runtime integration and race-safe shim mutation remain;
+     preparation plus registry-derived tool-shim preflight and race-safe
+     mutation are implemented; installer/runtime integration remains;
     - Docker Desktop WSL integration proof is implemented but not yet wired into
       an enabled frontend;
    - namespace-prefixed/labeled WSL volume identity is implemented, but Docker

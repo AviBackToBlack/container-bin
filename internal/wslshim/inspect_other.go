@@ -13,3 +13,9 @@ import (
 func Inspect(hostenv.WSLLayout, []string) (Result, error) {
 	return Result{}, errors.New("native WSL tool-shim inspection requires Linux")
 }
+
+// Reconcile is unavailable outside Linux because native descriptor-relative
+// symlink mutation is part of the WSL trust boundary.
+func Reconcile(hostenv.WSLLayout, []string) (Result, error) {
+	return Result{}, errors.New("native WSL tool-shim mutation requires Linux")
+}

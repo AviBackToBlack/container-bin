@@ -86,15 +86,18 @@ permissions and ownership are never repaired by guessing intent. The management
 shim, when present, must be a current-user-owned symlink to the fixed managed
 binary; unrelated files or links fail closed.
 
-The unexposed `internal/wslshim` preflight extends that identity contract to
+The unexposed `internal/wslshim` lifecycle extends that identity contract to
 registry-derived tool names. It plans only sorted direct children of the fixed
 shim directory, requires every existing tool shim to be a current-user-owned
 symlink to the fixed managed binary, and reports missing shims separately.
-It is a leaf-object check and must run only after `internal/wslfs` has validated
-the same layout's canonical home, intermediate components and distribution-root
-device boundary. This slice is deliberately read-only: safe descriptor-relative creation,
-removal and registry lifecycle wiring remain later work, and unrelated directory
-entries are never adopted or enumerated as managed shims.
+Reconciliation runs only after `internal/wslfs` validates the same layout's
+canonical home, intermediate components and distribution-root device boundary.
+It then reopens every shim-directory component without following symlinks, pins
+the validated directory, and publishes only missing symlinks with an atomic
+no-clobber operation. Concurrent correct creation is accepted; a regular file,
+foreign link, wrong target or path redirection fails closed and is never
+replaced. Installer/config wiring and removal remain later work, and unrelated
+directory entries are never adopted or enumerated as managed shims.
 
 Every ContainerBin-managed Docker object in WSL is scoped to one exact tuple:
 
@@ -170,9 +173,9 @@ not wired to this contract yet.
 
 Later reviewable slices must still implement and qualify all of the following:
 
-1. integrate the prepared layout and registry-derived tool-shim preflight into
-   the native installer/config lifecycle, revalidate each mutation boundary and
-   add race-safe shim mutation;
+1. integrate the prepared layout and registry-derived tool-shim reconciliation
+   into the native installer/config lifecycle; the unexposed mutation primitive
+   is race-safe and revalidates the fixed layout at its mutation boundary;
 2. wire the implemented distribution/machine/user volume identity contract
    into shared/project creation and every lifecycle command;
 3. wire the implemented project storage boundary, then complete native Linux

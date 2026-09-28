@@ -1,5 +1,5 @@
-// Package wslshim defines and inspects registry-derived native WSL tool-shim
-// identities. It is read-only; mutation wiring remains a separate boundary.
+// Package wslshim defines, inspects and reconciles registry-derived native WSL
+// tool-shim identities. Frontend lifecycle wiring remains a separate boundary.
 package wslshim
 
 import (
@@ -47,6 +47,16 @@ type dependencies struct {
 	currentUID     func() uint32
 	lstat          func(string) (fileInfo, error)
 	readlink       func(string) (string, error)
+}
+
+type shimDirectory interface {
+	ensure(Shim) error
+	close() error
+}
+
+type mutationDependencies struct {
+	dependencies
+	openShimDirectory func(hostenv.WSLLayout) (shimDirectory, error)
 }
 
 // Plan returns sorted deterministic identities without accessing the filesystem.
@@ -114,6 +124,48 @@ func inspect(layout hostenv.WSLLayout, names []string, d dependencies) (Result, 
 		planned[index].State = Ready
 	}
 	return Result{Shims: planned}, nil
+}
+
+func reconcile(layout hostenv.WSLLayout, names []string, d mutationDependencies) (Result, error) {
+	before, err := inspect(layout, names, d.dependencies)
+	if err != nil {
+		return Result{}, err
+	}
+	missing := make([]Shim, 0, len(before.Shims))
+	for _, shim := range before.Shims {
+		if shim.State == Missing {
+			missing = append(missing, shim)
+		}
+	}
+	if len(missing) == 0 {
+		return before, nil
+	}
+	if d.openShimDirectory == nil {
+		return Result{}, errors.New("native WSL tool-shim mutation is unavailable")
+	}
+	directory, err := d.openShimDirectory(layout)
+	if err != nil {
+		return Result{}, fmt.Errorf("open native WSL shim directory for mutation: %w", err)
+	}
+	for _, shim := range missing {
+		if err := directory.ensure(shim); err != nil {
+			closeErr := directory.close()
+			return Result{}, errors.Join(fmt.Errorf("install native WSL tool shim %s: %w", shim.Path, err), closeErr)
+		}
+	}
+	if err := directory.close(); err != nil {
+		return Result{}, fmt.Errorf("close native WSL shim directory after mutation: %w", err)
+	}
+	after, err := inspect(layout, names, d.dependencies)
+	if err != nil {
+		return Result{}, fmt.Errorf("revalidate native WSL tool shims after mutation: %w", err)
+	}
+	for _, shim := range after.Shims {
+		if shim.State != Ready {
+			return Result{}, fmt.Errorf("native WSL tool shim %s remained %s after mutation", shim.Path, shim.State)
+		}
+	}
+	return after, nil
 }
 
 func inspectBinary(layout hostenv.WSLLayout, d dependencies) error {
