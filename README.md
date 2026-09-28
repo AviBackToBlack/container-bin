@@ -733,9 +733,13 @@ identity/key. The lockfile is promoted to schema 2 only when exactly one bundle
 passes. Zero or multiple matching bundles, verifier failure, malformed output,
 or unavailable policy material aborts the refresh without a digest-only
 fallback. Project-scoped refresh preserves unrelated schema-2 evidence. Runtime
-freshness authorization is still fail closed, so covered tools cannot execute
-yet and `cb lock --check` reports them denied. Old ContainerBin builds reject
-schema 2 as unsupported; there is no silent down-conversion.
+executes a policy-covered digest only while its schema-2 evidence matches the
+current canonical repository, exact digest, signature mechanism/network mode,
+verifier, signer/key identity, issuer and complete machine-policy fingerprint.
+Missing or stale evidence fails with `policy.image_trust_unverified` and must be
+refreshed explicitly with `cb update` or `cb lock`; `cb lock --check` reports the
+same denial. Old ContainerBin builds reject schema 2 as unsupported; there is
+no silent down-conversion.
 
 Tools sharing an image share one lock entry. The Node 24 family
 (`node24`, `npm24`, `npx24`, its aliases when selected, and anything exposed
@@ -778,9 +782,10 @@ provisioned with a matching signature by the administrator. Policy schema 3 can
 add repository-bound image-signature requirements. `cb lock` and `cb update`
 now authenticate and privately stage the pinned verifier and key bytes, run
 online verification against the resolved exact repository digest, independently
-validate bounded JSON results, and record the result as schema-2 evidence.
-Offline rules, private-registry credential bridging and runtime freshness
-authorization remain fail closed.
+validate bounded JSON results, record the result as schema-2 evidence, and
+authorize runtime use only while that evidence remains fresh against the exact
+digest and current effective policy. Offline rules and private-registry
+credential bridging remain fail closed.
 Lower-precedence registry or command-line choices cannot weaken policy. See
 [enterprise machine policy](docs/enterprise-policy.md) for the schema,
 ownership rules, normalization behavior and stable diagnostic codes.

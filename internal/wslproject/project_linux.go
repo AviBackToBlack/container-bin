@@ -27,6 +27,18 @@ func Classify(root string) (Project, error) {
 	})
 }
 
+// ClassifyDescendant revalidates a previously classified project and proves
+// that one canonical path has not crossed a symlink or nested-mount boundary.
+// Missing output paths are classified through their nearest existing ancestor.
+func ClassifyDescendant(project Project, candidate string) (Descendant, error) {
+	return resolveDescendant(project, candidate, dependencies{
+		currentRuntime: hostenv.Current,
+		lstat:          statPath,
+		evalSymlinks:   filepath.EvalSymlinks,
+		readMountInfo:  readMountInfo,
+	})
+}
+
 func statPath(path string) (pathInfo, error) {
 	info, err := os.Lstat(path)
 	if err != nil {

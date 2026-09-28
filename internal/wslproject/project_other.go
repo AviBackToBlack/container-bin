@@ -9,3 +9,9 @@ import "errors"
 func Classify(string) (Project, error) {
 	return Project{}, errors.New("native WSL project classification requires Linux")
 }
+
+// ClassifyDescendant is unavailable outside Linux because mount identity and
+// symlink semantics are part of the native WSL project boundary.
+func ClassifyDescendant(Project, string) (Descendant, error) {
+	return Descendant{}, errors.New("native WSL project path classification requires Linux")
+}

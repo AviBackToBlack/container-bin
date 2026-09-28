@@ -94,6 +94,19 @@ func TestLockFileV2TrustEvidenceRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRuntimeTrustEvidenceProjectsValidatedPolicyFields(t *testing.T) {
+	entry := validTrustLock(2).Images["node:24-slim"]
+	got := entry.RuntimeTrustEvidence()
+	want := entry.Trust
+	if got == nil || got.Mechanism != want.Mechanism || got.Repository != want.Repository || got.Digest != want.Digest || got.Signer != want.Signer || got.Issuer != want.Issuer || got.Verifier != want.Verifier || got.VerifierSHA256 != want.VerifierSHA256 || got.PolicyFingerprint != want.PolicyFingerprint {
+		t.Fatalf("RuntimeTrustEvidence() = %#v, want policy fields from %#v", got, want)
+	}
+	entry.Trust = nil
+	if got := entry.RuntimeTrustEvidence(); got != nil {
+		t.Fatalf("RuntimeTrustEvidence() without trust = %#v, want nil", got)
+	}
+}
+
 func TestLockFileV2KeyEvidenceRoundTrip(t *testing.T) {
 	lf := validTrustLock(2)
 	entry := lf.Images["node:24-slim"]

@@ -257,9 +257,12 @@ authenticated transparency bundle; zero or multiple distinct bundles abort the
 refresh because schema 2 cannot represent them without ambiguity. The completed
 record promotes the lockfile to schema 2, while project-scoped refresh can
 preserve unrelated evidence without treating it as runtime authorization.
-Runtime still fails with `policy.image_trust_unverified` until it proves stored
-evidence current against the effective policy; no digest-only path can silently
-bypass the control.
+Runtime authorization consumes that evidence only for the exact configured and
+resolved repository/digest. It requires the current policy fingerprint,
+mechanism, signer/key, issuer and pinned cosign hash to match the recorded
+values; any mismatch fails with `policy.image_trust_unverified` and requires an
+explicit lock/update refresh. No digest-only path can silently bypass a current
+repository trust rule.
 
 ## Atomic writes
 

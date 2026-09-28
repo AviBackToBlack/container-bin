@@ -33,7 +33,7 @@ const (
 	// the repository so the producer cannot drift from the parser's schema
 	// identity while constructing a validated record.
 	ImageTrustEvidenceVersion = 1
-	ImageTrustVerifierCosign  = "cosign"
+	ImageTrustVerifierCosign  = policy.ImageTrustVerifierCosign
 )
 
 // ImageTrustEvidence records the exact authenticated inputs and result of one
@@ -59,6 +59,25 @@ type LockEntry struct {
 	Resolved   string
 	Digest     string
 	Trust      *ImageTrustEvidence
+}
+
+// RuntimeTrustEvidence returns the policy-facing subset of already validated
+// lock evidence. A nil result preserves the distinction between absent
+// evidence and a malformed record, which Load rejects before authorization.
+func (e LockEntry) RuntimeTrustEvidence() *policy.RuntimeImageTrustEvidence {
+	if e.Trust == nil {
+		return nil
+	}
+	return &policy.RuntimeImageTrustEvidence{
+		Mechanism:         e.Trust.Mechanism,
+		Repository:        e.Trust.Repository,
+		Digest:            e.Trust.Digest,
+		Signer:            e.Trust.Signer,
+		Issuer:            e.Trust.Issuer,
+		Verifier:          e.Trust.Verifier,
+		VerifierSHA256:    e.Trust.VerifierSHA256,
+		PolicyFingerprint: e.Trust.PolicyFingerprint,
+	}
 }
 
 type LockFile struct {
@@ -600,7 +619,7 @@ func runtimeImageForTool(t registry.Tool, machinePolicy policy.Policy, lf *LockF
 		}
 		return "", fmt.Errorf("image %q is not locked in %s; run `cb update %s` or `cb lock`", t.Image, path, t.Name)
 	}
-	if err := machinePolicy.AuthorizeResolvedImage(t.Image, e.Resolved, IsLocalResolved(e.Resolved)); err != nil {
+	if err := machinePolicy.AuthorizeResolvedImage(t.Image, e.Resolved, IsLocalResolved(e.Resolved), e.RuntimeTrustEvidence()); err != nil {
 		return "", err
 	}
 	return e.Resolved, nil
