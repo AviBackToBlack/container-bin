@@ -346,7 +346,7 @@ internal/wslfs         native WSL filesystem ownership/mode preflight
 internal/wslshim       native WSL registry-derived shim preflight/mutation
 internal/wslproject    native WSL project storage boundary
 internal/wsldocker     native WSL Docker Desktop integration proof
-internal/wslvolume     native WSL namespaced volume identity
+internal/wslvolume     native WSL namespaced volume identity/lifecycle
 internal/selfupdate    release selection, staging, verification and replacement
 ```
 
@@ -369,7 +369,7 @@ wslfs       -> hostenv
 wslshim     -> hostenv, registry
 wslproject  -> hostenv
 wsldocker   -> hostenv
-wslvolume   -> hostenv, registry
+wslvolume   -> hostenv, registry, wsldocker
 selfupdate  -> mutationlock, registry
 atomicio, dockervol, hostenv, mutationlock, toml -> (leaves)
 ```
@@ -439,15 +439,20 @@ The probe has fixed time and output bounds. A reachable local or remote Docker
 Engine is deliberately insufficient; later frontend wiring must repeat this
 proof and retain the explicit Unix endpoint for every Docker operation.
 
-`internal/wslvolume` defines the pure WSL Docker-volume identity contract. A
-volume name starts with `cb-<wsl-namespace>-`; length-delimited group/logical
-segments prevent ambiguous owner encodings, and exact namespace ownership is
-duplicated in the `cb.wsl_namespace` label. Shared and project volumes retain
-the existing managed/kind/owner labels; project roots are canonical absolute
-Linux paths hashed case-sensitively under a separate versioned domain. The
-package does not contact Docker. Prefix/label filtering is discovery-only;
-creation, adoption, GC, backup, restore and deletion must use an exact identity
-constructed by this package and match its complete label set.
+`internal/wslvolume` defines the WSL Docker-volume identity and bounded control
+lifecycle. A volume name starts with `cb-<wsl-namespace>-`;
+length-delimited group/logical segments prevent ambiguous owner encodings, and
+exact namespace ownership is duplicated in the `cb.wsl_namespace` label.
+Shared and project volumes retain the existing managed/kind/owner labels;
+project roots are canonical absolute Linux paths hashed case-sensitively under
+a separate versioned domain. Inspect, create, namespace discovery and
+non-forced removal use `internal/wsldocker` rather than an ambient Docker CLI,
+so every request repeats the Docker Desktop endpoint proof. Create validates
+the response and re-inspects the volume; removal validates exact ownership
+before mutation and verifies absence afterward. Prefix/label filtering remains
+discovery-only: adoption, GC, backup, restore and deletion must match an exact
+identity constructed by this package and its complete labels plus local
+driver/scope.
 
 After the host runtime boundary is enforced, `cb self-update` is dispatched
 before machine policy and registry loading. Release selection therefore remains

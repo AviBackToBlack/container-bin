@@ -177,9 +177,9 @@ process/IO contract and are deliberately not supported by this primitive. It is
 not wired into tool execution yet; real WSL2 + Docker Desktop qualification
 remains mandatory before support.
 
-## Native WSL volume identity
+## Native WSL volume identity and control lifecycle
 
-The implemented pure volume contract names every object
+The implemented volume contract names every object
 `cb-<namespace>-<group-length>-<group>-<logical-length>-<logical>`; project
 volumes add a 12-hex project hash. Length delimiters keep hyphenated group and
 logical names injective rather than allowing two owners to collide. Every
@@ -188,8 +188,19 @@ volume also carries `cb.wsl_namespace=<namespace>` in addition to the existing
 uses a versioned WSL domain and the exact canonical absolute Linux path: it is
 case-sensitive and performs no Unicode normalization. Namespace prefix/label
 filters are discovery-only; adoption or mutation requires an exact constructed
-name and complete label-set match. Docker creation and lifecycle commands are
-not wired to this contract yet.
+name and complete label-set match.
+
+The same package now binds inspect, create, namespace discovery and non-forced
+remove operations to the proof-bound Docker Desktop control transport. It does
+not invoke `docker` or accept an ambient context. Existing volumes must also use
+the local driver and scope. Create validates the Engine response and then
+re-inspects the exact volume, so Docker's idempotent create behavior cannot
+silently adopt a same-name foreign object. Remove first proves the complete
+identity, never requests force, and verifies that the name is absent afterward.
+Discovery retains complete untrusted labels for later exact matching and fails
+on partial-result warnings, duplicates or results outside both namespace
+filters. Tool execution plus `cb state`/`cb gc` are not wired to these
+primitives yet.
 
 ## Required before WSL execution can be enabled
 
@@ -198,8 +209,9 @@ Later reviewable slices must still implement and qualify all of the following:
 1. integrate the prepared layout and registry-derived tool-shim reconciliation
    into the native installer/config lifecycle; the unexposed mutation primitive
    is race-safe and revalidates the fixed layout at its mutation boundary;
-2. wire the implemented distribution/machine/user volume identity contract
-   into shared/project creation and every lifecycle command;
+2. wire the proof-bound volume primitives into tool-time shared/project
+   creation plus `cb state`, `cb gc`, backup and restore; each consumer must
+   construct and match the complete distribution/machine/user identity;
 3. wire the implemented project and descendant storage boundary into native
    Linux argument mapping, then complete stdin/TTY and signal semantics;
 4. wire the implemented bounded Docker Desktop control-operation primitive into
