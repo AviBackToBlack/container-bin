@@ -187,10 +187,12 @@ canonical repository, locked digest, signer/key identity, optional keyless
 issuer, authenticated bundle SHA-256, canonical UTC verification time, cosign
 identity/hash and the full policy-byte fingerprint. The parser binds that
 evidence back to the configured and resolved repository plus digest and rejects
-partial evidence, duplicates and evidence on local image IDs. New code keeps
-schema 1 as the write default until the verification producer explicitly opts
-into schema 2; a parser capped at schema 1 rejects schema 2. This provides a
-one-way, fail-closed migration boundary instead of silently discarding evidence.
+partial evidence, duplicates and evidence on local image IDs. Digest-only
+refreshes retain schema 1 unless an existing schema-2 document is being
+preserved. An online policy-covered repository is resolved first, verified at
+that exact digest, and then promotes the document to schema 2. A parser capped
+at schema 1 rejects schema 2. This provides a one-way, fail-closed migration
+boundary instead of silently discarding evidence.
 
 Runtime resolution is fail-closed: lockfile present + configured image missing
 from it = refuse to run and say exactly which command fixes it. Tools sharing
@@ -237,20 +239,27 @@ not a path that could be replaced between checking and execution.
 
 `internal/imagetrust` owns the invocation boundary. It authenticates and stages
 only immutable verifier/key snapshots in a protected current-user directory,
-uses a bounded two-minute child process with a minimal environment, and invokes
-the staged verifier for one exact canonical `repository@sha256` value. It then
-re-hashes the staged material and independently checks bounded JSON output for
-the expected payload type, digest and keyless identity. Only online rules are
-accepted in this slice. `offline-bundle` fails before process execution until
+uses bounded two-minute child processes with a minimal environment, and asks
+the staged verifier to download signature bundles for one exact canonical
+`repository@sha256` value. Each bounded bundle is privately staged and passed
+back to the same verifier for local verification against the exact digest,
+`https://sigstore.dev/cosign/sign/v1` predicate, and configured identity/key;
+only those authenticated bundle bytes can become evidence. Staged material is
+re-hashed after every use. Only online rules are accepted in this slice.
+`offline-bundle` fails before process execution until
 policy can pin the complete trusted-root material needed to guarantee a truly
 network-independent verification; inherited registry credentials are also not
 passed to the verifier yet.
 
-Lock schema 2 can validate and retain structured evidence, but no command
-produces or consumes it for authorization yet. Until `cb lock` records this
-result and runtime proves that stored evidence is current, every covered image
-fails authorization with `policy.image_trust_unverified`; no existing
-digest-only path can silently bypass the new control.
+`cb lock` and `cb update` now invoke this boundary after exact digest resolution
+for every policy-covered repository. Evidence production requires exactly one
+authenticated transparency bundle; zero or multiple distinct bundles abort the
+refresh because schema 2 cannot represent them without ambiguity. The completed
+record promotes the lockfile to schema 2, while project-scoped refresh can
+preserve unrelated evidence without treating it as runtime authorization.
+Runtime still fails with `policy.image_trust_unverified` until it proves stored
+evidence current against the effective policy; no digest-only path can silently
+bypass the control.
 
 ## Atomic writes
 
@@ -332,6 +341,7 @@ internal/mutationlock  the registry mutation lock primitive          (leaf)
 internal/hostenv       host classification and gated WSL layout       (leaf)
 internal/wslfs         native WSL filesystem ownership/mode preflight
 internal/wslshim       native WSL registry-derived shim preflight
+internal/wsldocker     native WSL Docker Desktop integration proof
 internal/wslvolume     native WSL namespaced volume identity
 internal/selfupdate    release selection, staging, verification and replacement
 ```
@@ -353,6 +363,7 @@ registry     -> atomicio, toml
 policy       -> toml
 wslfs       -> hostenv
 wslshim     -> hostenv, registry
+wsldocker   -> hostenv
 wslvolume   -> hostenv, registry
 selfupdate  -> mutationlock, registry
 atomicio, dockervol, hostenv, mutationlock, toml -> (leaves)
@@ -398,7 +409,20 @@ directory, validates names through the registry rules, and requires the fixed
 managed binary, shim directory and management symlink to retain their expected
 owner/mode/target identity. Existing tool shims must be current-user-owned
 symlinks to the fixed managed binary; missing shims are reported explicitly.
-It never creates, replaces, removes or discovers unrelated directory entries.
+It must be composed after `internal/wslfs` validates the same layout's home,
+intermediate path and filesystem-device boundary. It never creates, replaces,
+removes or discovers unrelated directory entries.
+
+`internal/wsldocker` is an unexposed native-WSL detector for Docker Desktop's
+supported distribution integration. It rejects Docker endpoint/TLS/API
+environment overrides and uses a direct Engine API request on the root-owned,
+non-world-writable `/var/run/docker.sock`, without loading an ambient Docker CLI
+or context. The connected peer must be root and the socket device/inode must be
+stable across the request. The engine must report the exact Linux Docker
+Desktop name/OS, a Microsoft WSL2 kernel and Docker Desktop's address label.
+The probe has fixed time and output bounds. A reachable local or remote Docker
+Engine is deliberately insufficient; later frontend wiring must repeat this
+proof and retain the explicit Unix endpoint for every Docker operation.
 
 `internal/wslvolume` defines the pure WSL Docker-volume identity contract. A
 volume name starts with `cb-<wsl-namespace>-`; length-delimited group/logical
@@ -410,19 +434,25 @@ package does not contact Docker. Prefix/label filtering is discovery-only;
 creation, adoption, GC, backup, restore and deletion must use an exact identity
 constructed by this package and match its complete label set.
 
-After the host runtime boundary is enforced, `cb self-update --check` is
-dispatched before machine policy and registry loading. Release selection
-therefore remains available when either local configuration source is missing
-or invalid without allowing unsupported frontends to perform network work.
-The exposed CLI currently performs only bounded metadata queries and plan
-output; that path does not load project or registry state. The package imports
-`mutationlock` and `registry` only for its unexposed replacement transaction,
-which serializes with registry/shim mutations and limits discovery to valid,
-non-reserved managed shim names. Its other unexposed phases provide private
-same-volume staging, exact checksum and GitHub build-provenance verification,
-and rollback-safe replacement of the management executable plus the complete
-proven shim set. Windows staging and recovery files use protected
-current-user-only DACLs; installed replacements inherit installation-directory
-ACLs. The temporary helper that waits for the invoking process to exit and the
-user-facing apply command remain separate later work, so the exposed command
-still cannot mutate the installed binary.
+After the host runtime boundary is enforced, `cb self-update` is dispatched
+before machine policy and registry loading. Release selection therefore remains
+available when either local configuration source is missing or invalid without
+allowing unsupported frontends to perform network work. `--check` performs only
+bounded metadata queries and plan output. Explicit `--apply` first proves that
+the running image is the installed `cb.exe` and that the supplied GitHub CLI is
+an absolute regular file, then selects, privately stages and verifies the exact
+release artifact before any installed bytes change.
+
+After verification, the parent copies its already-bound installed bytes into a
+protected same-volume helper directory and writes a bounded versioned request.
+Only that exact helper filename plus hidden marker bypasses ordinary shim
+dispatch. The helper waits with a two-minute bound for the parent to exit,
+revalidates its own/request/staging layout, re-runs checksum and GitHub
+provenance verification, and requires the new opaque result to equal the
+parent-bound result. It then acquires the normal mutation lock, replaces the
+management executable, reconciles only valid non-reserved shims proven to hold
+the old bytes, and runs bootstrap version/shim-identity checks. Failure rolls
+back the complete changed set where possible. A final fixed-system-PowerShell
+process waits for the helper and deletes only its exact validated directory.
+Windows staging, helper and recovery files use protected current-user-only
+DACLs; installed replacements inherit installation-directory ACLs.

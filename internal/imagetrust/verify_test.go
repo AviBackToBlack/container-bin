@@ -27,11 +27,13 @@ func TestVerifyAuthenticatedKeylessStagesExactSnapshotAndValidatesOutput(t *test
 	digest := "sha256:" + strings.Repeat("a", 64)
 	issuer := "https://token.actions.githubusercontent.com"
 	subject := "https://github.com/acme/tool/.github/workflows/release.yml@refs/tags/v1"
-	bundle := map[string]any{"SignedEntryTimestamp": "set", "Payload": map[string]any{"logID": "rekor"}}
-	stdout := testCosignOutput(t, digest, subject, issuer, bundle)
+	bundle := testSignatureBundle(t, "keyless")
+	downloadOutput := append(append([]byte(nil), bundle...), '\n')
 	parent := t.TempDir()
 	var stagedDir string
+	calls := 0
 	runner := runnerFunc(func(_ context.Context, executable string, args []string, dir string) ([]byte, []byte, error) {
+		calls++
 		stagedDir = dir
 		if filepath.Dir(executable) != dir || filepath.Base(executable) != verifierName {
 			t.Fatalf("staged executable = %q in %q", executable, dir)
@@ -40,16 +42,33 @@ func TestVerifyAuthenticatedKeylessStagesExactSnapshotAndValidatesOutput(t *test
 		if err != nil || string(contents) != "authenticated cosign" {
 			t.Fatalf("staged verifier = %q, %v", contents, err)
 		}
-		want := []string{
-			"verify", "--output=json", "--max-workers=1",
+		if calls == 1 {
+			want := []string{"download", "signature", "ghcr.io/acme/tool@" + digest}
+			if !reflect.DeepEqual(args, want) {
+				t.Fatalf("download args = %#v, want %#v", args, want)
+			}
+			return downloadOutput, nil, nil
+		}
+		if calls != 2 {
+			t.Fatalf("unexpected verifier call %d: %#v", calls, args)
+		}
+		wantPrefix := []string{
+			"verify-blob-attestation",
+			"--bundle=" + filepath.Join(dir, "bundle-001.sigstore.json"),
+			"--digest=" + strings.TrimPrefix(digest, "sha256:"),
+			"--digestAlg=sha256",
+			"--type=" + cosignPayloadType,
 			"--certificate-identity=" + subject,
 			"--certificate-oidc-issuer=" + issuer,
-			"ghcr.io/acme/tool@" + digest,
 		}
-		if !reflect.DeepEqual(args, want) {
-			t.Fatalf("args = %#v, want %#v", args, want)
+		if !reflect.DeepEqual(args, wantPrefix) {
+			t.Fatalf("bundle verification args = %#v, want %#v", args, wantPrefix)
 		}
-		return stdout, nil, nil
+		gotBundle, err := os.ReadFile(filepath.Join(dir, "bundle-001.sigstore.json"))
+		if err != nil || !bytes.Equal(gotBundle, bundle) {
+			t.Fatalf("staged bundle = %q, %v", gotBundle, err)
+		}
+		return nil, nil, nil
 	})
 	now := time.Date(2026, 9, 26, 18, 2, 3, 456, time.FixedZone("offset", 3600))
 	v := verifier{
@@ -77,11 +96,11 @@ func TestVerifyAuthenticatedKeylessStagesExactSnapshotAndValidatesOutput(t *test
 	if result.VerifiedAt() != time.Date(2026, 9, 26, 17, 2, 3, 0, time.UTC) {
 		t.Fatalf("VerifiedAt() = %s", result.VerifiedAt())
 	}
-	wantBundle := sha256.Sum256(mustJSON(t, bundle))
+	wantBundle := sha256.Sum256(bundle)
 	if got := result.BundleSHA256s(); !reflect.DeepEqual(got, []string{hex.EncodeToString(wantBundle[:])}) {
 		t.Fatalf("BundleSHA256s() = %v", got)
 	}
-	stdoutSum := sha256.Sum256(stdout)
+	stdoutSum := sha256.Sum256(downloadOutput)
 	if result.OutputSHA256() != hex.EncodeToString(stdoutSum[:]) || result.VerifierSHA256() != request.verifier.SHA256() || result.PolicyFingerprint() != request.policyFingerprint {
 		t.Fatalf("result bindings are incomplete: %+v", result)
 	}
@@ -98,26 +117,31 @@ func TestVerifyAuthenticatedKeylessStagesExactSnapshotAndValidatesOutput(t *test
 func TestVerifyAuthenticatedKeyStagesPinnedKeyAndScrubsSourcePaths(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("c", 64)
 	key := testSnapshot("public key bytes")
-	stdout := testCosignOutput(t, digest, "", "", nil)
+	bundle := testSignatureBundle(t, "key")
 	parent := t.TempDir()
+	calls := 0
 	v := verifier{
 		now: time.Now,
 		createStage: func() (string, error) {
 			return os.MkdirTemp(parent, stagingPrefix)
 		},
 		runner: runnerFunc(func(_ context.Context, executable string, args []string, dir string) ([]byte, []byte, error) {
+			calls++
 			if filepath.Dir(executable) != dir {
 				t.Fatalf("verifier escaped stage: %q", executable)
 			}
-			wantPrefix := "--key=" + filepath.Join(dir, publicKeyName)
-			if len(args) != 5 || args[3] != wantPrefix || args[4] != "registry.example.com/team/tool@"+digest {
-				t.Fatalf("key verification args = %#v", args)
+			if calls == 1 {
+				return append(append([]byte(nil), bundle...), '\n'), nil, nil
 			}
-			contents, err := os.ReadFile(strings.TrimPrefix(args[3], "--key="))
+			wantKey := "--key=" + filepath.Join(dir, publicKeyName)
+			if calls != 2 || len(args) != 6 || args[0] != "verify-blob-attestation" || args[5] != wantKey {
+				t.Fatalf("key bundle verification args = %#v", args)
+			}
+			contents, err := os.ReadFile(strings.TrimPrefix(args[5], "--key="))
 			if err != nil || !bytes.Equal(contents, key.Bytes()) {
 				t.Fatalf("staged key = %q, %v", contents, err)
 			}
-			return stdout, nil, nil
+			return nil, nil, nil
 		}),
 	}
 	request := verificationRequest{
@@ -133,7 +157,7 @@ func TestVerifyAuthenticatedKeyStagesPinnedKeyAndScrubsSourcePaths(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Signer() != key.SHA256() || result.Issuer() != "" || result.SignatureCount() != 1 || len(result.BundleSHA256s()) != 0 {
+	if result.Signer() != key.SHA256() || result.Issuer() != "" || result.SignatureCount() != 1 || len(result.BundleSHA256s()) != 1 {
 		t.Fatalf("unexpected key result: %+v", result)
 	}
 }
@@ -174,7 +198,7 @@ func TestVerifyAuthenticatedRejectsStagedMutationAndCleansUp(t *testing.T) {
 			if err := os.WriteFile(executable, []byte("mutated staged verifier"), 0700); err != nil {
 				t.Fatal(err)
 			}
-			return testCosignOutput(t, digest, "subject", "https://issuer.example", nil), nil, nil
+			return append(testSignatureBundle(t, "mutated"), '\n'), nil, nil
 		}),
 	}
 	_, err := v.verifyAuthenticated(context.Background(), verificationRequest{
@@ -224,30 +248,27 @@ func TestVerifyAuthenticatedBoundsErrorsAndCleansUp(t *testing.T) {
 	}
 }
 
-func TestValidateOutputRejectsMalformedOrMismatchedResults(t *testing.T) {
-	digest := "sha256:" + strings.Repeat("a", 64)
-	rule := policy.ImageTrustRule{Mechanism: policy.ImageTrustKeyless, Subject: "subject", Issuer: "https://issuer.example"}
-	valid := testCosignOutput(t, digest, rule.Subject, rule.Issuer, map[string]any{"Payload": map[string]any{"logID": "rekor"}})
-	cases := []struct {
+func TestParseDownloadedBundlesIsStrict(t *testing.T) {
+	valid := testSignatureBundle(t, "one")
+	second := testSignatureBundle(t, "two")
+	got, err := parseDownloadedBundles(append(append(append([]byte(nil), valid...), '\n'), second...))
+	if err != nil || len(got) != 2 || !bytes.Equal(got[0], valid) || !bytes.Equal(got[1], second) {
+		t.Fatalf("parseDownloadedBundles() = (%q, %v)", got, err)
+	}
+	for _, tc := range []struct {
 		name string
 		data []byte
 	}{
 		{"empty", nil},
 		{"malformed", []byte("{")},
-		{"object not array", []byte(`{"Critical":{}}`)},
-		{"empty array", []byte("[]")},
-		{"trailing", append(append([]byte(nil), valid...), []byte(" {}")...)},
-		{"wrong digest", testCosignOutput(t, "sha256:"+strings.Repeat("b", 64), rule.Subject, rule.Issuer, nil)},
-		{"wrong type", bytes.Replace(valid, []byte(cosignPayloadType), []byte("in-toto attestation"), 1)},
-		{"wrong subject", testCosignOutput(t, digest, "other", rule.Issuer, nil)},
-		{"wrong issuer", testCosignOutput(t, digest, rule.Subject, "https://other.example", nil)},
-		{"null bundle", testCosignOutputRaw(t, digest, rule.Subject, rule.Issuer, json.RawMessage("null"))},
-		{"scalar bundle", testCosignOutputRaw(t, digest, rule.Subject, rule.Issuer, json.RawMessage(`"bundle"`))},
-	}
-	for _, tc := range cases {
+		{"array", []byte("[]")},
+		{"scalar", []byte(`"bundle"`)},
+		{"empty object", []byte("{}")},
+		{"trailing garbage", append(append([]byte(nil), valid...), []byte(" garbage")...)},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, _, err := validateOutput(tc.data, digest, rule); err == nil {
-				t.Fatal("invalid cosign output accepted")
+			if _, err := parseDownloadedBundles(tc.data); err == nil {
+				t.Fatal("invalid cosign bundle output accepted")
 			}
 		})
 	}
@@ -303,36 +324,12 @@ func testSnapshotBytes(contents []byte) authenticatedSnapshot {
 	return authenticatedSnapshot{contents: append([]byte(nil), contents...), digest: hex.EncodeToString(sum[:])}
 }
 
-func testCosignOutput(t *testing.T, digest, subject, issuer string, bundle any) []byte {
+func testSignatureBundle(t *testing.T, id string) []byte {
 	t.Helper()
-	var raw json.RawMessage
-	if bundle != nil {
-		raw = mustJSON(t, bundle)
-	}
-	return testCosignOutputRaw(t, digest, subject, issuer, raw)
-}
-
-func testCosignOutputRaw(t *testing.T, digest, subject, issuer string, bundle json.RawMessage) []byte {
-	t.Helper()
-	optional := map[string]any{}
-	if subject != "" {
-		optional["Subject"] = subject
-	}
-	if issuer != "" {
-		optional["Issuer"] = issuer
-	}
-	if bundle != nil {
-		optional["Bundle"] = bundle
-	}
-	payload := []any{map[string]any{
-		"Critical": map[string]any{
-			"Identity": map[string]any{"docker-reference": ""},
-			"Image":    map[string]any{"Docker-manifest-digest": digest},
-			"Type":     cosignPayloadType,
-		},
-		"Optional": optional,
-	}}
-	return mustJSON(t, payload)
+	return mustJSON(t, map[string]any{
+		"mediaType": "application/vnd.dev.sigstore.bundle.v0.3+json",
+		"testID":    id,
+	})
 }
 
 func mustJSON(t *testing.T, value any) []byte {

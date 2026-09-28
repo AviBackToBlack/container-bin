@@ -59,7 +59,7 @@ func TestExplicitWindowsRelPath(t *testing.T) {
 
 func TestNormalizePathEqualsSplitByShell(t *testing.T) {
 	tool := registry.Tool{Name: "terraform", PathEquals: []string{"-chdir"}}
-	got := NormalizeToolArgs(tool, []string{"-chdir=", `.\\tf-demo`, "validate"})
+	got := normalizeToolArgsForHost("windows", tool, []string{"-chdir=", `.\\tf-demo`, "validate"})
 	want := []string{`-chdir=.\\tf-demo`, "validate"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("normalizeToolArgs() = %#v, want %#v", got, want)
@@ -69,7 +69,7 @@ func TestNormalizePathEqualsSplitByShell(t *testing.T) {
 func TestNormalizePathEqualsAlreadyJoined(t *testing.T) {
 	tool := registry.Tool{Name: "terraform", PathEquals: []string{"-chdir"}}
 	in := []string{`-chdir=.\\tf-demo`, "validate"}
-	got := NormalizeToolArgs(tool, in)
+	got := normalizeToolArgsForHost("windows", tool, in)
 	if !reflect.DeepEqual(got, in) {
 		t.Fatalf("normalizeToolArgs() = %#v, want %#v", got, in)
 	}
@@ -78,7 +78,7 @@ func TestNormalizePathEqualsAlreadyJoined(t *testing.T) {
 func TestNormalizePathEqualsSplitAtEndKeptAsIs(t *testing.T) {
 	tool := registry.Tool{Name: "terraform", PathEquals: []string{"-chdir"}}
 	in := []string{"validate", "-chdir="}
-	got := NormalizeToolArgs(tool, in)
+	got := normalizeToolArgsForHost("windows", tool, in)
 	if !reflect.DeepEqual(got, in) {
 		t.Fatalf("normalizeToolArgs() = %#v, want unchanged %#v", got, in)
 	}

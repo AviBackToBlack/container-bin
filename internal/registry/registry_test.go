@@ -385,7 +385,7 @@ provider = "stateless"
 }
 
 func TestReservedToolNames(t *testing.T) {
-	reserved := []string{"cb", "container-bin", "con", "prn", "aux", "nul", "com1", "com9", "lpt1", "lpt9"}
+	reserved := []string{"cb", "container-bin", "cb-update-helper", "con", "prn", "aux", "nul", "com1", "com9", "lpt1", "lpt9"}
 	for _, name := range reserved {
 		if !ReservedToolName(name) {
 			t.Fatalf("%q should be reserved", name)

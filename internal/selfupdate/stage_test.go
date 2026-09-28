@@ -400,6 +400,11 @@ func retargetStagingPlan(plan Plan, target string) Plan {
 func testInstallation(t *testing.T) (string, string) {
 	t.Helper()
 	dir := t.TempDir()
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir = resolved
 	executable := filepath.Join(dir, "cb.exe")
 	if err := os.WriteFile(executable, []byte("installed ContainerBin test executable"), 0o700); err != nil {
 		t.Fatal(err)

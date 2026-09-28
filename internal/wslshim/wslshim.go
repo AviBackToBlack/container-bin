@@ -37,8 +37,9 @@ type Result struct {
 }
 
 type fileInfo struct {
-	Mode os.FileMode
-	UID  uint32
+	Mode      os.FileMode
+	ExactMode os.FileMode
+	UID       uint32
 }
 
 type dependencies struct {
@@ -120,7 +121,7 @@ func inspectBinary(layout hostenv.WSLLayout, d dependencies) error {
 	if err != nil {
 		return fmt.Errorf("inspect native WSL managed binary %s: %w", layout.BinaryPath, err)
 	}
-	if !info.Mode.IsRegular() || info.UID != layout.UID || info.Mode.Perm() != 0o755 {
+	if !info.Mode.IsRegular() || info.UID != layout.UID || info.ExactMode != 0o755 {
 		return fmt.Errorf("native WSL managed binary %s must be a UID %d regular file with mode 0755", layout.BinaryPath, layout.UID)
 	}
 	return nil
@@ -131,8 +132,8 @@ func inspectShimDir(layout hostenv.WSLLayout, d dependencies) error {
 	if err != nil {
 		return fmt.Errorf("inspect native WSL shim directory %s: %w", layout.ShimDir, err)
 	}
-	mode := info.Mode.Perm()
-	if !info.Mode.IsDir() || info.UID != layout.UID || mode&0o700 != 0o700 || mode&0o022 != 0 {
+	mode := info.ExactMode
+	if !info.Mode.IsDir() || info.UID != layout.UID || mode&0o700 != 0o700 || mode&0o022 != 0 || mode&0o7000 != 0 {
 		return fmt.Errorf("native WSL shim directory %s must be a UID %d owner-accessible directory not writable by group or other", layout.ShimDir, layout.UID)
 	}
 	return nil

@@ -27,9 +27,13 @@ import (
 )
 
 const (
-	maxLockVersion            = 2
-	imageTrustEvidenceVersion = 1
-	imageTrustVerifierCosign  = "cosign"
+	maxLockVersion = 2
+
+	// ImageTrustEvidenceVersion and ImageTrustVerifierCosign are exported inside
+	// the repository so the producer cannot drift from the parser's schema
+	// identity while constructing a validated record.
+	ImageTrustEvidenceVersion = 1
+	ImageTrustVerifierCosign  = "cosign"
 )
 
 // ImageTrustEvidence records the exact authenticated inputs and result of one
@@ -276,8 +280,8 @@ func validateImageTrustEvidence(entryKey, configured, resolvedRepository, digest
 	fail := func(format string, args ...any) error {
 		return fmt.Errorf("lock entry %q trust evidence: %s", entryKey, fmt.Sprintf(format, args...))
 	}
-	if evidence.Version != imageTrustEvidenceVersion {
-		return fail("unsupported evidence_version %d (supported: %d)", evidence.Version, imageTrustEvidenceVersion)
+	if evidence.Version != ImageTrustEvidenceVersion {
+		return fail("unsupported evidence_version %d (supported: %d)", evidence.Version, ImageTrustEvidenceVersion)
 	}
 	configuredRepository, err := policy.CanonicalRepository(configured)
 	if err != nil {
@@ -318,7 +322,7 @@ func validateImageTrustEvidence(entryKey, configured, resolvedRepository, digest
 	if err != nil || verifiedAt.Location() != time.UTC || verifiedAt.Format(time.RFC3339) != evidence.VerifiedAt {
 		return fail("verified_at must be canonical UTC RFC3339 seconds")
 	}
-	if evidence.Verifier != imageTrustVerifierCosign {
+	if evidence.Verifier != ImageTrustVerifierCosign {
 		return fail("unsupported verifier %q", evidence.Verifier)
 	}
 	if !validSHA256Hex(evidence.VerifierSHA256) {

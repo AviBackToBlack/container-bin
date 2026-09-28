@@ -10,9 +10,10 @@ import (
 	"github.com/AviBackToBlack/container-bin/internal/hostenv"
 )
 
-// Inspect validates the fixed binary/shim boundary and reports whether each
-// registry-derived tool shim is already ready or still missing. It never
-// creates, replaces or removes a filesystem object.
+// Inspect validates the fixed binary/shim leaf objects and reports whether each
+// registry-derived tool shim is already ready or still missing. The caller must
+// first validate the same layout with wslfs; Inspect never creates, replaces or
+// removes a filesystem object.
 func Inspect(layout hostenv.WSLLayout, names []string) (Result, error) {
 	return inspect(layout, names, dependencies{
 		currentRuntime: hostenv.Current,
@@ -31,5 +32,5 @@ func lstat(path string) (fileInfo, error) {
 	if !ok {
 		return fileInfo{}, errors.New("filesystem ownership is unavailable")
 	}
-	return fileInfo{Mode: info.Mode(), UID: stat.Uid}, nil
+	return fileInfo{Mode: info.Mode(), ExactMode: os.FileMode(stat.Mode & 0o7777), UID: stat.Uid}, nil
 }

@@ -23,16 +23,22 @@ func TestParseArgs(t *testing.T) {
 		wantErr string
 	}{
 		{name: "stable", args: []string{"--check"}, want: Options{Check: true}},
+		{name: "apply", args: []string{"--apply", "--gh-executable", `C:\Program Files\GitHub CLI\gh.exe`}, want: Options{Apply: true, GitHubCLI: `C:\Program Files\GitHub CLI\gh.exe`}},
 		{name: "prerelease", args: []string{"--check", "--prerelease"}, want: Options{Check: true, Prerelease: true}},
 		{name: "exact downgrade", args: []string{"--version", "v1.0.0", "--allow-downgrade", "--check"}, want: Options{Check: true, Version: "v1.0.0", AllowDowngrade: true}},
-		{name: "check required", wantErr: "only the read-only selection phase"},
+		{name: "mode required", wantErr: "exactly one"},
+		{name: "mode conflict", args: []string{"--check", "--apply", "--gh-executable", `C:\gh.exe`}, wantErr: "exactly one"},
+		{name: "apply requires gh", args: []string{"--apply"}, wantErr: "requires --gh-executable"},
+		{name: "check rejects gh", args: []string{"--check", "--gh-executable", `C:\gh.exe`}, wantErr: "only with --apply"},
 		{name: "mutually exclusive", args: []string{"--check", "--prerelease", "--version", "v1.0.0"}, wantErr: "mutually exclusive"},
 		{name: "bad exact", args: []string{"--check", "--version", "latest"}, wantErr: "canonical"},
 		{name: "missing exact", args: []string{"--check", "--version"}, wantErr: "requires"},
 		{name: "empty exact", args: []string{"--check", "--version", ""}, wantErr: "requires"},
 		{name: "missing exact before flag", args: []string{"--check", "--version", "--prerelease"}, wantErr: "requires"},
-		{name: "unknown", args: []string{"--check", "--apply"}, wantErr: "unknown"},
+		{name: "unknown", args: []string{"--check", "--bogus"}, wantErr: "unknown"},
 		{name: "duplicate check", args: []string{"--check", "--check"}, wantErr: "only once"},
+		{name: "duplicate apply", args: []string{"--apply", "--apply", "--gh-executable", `C:\gh.exe`}, wantErr: "only once"},
+		{name: "missing gh path", args: []string{"--apply", "--gh-executable"}, wantErr: "requires"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -140,7 +146,7 @@ func TestPlanExactAndDowngradePolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.Channel != "exact" || plan.Status != "DOWNGRADE AUTHORIZED (CHECK ONLY)" || plan.downgradeAuthorization != (downgradeAuthorization{current: "v1.1.0", target: "v1.0.0"}) {
+	if plan.Channel != "exact" || plan.Status != "DOWNGRADE AUTHORIZED" || plan.downgradeAuthorization != (downgradeAuthorization{current: "v1.1.0", target: "v1.0.0"}) {
 		t.Fatalf("unexpected exact downgrade plan: %+v", plan)
 	}
 }
@@ -265,8 +271,8 @@ func TestPrintPlanStatesReadOnlyBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	printPlan(&out, plan)
-	for _, want := range []string{"read-only; no files changed", "UPDATE AVAILABLE", "container-bin-v1.2.0-windows-amd64.zip", "gh attestation verify", "no fallback", "apply:        unavailable"} {
+	printPlan(&out, plan, false)
+	for _, want := range []string{"read-only; no files changed", "UPDATE AVAILABLE", "container-bin-v1.2.0-windows-amd64.zip", "gh attestation verify", "no fallback", "--apply --gh-executable"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("plan output missing %q:\n%s", want, out.String())
 		}

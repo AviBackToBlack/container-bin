@@ -26,11 +26,20 @@ type pathMapper struct {
 	mountBySource map[string]string
 }
 
-// NormalizeToolArgs repairs shell-level argv shapes that are unambiguous from
-// the tool registry. In particular, PowerShell can hand native processes
-// `-opt=` and its value as two argv elements. For path_equals options we join
-// those back before path mapping, preserving the target tool's required syntax.
+// NormalizeToolArgs repairs Windows shell-level argv shapes that are
+// unambiguous from the tool registry. In particular, PowerShell can hand native
+// processes `-opt=` and its value as two argv elements. For path_equals options
+// we join those back before path mapping, preserving the target tool's required
+// syntax. Non-Windows callers have no such boundary and are passed through
+// byte-for-byte as separate argv elements.
 func NormalizeToolArgs(t registry.Tool, args []string) []string {
+	return normalizeToolArgsForHost(runtime.GOOS, t, args)
+}
+
+func normalizeToolArgsForHost(goos string, t registry.Tool, args []string) []string {
+	if goos != "windows" {
+		return append([]string(nil), args...)
+	}
 	out := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
 		arg := args[i]

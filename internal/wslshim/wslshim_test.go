@@ -84,7 +84,16 @@ func TestInspectRejectsForeignOrUnsafeBoundaries(t *testing.T) {
 		},
 		"wrong UID": func(d *fakeDependencies, _ *hostenv.WSLLayout) { d.uid = 1001 },
 		"writable shim dir": func(d *fakeDependencies, l *hostenv.WSLLayout) {
-			d.files[l.ShimDir] = fileInfo{Mode: os.ModeDir | 0o775, UID: l.UID}
+			d.files[l.ShimDir] = fileInfo{Mode: os.ModeDir | 0o775, ExactMode: 0o775, UID: l.UID}
+		},
+		"setuid binary": func(d *fakeDependencies, l *hostenv.WSLLayout) {
+			d.files[l.BinaryPath] = fileInfo{Mode: os.ModeSetuid | 0o755, ExactMode: 0o4755, UID: l.UID}
+		},
+		"setgid shim dir": func(d *fakeDependencies, l *hostenv.WSLLayout) {
+			d.files[l.ShimDir] = fileInfo{Mode: os.ModeDir | os.ModeSetgid | 0o755, ExactMode: 0o2755, UID: l.UID}
+		},
+		"sticky shim dir": func(d *fakeDependencies, l *hostenv.WSLLayout) {
+			d.files[l.ShimDir] = fileInfo{Mode: os.ModeDir | os.ModeSticky | 0o755, ExactMode: 0o1755, UID: l.UID}
 		},
 		"foreign binary": func(d *fakeDependencies, l *hostenv.WSLLayout) {
 			d.files[l.BinaryPath] = fileInfo{Mode: 0o755, UID: 1001}
@@ -119,6 +128,23 @@ func TestInspectRejectsForeignOrUnsafeBoundaries(t *testing.T) {
 	}
 }
 
+func TestInspectRejectsMissingRequiredBoundaryObjects(t *testing.T) {
+	for name, missingPath := range map[string]func(hostenv.WSLLayout) string{
+		"managed binary":  func(layout hostenv.WSLLayout) string { return layout.BinaryPath },
+		"shim directory":  func(layout hostenv.WSLLayout) string { return layout.ShimDir },
+		"management shim": func(layout hostenv.WSLLayout) string { return layout.ManagementShim },
+	} {
+		t.Run(name, func(t *testing.T) {
+			layout := testLayout()
+			deps := validDependencies(layout)
+			delete(deps.files, missingPath(layout))
+			if _, err := inspect(layout, nil, deps.dependencies()); !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("inspect() error = %v, want fs.ErrNotExist", err)
+			}
+		})
+	}
+}
+
 func TestInspectPropagatesFilesystemErrors(t *testing.T) {
 	layout := testLayout()
 	deps := validDependencies(layout)
@@ -141,8 +167,8 @@ func validDependencies(layout hostenv.WSLLayout) fakeDependencies {
 		runtime: hostenv.Runtime{Kind: hostenv.WSL2Native, Distro: layout.Distro},
 		uid:     layout.UID,
 		files: map[string]fileInfo{
-			layout.BinaryPath:     {Mode: 0o755, UID: layout.UID},
-			layout.ShimDir:        {Mode: os.ModeDir | 0o700, UID: layout.UID},
+			layout.BinaryPath:     {Mode: 0o755, ExactMode: 0o755, UID: layout.UID},
+			layout.ShimDir:        {Mode: os.ModeDir | 0o700, ExactMode: 0o700, UID: layout.UID},
 			layout.ManagementShim: {Mode: os.ModeSymlink | 0o777, UID: layout.UID},
 		},
 		links: map[string]string{layout.ManagementShim: layout.BinaryPath},
