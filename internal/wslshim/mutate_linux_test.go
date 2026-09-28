@@ -6,13 +6,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/AviBackToBlack/container-bin/internal/hostenv"
 )
 
 func TestPinnedShimDirectoryPublishesWithoutReplacing(t *testing.T) {
-	home := t.TempDir()
+	home := rootDeviceTempDir(t)
 	shimDir := filepath.Join(home, ".local", "bin")
 	if err := os.MkdirAll(shimDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -45,10 +46,19 @@ func TestPinnedShimDirectoryPublishesWithoutReplacing(t *testing.T) {
 	if got, err := os.ReadFile(collision); err != nil || string(got) != "unrelated" {
 		t.Fatalf("collision contents = %q, %v", got, err)
 	}
+
+	longName := strings.Repeat("a", 215)
+	longShim := Shim{Name: longName, Path: filepath.Join(shimDir, longName), Target: target}
+	if err := directory.ensure(longShim); err != nil {
+		t.Fatalf("ensure long valid name: %v", err)
+	}
+	if got, err := os.Readlink(longShim.Path); err != nil || got != target {
+		t.Fatalf("long-name Readlink() = %q, %v; want %q", got, err, target)
+	}
 }
 
 func TestPinnedShimDirectorySurvivesPathSwapWithoutRedirectingMutation(t *testing.T) {
-	home := t.TempDir()
+	home := rootDeviceTempDir(t)
 	shimDir := filepath.Join(home, ".local", "bin")
 	if err := os.MkdirAll(shimDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -81,7 +91,7 @@ func TestPinnedShimDirectorySurvivesPathSwapWithoutRedirectingMutation(t *testin
 }
 
 func TestOpenPinnedShimDirectoryRejectsSymlinkedAncestorAndUnsafeMode(t *testing.T) {
-	home := t.TempDir()
+	home := rootDeviceTempDir(t)
 	realLocal := filepath.Join(home, "real-local")
 	if err := os.MkdirAll(filepath.Join(realLocal, "bin"), 0o700); err != nil {
 		t.Fatal(err)
@@ -106,4 +116,26 @@ func TestOpenPinnedShimDirectoryRejectsSymlinkedAncestorAndUnsafeMode(t *testing
 	if _, err := openPinnedShimDirectory(layout); err == nil || !strings.Contains(err.Error(), "not writable by group or other") {
 		t.Fatalf("unsafe-mode error = %v", err)
 	}
+}
+
+func rootDeviceTempDir(t *testing.T) string {
+	t.Helper()
+	directory := t.TempDir()
+	directoryInfo, err := os.Stat(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootInfo, err := os.Stat(string(filepath.Separator))
+	if err != nil {
+		t.Fatal(err)
+	}
+	directoryStat, directoryOK := directoryInfo.Sys().(*syscall.Stat_t)
+	rootStat, rootOK := rootInfo.Sys().(*syscall.Stat_t)
+	if !directoryOK || !rootOK {
+		t.Skip("filesystem device identity is unavailable")
+	}
+	if directoryStat.Dev != rootStat.Dev {
+		t.Skipf("temporary directory device %d differs from root device %d", directoryStat.Dev, rootStat.Dev)
+	}
+	return directory
 }

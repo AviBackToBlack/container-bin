@@ -98,6 +98,9 @@ no-clobber operation. Concurrent correct creation is accepted; a regular file,
 foreign link, wrong target or path redirection fails closed and is never
 replaced. Installer/config wiring and removal remain later work, and unrelated
 directory entries are never adopted or enumerated as managed shims.
+An interrupted publish can leave a current-user-owned `.cb-<random>.tmp`
+symlink to the managed binary. ContainerBin does not delete such entries based
+on a filename pattern alone because that would not prove provenance.
 
 Every ContainerBin-managed Docker object in WSL is scoped to one exact tuple:
 

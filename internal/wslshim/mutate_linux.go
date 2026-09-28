@@ -96,7 +96,7 @@ func (d *pinnedShimDirectory) ensure(shim Shim) error {
 		return err
 	}
 
-	temporary, err := d.createTemporarySymlink(shim.Name, shim.Target)
+	temporary, err := d.createTemporarySymlink(shim.Target)
 	if err != nil {
 		return err
 	}
@@ -116,13 +116,13 @@ func (d *pinnedShimDirectory) ensure(shim Shim) error {
 	return nil
 }
 
-func (d *pinnedShimDirectory) createTemporarySymlink(name, target string) (string, error) {
+func (d *pinnedShimDirectory) createTemporarySymlink(target string) (string, error) {
 	for attempt := 0; attempt < temporaryShimAttempts; attempt++ {
 		random := make([]byte, 16)
 		if _, err := rand.Read(random); err != nil {
 			return "", fmt.Errorf("generate temporary shim name: %w", err)
 		}
-		temporary := filepath.Join(procDirectoryPath(d.file), ".cb-"+name+"-"+hex.EncodeToString(random)+".tmp")
+		temporary := filepath.Join(procDirectoryPath(d.file), ".cb-"+hex.EncodeToString(random)+".tmp")
 		if err := os.Symlink(target, temporary); err == nil {
 			return temporary, nil
 		} else if !errors.Is(err, fs.ErrExist) {
