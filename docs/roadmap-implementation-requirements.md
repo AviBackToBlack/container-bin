@@ -601,16 +601,23 @@ the supported WSL models.
 
 PR #77 shipped the fail-closed host runtime boundary and explicit Windows/WSL
 separation. The fixed native Linux config/shim/state layout can now be checked
-or prepared explicitly without enabling tool execution, and fail-closed Docker
-Desktop WSL integration proof is implemented but not yet wired into an enabled
-frontend. Installer/runtime wiring, project behavior and real WSL qualification
-remain.
+or prepared explicitly without enabling tool execution, and canonical project
+storage classification and fail-closed Docker Desktop WSL integration proof are
+implemented but not yet wired into an enabled frontend. Installer/runtime
+wiring, argument/process behavior and real WSL qualification remain.
 
 Implementation must define native config/shim location, Docker endpoint,
 project identity, named-volume behavior, file permissions, case sensitivity,
 symlinks, stdin/TTY/signals and mixed-invocation rejection. Windows and WSL do
 not share registry/lock/state identity implicitly, and ContainerBin never guesses
 equivalence between Windows paths and `/mnt/<drive>` paths.
+
+The project classifier preserves exact canonical Linux spelling, rejects every
+symlink component, and accepts only distribution-root-device projects or paths
+below a proven default `/mnt/<drive>` 9p DrvFs/WSL virtiofs mount. It rejects
+entire-drive roots, custom DrvFs roots, lookalike `/mnt` paths and unqualified
+separate filesystems. Later argument mapping must consume this boundary without
+turning it into a Windows-path equivalence rule.
 
 The implemented volume contract prefixes names and labels with the opaque
 distribution/machine/user namespace, length-delimits group/logical segments,
