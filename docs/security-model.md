@@ -30,8 +30,8 @@ boundary. Its fixed path, owner and permissions are validated before use. It
 can require locking, restrict image origins and authenticate exact registry
 bytes through a detached Ed25519 signature. Schema 3 can declare exact
 repository-bound image-signature requirements; lock/update can produce
-schema-2 evidence, while covered image execution remains fail closed until the
-runtime freshness gate consumes it. Policy cannot grant mounts, environment
+schema-2 evidence, and covered image execution requires that evidence to remain
+fresh against current machine policy. Policy cannot grant mounts, environment
 access or commands. See [enterprise machine
 policy](enterprise-policy.md).
 
