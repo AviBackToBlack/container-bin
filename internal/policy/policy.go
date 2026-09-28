@@ -903,7 +903,7 @@ func (p Policy) AuthorizeImage(configured string, locked, local bool) error {
 		return policyError("repository_denied", "image %q: %v", configured, trustErr)
 	}
 	if trustRequired {
-		return policyError("image_trust_unverified", "image %q requires %s signature evidence for repository boundary %q; this build cannot yet create or consume image trust evidence", configured, rule.Mechanism, rule.Repository)
+		return policyError("image_trust_unverified", "image %q requires %s signature evidence for repository boundary %q; evidence is absent; run `cb update` or `cb lock` to verify it", configured, rule.Mechanism, rule.Repository)
 	}
 	return nil
 }

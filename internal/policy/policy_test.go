@@ -504,10 +504,14 @@ func TestAuthorizeImage(t *testing.T) {
 	assertPolicyCode(t, p.AuthorizeImage("python:3.13", false, false), "lock_required")
 	assertPolicyCode(t, p.AuthorizeImage("ghcr.io/teamster/tool:1", true, false), "repository_denied")
 	assertPolicyCode(t, p.AuthorizeImage("sha256:"+strings.Repeat("a", 64), true, true), "local_image_denied")
+	assertPolicyCode(t, p.AuthorizeResolvedImage("local-tool:dev", "sha256:"+strings.Repeat("a", 64), true, nil), "local_image_denied")
 
 	p.AllowLocalImages = true
 	if err := p.AuthorizeImage("local-tool:dev", true, true); err != nil {
 		t.Fatalf("explicit local exception rejected: %v", err)
+	}
+	if err := p.AuthorizeResolvedImage("local-tool:dev", "sha256:"+strings.Repeat("a", 64), true, nil); err != nil {
+		t.Fatalf("resolved explicit local exception rejected: %v", err)
 	}
 	if err := (Policy{}).AuthorizeImage("anything", false, true); err != nil {
 		t.Fatalf("unmanaged policy changed behavior: %v", err)
@@ -544,6 +548,13 @@ func TestAuthorizeResolvedImageRequiresFreshTrustEvidence(t *testing.T) {
 	if err := p.AuthorizeResolvedImage(configured, resolved, false, &valid); err != nil {
 		t.Fatalf("fresh evidence rejected: %v", err)
 	}
+	missingErr := p.AuthorizeImage(configured, true, false)
+	assertPolicyCode(t, missingErr, "image_trust_unverified")
+	if !strings.Contains(missingErr.Error(), "run `cb update` or `cb lock`") {
+		t.Fatalf("missing-evidence remediation = %v", missingErr)
+	}
+	assertPolicyCode(t, p.AuthorizeResolvedImage(configured, "ghcr.io/acme/other@"+digest, false, &valid), "image_trust_unverified")
+	assertPolicyCode(t, p.AuthorizeResolvedImage(configured, "sha256:"+strings.Repeat("f", 64), true, nil), "image_trust_unverified")
 
 	tests := []struct {
 		name string
