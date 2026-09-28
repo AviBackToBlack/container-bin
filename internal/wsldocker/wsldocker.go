@@ -1,6 +1,7 @@
 // Package wsldocker proves that a native WSL2 process is connected to Docker
 // Desktop's supported WSL integration rather than an in-distribution or remote
-// Docker Engine. It does not enable the WSL frontend by itself.
+// Docker Engine, and provides a proof-bound bounded control-request primitive.
+// It does not enable the WSL frontend by itself.
 package wsldocker
 
 import (
@@ -8,7 +9,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/url"
 	"os"
+	"path"
 	"strings"
 	"unicode"
 
@@ -18,6 +22,7 @@ import (
 const (
 	DockerSocketPath = "/var/run/docker.sock"
 	DockerHost       = "unix:///var/run/docker.sock"
+	maxRequestPath   = 4096
 )
 
 var dockerRedirectVariables = []string{
@@ -31,14 +36,49 @@ var dockerRedirectVariables = []string{
 }
 
 // Result is the exact Docker Desktop endpoint and server identity accepted by
-// the WSL integration check. It is not a durable authorization: later frontend
-// wiring must recheck the socket for each operation and retain DockerHost rather
-// than falling back to ambient contexts.
+// the WSL integration check. It is not a durable authorization: callers must
+// use Execute for each operation rather than retaining this result or falling
+// back to ambient contexts.
 type Result struct {
 	Host           string
 	ServerVersion  string
 	KernelVersion  string
 	DesktopAddress string
+	socket         socketInfo
+}
+
+// Request is one bounded Docker Engine control-plane request. Streaming,
+// attach and hijacked-connection operations require a separate contract.
+type Request struct {
+	Method          string
+	Path            string
+	Query           url.Values
+	Body            []byte
+	SuccessStatuses []int
+}
+
+// Response is the bounded status and body returned by an accepted control-plane
+// request. Execute returns no Response for an unexpected status or boundary
+// failure.
+type Response struct {
+	StatusCode int
+	Body       []byte
+}
+
+// APIError reports a bounded Docker Engine error response without requiring
+// lifecycle callers to parse an error string.
+type APIError struct {
+	Method     string
+	Path       string
+	StatusCode int
+	Message    string
+}
+
+func (e *APIError) Error() string {
+	if e.Message != "" {
+		return fmt.Sprintf("Docker Desktop Engine API %s %s returned HTTP %d: %q", e.Method, e.Path, e.StatusCode, e.Message)
+	}
+	return fmt.Sprintf("Docker Desktop Engine API %s %s returned HTTP %d", e.Method, e.Path, e.StatusCode)
 }
 
 type socketInfo struct {
@@ -58,6 +98,18 @@ type dependencies struct {
 	lookupEnv      func(string) (string, bool)
 	statSocket     func(string) (socketInfo, error)
 	probeInfo      func(context.Context, string) (probeResult, error)
+}
+
+type operationResult struct {
+	StatusCode int
+	Raw        []byte
+	PeerUID    uint32
+}
+
+type operationDependencies struct {
+	check      func(context.Context) (Result, error)
+	statSocket func(string) (socketInfo, error)
+	perform    func(context.Context, string, Request) (operationResult, error)
 }
 
 func check(ctx context.Context, d dependencies) (Result, error) {
@@ -113,7 +165,140 @@ func check(ctx context.Context, d dependencies) (Result, error) {
 		return Result{}, err
 	}
 	result.Host = DockerHost
+	result.socket = after
 	return result, nil
+}
+
+func execute(ctx context.Context, request Request, d operationDependencies) (Response, error) {
+	if ctx == nil {
+		return Response{}, errors.New("Docker Desktop WSL operation requires a context")
+	}
+	if err := validateRequest(request); err != nil {
+		return Response{}, err
+	}
+	request = cloneRequest(request)
+	checked, err := d.check(ctx)
+	if err != nil {
+		return Response{}, fmt.Errorf("prove Docker Desktop WSL integration before operation: %w", err)
+	}
+	before, err := d.statSocket(DockerSocketPath)
+	if err != nil {
+		return Response{}, fmt.Errorf("inspect Docker Desktop WSL socket before operation: %w", err)
+	}
+	if err := validateSocket(before); err != nil {
+		return Response{}, err
+	}
+	if !sameSocket(checked.socket, before) {
+		return Response{}, errors.New("Docker Desktop WSL socket changed after the engine identity proof")
+	}
+	operation, err := d.perform(ctx, DockerSocketPath, request)
+	if err != nil {
+		return Response{}, err
+	}
+	if operation.PeerUID != 0 {
+		return Response{}, fmt.Errorf("Docker Desktop WSL operation socket peer is UID %d, expected root", operation.PeerUID)
+	}
+	after, err := d.statSocket(DockerSocketPath)
+	if err != nil {
+		return Response{}, fmt.Errorf("inspect Docker Desktop WSL socket after operation: %w", err)
+	}
+	if err := validateSocket(after); err != nil {
+		return Response{}, err
+	}
+	if !sameSocket(before, after) {
+		return Response{}, errors.New("Docker Desktop WSL socket changed during the engine operation")
+	}
+	if !acceptedStatus(operation.StatusCode, request.SuccessStatuses) {
+		return Response{}, &APIError{
+			Method:     request.Method,
+			Path:       request.Path,
+			StatusCode: operation.StatusCode,
+			Message:    dockerErrorMessage(operation.Raw),
+		}
+	}
+	return Response{StatusCode: operation.StatusCode, Body: operation.Raw}, nil
+}
+
+func dockerErrorMessage(raw []byte) string {
+	var response struct {
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(raw, &response); err != nil || response.Message == "" || len(response.Message) > 4096 || strings.TrimSpace(response.Message) != response.Message {
+		return ""
+	}
+	for _, r := range response.Message {
+		if unicode.IsControl(r) {
+			return ""
+		}
+	}
+	return response.Message
+}
+
+func cloneRequest(request Request) Request {
+	cloned := request
+	cloned.Query = make(url.Values, len(request.Query))
+	for key, values := range request.Query {
+		cloned.Query[key] = append([]string(nil), values...)
+	}
+	cloned.Body = append([]byte(nil), request.Body...)
+	cloned.SuccessStatuses = append([]int(nil), request.SuccessStatuses...)
+	return cloned
+}
+
+func validateRequest(request Request) error {
+	switch request.Method {
+	case http.MethodGet, http.MethodPost, http.MethodDelete:
+	default:
+		return fmt.Errorf("unsupported Docker Desktop Engine API method %q", request.Method)
+	}
+	if request.Path == "" || !strings.HasPrefix(request.Path, "/") {
+		return fmt.Errorf("invalid Docker Desktop Engine API path %q", request.Path)
+	}
+	if len(request.Path) > maxRequestPath {
+		return fmt.Errorf("Docker Desktop Engine API path exceeds %d bytes", maxRequestPath)
+	}
+	if path.Clean(request.Path) != request.Path || strings.ContainsAny(request.Path, "\\?#") {
+		return fmt.Errorf("invalid Docker Desktop Engine API path %q", request.Path)
+	}
+	for _, r := range request.Path {
+		if unicode.IsControl(r) {
+			return fmt.Errorf("invalid Docker Desktop Engine API path %q", request.Path)
+		}
+	}
+	if len(request.Body) > 1<<20 {
+		return errors.New("Docker Desktop Engine API request body exceeds 1048576 bytes")
+	}
+	if request.Method != http.MethodPost && len(request.Body) != 0 {
+		return fmt.Errorf("Docker Desktop Engine API %s request cannot carry a body", request.Method)
+	}
+	if len(request.Body) != 0 && !json.Valid(request.Body) {
+		return errors.New("Docker Desktop Engine API request body is not valid JSON")
+	}
+	if len(request.Query.Encode()) > 64<<10 {
+		return errors.New("Docker Desktop Engine API query exceeds 65536 bytes")
+	}
+	if len(request.SuccessStatuses) == 0 {
+		return errors.New("Docker Desktop Engine API request requires an explicit success status")
+	}
+	for _, status := range request.SuccessStatuses {
+		if (status < 200 || status >= 300) && status != http.StatusNotModified {
+			return fmt.Errorf("invalid Docker Desktop Engine API success status %d", status)
+		}
+	}
+	return nil
+}
+
+func acceptedStatus(status int, accepted []int) bool {
+	for _, candidate := range accepted {
+		if status == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+func sameSocket(first, second socketInfo) bool {
+	return first.Mode == second.Mode && first.UID == second.UID && first.Dev == second.Dev && first.Ino == second.Ino
 }
 
 func validateSocket(socket socketInfo) error {

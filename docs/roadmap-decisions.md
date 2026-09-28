@@ -343,8 +343,9 @@ is not completion.
    - explicit read-only/apply Linux ownership, permission and symlink layout
      preparation and registry-derived tool-shim preflight are implemented;
      installer/runtime integration and race-safe shim mutation remain;
-    - Docker Desktop WSL integration proof is implemented but not yet wired into
-      an enabled frontend;
+   - Docker Desktop WSL integration proof and the proof-bound, bounded control
+     request primitive are implemented but not yet wired into an enabled
+     frontend; streaming/attach needs a separate contract;
    - namespace-prefixed/labeled WSL volume identity is implemented, but Docker
      creation and lifecycle commands are not yet wired to it;
    - canonical project and descendant storage classification, including
