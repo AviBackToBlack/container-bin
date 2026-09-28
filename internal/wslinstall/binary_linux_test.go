@@ -78,3 +78,39 @@ func TestBinarySourceRejectsSymlinkAndUnsafeMode(t *testing.T) {
 		t.Fatalf("unsafe-mode error = %v", err)
 	}
 }
+
+func TestStageBinaryRejectsSameSizeSameMtimeSourceMutation(t *testing.T) {
+	directory := t.TempDir()
+	sourcePath := filepath.Join(directory, "bootstrap-cb")
+	if err := os.WriteFile(sourcePath, []byte("aaaaaaaaaaaa"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(sourcePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	source, err := openSourceBinary(sourcePath, uint32(os.Getuid()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.file.Close()
+
+	if err := os.WriteFile(sourcePath, []byte("bbbbbbbbbbbb"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(sourcePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(sourcePath, source.info.ModTime(), source.info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+
+	temporary, err := os.CreateTemp(directory, ".stage-*.tmp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(temporary.Name())
+	defer temporary.Close()
+	if err := stageBinary(temporary, source); err == nil || !strings.Contains(err.Error(), "bytes changed") {
+		t.Fatalf("stageBinary() error = %v, want copied-byte digest mismatch", err)
+	}
+}

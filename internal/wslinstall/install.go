@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/AviBackToBlack/container-bin/internal/hostenv"
@@ -41,45 +42,47 @@ type Plan struct {
 type LockFunc func(string, func() error) error
 
 type command struct {
-	prepareCommand       func([]string, io.Writer) error
-	currentLayout        func() (hostenv.WSLLayout, error)
-	checkLayout          func(hostenv.WSLLayout) (wslfs.Plan, error)
-	prepareLayout        func(hostenv.WSLLayout) error
-	loadPolicy           func() (policy.Policy, error)
-	loadRegistry         func(string, registry.Authenticator) (registry.Registry, string, error)
-	loadRegistryReadOnly func(string, registry.Authenticator) (registry.Registry, string, error)
-	ensureRegistry       func(string, os.FileMode) error
-	appendDefaults       func(string, string, os.FileMode) error
-	executable           func() (string, error)
-	lstat                func(string) (os.FileInfo, error)
-	binaryState          func(hostenv.WSLLayout, string) (State, error)
-	installBinary        func(hostenv.WSLLayout, string) error
-	inspectNames         func(hostenv.WSLLayout, []string) (wslshim.Result, error)
-	reconcileManagement  func(hostenv.WSLLayout) (wslshim.Shim, error)
-	reconcileNames       func(hostenv.WSLLayout, []string) (wslshim.Result, error)
-	withLock             LockFunc
+	prepareCommand        func([]string, io.Writer) error
+	currentLayout         func() (hostenv.WSLLayout, error)
+	checkLayout           func(hostenv.WSLLayout) (wslfs.Plan, error)
+	checkRegistryRecovery func(hostenv.WSLLayout) error
+	prepareLayout         func(hostenv.WSLLayout) error
+	loadPolicy            func() (policy.Policy, error)
+	loadRegistry          func(string, registry.Authenticator) (registry.Registry, string, error)
+	loadRegistryReadOnly  func(string, registry.Authenticator) (registry.Registry, string, error)
+	ensureRegistry        func(string, os.FileMode) error
+	appendDefaults        func(string, string, os.FileMode) error
+	executable            func() (string, error)
+	lstat                 func(string) (os.FileInfo, error)
+	binaryState           func(hostenv.WSLLayout, string) (State, error)
+	installBinary         func(hostenv.WSLLayout, string) error
+	inspectNames          func(hostenv.WSLLayout, []string) (wslshim.Result, error)
+	reconcileManagement   func(hostenv.WSLLayout) (wslshim.Shim, error)
+	reconcileNames        func(hostenv.WSLLayout, []string) (wslshim.Result, error)
+	withLock              LockFunc
 }
 
 // Run serves the only native-WSL management lifecycle currently exposed.
 func Run(args []string, out io.Writer, version string, withLock LockFunc) error {
 	return (command{
-		prepareCommand:       wslfs.Run,
-		currentLayout:        wslfs.CurrentLayout,
-		checkLayout:          wslfs.Check,
-		prepareLayout:        wslfs.Prepare,
-		loadPolicy:           policy.Load,
-		loadRegistry:         registry.LoadAt,
-		loadRegistryReadOnly: registry.LoadAtReadOnly,
-		ensureRegistry:       registry.EnsureFileMode,
-		appendDefaults:       registry.AppendMissingDefaultToolsMode,
-		executable:           os.Executable,
-		lstat:                os.Lstat,
-		binaryState:          BinaryState,
-		installBinary:        InstallBinary,
-		inspectNames:         wslshim.InspectNames,
-		reconcileManagement:  wslshim.ReconcileManagement,
-		reconcileNames:       wslshim.Reconcile,
-		withLock:             withLock,
+		prepareCommand:        wslfs.Run,
+		currentLayout:         wslfs.CurrentLayout,
+		checkLayout:           wslfs.Check,
+		checkRegistryRecovery: wslfs.CheckRegistryRecovery,
+		prepareLayout:         wslfs.Prepare,
+		loadPolicy:            policy.Load,
+		loadRegistry:          registry.LoadAt,
+		loadRegistryReadOnly:  registry.LoadAtReadOnly,
+		ensureRegistry:        registry.EnsureFileMode,
+		appendDefaults:        registry.AppendMissingDefaultToolsMode,
+		executable:            os.Executable,
+		lstat:                 os.Lstat,
+		binaryState:           BinaryState,
+		installBinary:         InstallBinary,
+		inspectNames:          wslshim.InspectNames,
+		reconcileManagement:   wslshim.ReconcileManagement,
+		reconcileNames:        wslshim.Reconcile,
+		withLock:              withLock,
 	}).run(args, out, version)
 }
 
@@ -93,7 +96,7 @@ func (c command) run(args []string, out io.Writer, version string) error {
 	if len(args) != 2 || args[0] != "install" || (args[1] != "--check" && args[1] != "--apply") {
 		return errors.New("usage: cb wsl prepare (--check | --apply) | cb wsl install (--check | --apply)")
 	}
-	if c.currentLayout == nil || c.checkLayout == nil || c.loadPolicy == nil || c.loadRegistryReadOnly == nil || c.executable == nil || c.lstat == nil || c.binaryState == nil || c.inspectNames == nil {
+	if c.currentLayout == nil || c.checkLayout == nil || c.checkRegistryRecovery == nil || c.loadPolicy == nil || c.loadRegistryReadOnly == nil || c.executable == nil || c.lstat == nil || c.binaryState == nil || c.inspectNames == nil {
 		return errors.New("native WSL install command is incomplete")
 	}
 	layout, err := c.currentLayout()
@@ -125,6 +128,9 @@ func (c command) run(args []string, out io.Writer, version string) error {
 		}
 		if len(layoutPlan.MissingDirectories) != 0 {
 			return errors.New("native WSL layout changed after preparation")
+		}
+		if err := c.checkRegistryRecovery(layout); err != nil {
+			return fmt.Errorf("validate native WSL registry recovery state: %w", err)
 		}
 		if _, err := c.binaryState(layout, source); err != nil {
 			return fmt.Errorf("preflight native WSL bootstrap executable: %w", err)
@@ -183,6 +189,9 @@ func (c command) inspect(layout hostenv.WSLLayout, source string, readOnly bool)
 	if _, err := c.checkLayout(layout); err != nil {
 		return Plan{}, fmt.Errorf("validate native WSL layout before config inspection: %w", err)
 	}
+	if err := c.checkRegistryRecovery(layout); err != nil {
+		return Plan{}, fmt.Errorf("validate native WSL registry recovery state: %w", err)
+	}
 	machinePolicy, err := c.loadPolicy()
 	if err != nil {
 		return Plan{}, fmt.Errorf("load native WSL machine policy: %w", err)
@@ -225,12 +234,31 @@ func (c command) inspectWith(layout hostenv.WSLLayout, source string, reg regist
 	} else {
 		result.Management = Ready
 	}
-	shims, err := c.inspectNames(layout, reg.ToolNames())
+	shims, err := c.inspectNames(layout, plannedToolNames(reg, machinePolicy.RequireRegistrySignature))
 	if err != nil {
 		return Plan{}, fmt.Errorf("inspect native WSL tool shims: %w", err)
 	}
 	result.ToolShims = shims.Shims
 	return result, nil
+}
+
+func plannedToolNames(reg registry.Registry, signed bool) []string {
+	names := reg.ToolNames()
+	if signed || !reg.NeedsDefaultUpgrade() {
+		return names
+	}
+	seen := make(map[string]bool, len(names))
+	for _, name := range names {
+		seen[name] = true
+	}
+	for _, name := range registry.Default().ToolNames() {
+		if !seen[name] {
+			names = append(names, name)
+			seen[name] = true
+		}
+	}
+	sort.Strings(names)
+	return names
 }
 
 func (p Plan) ready() bool {

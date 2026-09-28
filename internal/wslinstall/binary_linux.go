@@ -84,20 +84,7 @@ func installBinaryFile(layout hostenv.WSLLayout, source string) error {
 	}
 	temporaryPath := temporary.Name()
 	defer os.Remove(temporaryPath)
-	if _, err := opened.file.Seek(0, io.SeekStart); err != nil {
-		_ = temporary.Close()
-		return fmt.Errorf("rewind native WSL bootstrap executable: %w", err)
-	}
-	written, copyErr := io.Copy(temporary, io.LimitReader(opened.file, maxBootstrapBinarySize+1))
-	if copyErr == nil && written != opened.info.Size() {
-		copyErr = fmt.Errorf("bootstrap executable changed size while copying: copied %d bytes, expected %d", written, opened.info.Size())
-	}
-	if copyErr == nil {
-		copyErr = temporary.Chmod(0o755)
-	}
-	if copyErr == nil {
-		copyErr = temporary.Sync()
-	}
+	copyErr := stageBinary(temporary, opened)
 	closeErr := temporary.Close()
 	if err := errors.Join(copyErr, closeErr); err != nil {
 		return fmt.Errorf("write temporary native WSL managed binary: %w", err)
@@ -138,6 +125,29 @@ func installBinaryFile(layout hostenv.WSLLayout, source string) error {
 		return errors.New("native WSL managed binary digest differs from bootstrap executable after replacement")
 	}
 	return nil
+}
+
+func stageBinary(temporary *os.File, source sourceBinary) error {
+	if _, err := source.file.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("rewind native WSL bootstrap executable: %w", err)
+	}
+	copiedHash := sha256.New()
+	written, err := io.Copy(io.MultiWriter(temporary, copiedHash), io.LimitReader(source.file, maxBootstrapBinarySize+1))
+	if err != nil {
+		return err
+	}
+	if written != source.info.Size() {
+		return fmt.Errorf("bootstrap executable changed size while copying: copied %d bytes, expected %d", written, source.info.Size())
+	}
+	var copiedSum [sha256.Size]byte
+	copy(copiedSum[:], copiedHash.Sum(nil))
+	if copiedSum != source.sum {
+		return errors.New("native WSL bootstrap executable bytes changed while being copied")
+	}
+	if err := temporary.Chmod(0o755); err != nil {
+		return err
+	}
+	return temporary.Sync()
 }
 
 func openSourceBinary(path string, uid uint32) (sourceBinary, error) {

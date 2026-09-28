@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"strings"
 	"testing"
@@ -26,7 +27,8 @@ func TestCheckIsReadOnlyAndReportsRequiredActions(t *testing.T) {
 		checkLayout: func(hostenv.WSLLayout) (wslfs.Plan, error) {
 			return wslfs.Plan{Layout: layout, MissingDirectories: []string{layout.ConfigDir}}, nil
 		},
-		loadPolicy: func() (policy.Policy, error) { return policy.Policy{}, nil },
+		checkRegistryRecovery: func(hostenv.WSLLayout) error { return nil },
+		loadPolicy:            func() (policy.Policy, error) { return policy.Policy{}, nil },
 		loadRegistry: func(string, registry.Authenticator) (registry.Registry, string, error) {
 			mutatingLoadCalled = true
 			return registry.Registry{}, "", errors.New("unexpected mutating load")
@@ -59,6 +61,34 @@ func TestCheckIsReadOnlyAndReportsRequiredActions(t *testing.T) {
 	}
 }
 
+func TestCheckRejectsUnsafeRecoveryStateBeforeRegistryLoad(t *testing.T) {
+	layout := installTestLayout()
+	want := errors.New("registry backup has mode 0644")
+	c := command{
+		currentLayout: func() (hostenv.WSLLayout, error) { return layout, nil },
+		checkLayout: func(hostenv.WSLLayout) (wslfs.Plan, error) {
+			return wslfs.Plan{Layout: layout}, nil
+		},
+		checkRegistryRecovery: func(hostenv.WSLLayout) error { return want },
+		loadPolicy: func() (policy.Policy, error) {
+			panic("policy loaded before recovery identity was validated")
+		},
+		loadRegistryReadOnly: func(string, registry.Authenticator) (registry.Registry, string, error) {
+			panic("registry loaded before recovery identity was validated")
+		},
+		executable:  func() (string, error) { return "/home/alice/bootstrap-cb", nil },
+		lstat:       func(string) (os.FileInfo, error) { return nil, fs.ErrNotExist },
+		binaryState: func(hostenv.WSLLayout, string) (State, error) { return Create, nil },
+		inspectNames: func(hostenv.WSLLayout, []string) (wslshim.Result, error) {
+			return wslshim.Result{}, nil
+		},
+	}
+	err := c.run([]string{"install", "--check"}, &bytes.Buffer{}, "dev")
+	if !errors.Is(err, want) {
+		t.Fatalf("install --check error = %v, want wrapped recovery error", err)
+	}
+}
+
 func TestApplyComposesRegistryBinaryAndShimLifecycle(t *testing.T) {
 	layout := installTestLayout()
 	reg := registry.Default()
@@ -70,8 +100,9 @@ func TestApplyComposesRegistryBinaryAndShimLifecycle(t *testing.T) {
 		checkLayout: func(hostenv.WSLLayout) (wslfs.Plan, error) {
 			return wslfs.Plan{Layout: layout}, nil
 		},
-		prepareLayout: func(hostenv.WSLLayout) error { prepared = true; return nil },
-		loadPolicy:    func() (policy.Policy, error) { return policy.Policy{}, nil },
+		checkRegistryRecovery: func(hostenv.WSLLayout) error { return nil },
+		prepareLayout:         func(hostenv.WSLLayout) error { prepared = true; return nil },
+		loadPolicy:            func() (policy.Policy, error) { return policy.Policy{}, nil },
 		loadRegistry: func(path string, _ registry.Authenticator) (registry.Registry, string, error) {
 			return reg, path, nil
 		},
@@ -163,12 +194,13 @@ func TestApplyRejectsBootstrapBeforeRegistryMutation(t *testing.T) {
 	layout := installTestLayout()
 	registryTouched := false
 	c := command{
-		currentLayout: func() (hostenv.WSLLayout, error) { return layout, nil },
-		checkLayout:   func(hostenv.WSLLayout) (wslfs.Plan, error) { return wslfs.Plan{Layout: layout}, nil },
-		prepareLayout: func(hostenv.WSLLayout) error { return nil },
-		executable:    func() (string, error) { return "/home/alice/unsafe", nil },
-		binaryState:   func(hostenv.WSLLayout, string) (State, error) { return "", errors.New("unsafe bootstrap") },
-		loadPolicy:    func() (policy.Policy, error) { registryTouched = true; return policy.Policy{}, nil },
+		currentLayout:         func() (hostenv.WSLLayout, error) { return layout, nil },
+		checkLayout:           func(hostenv.WSLLayout) (wslfs.Plan, error) { return wslfs.Plan{Layout: layout}, nil },
+		checkRegistryRecovery: func(hostenv.WSLLayout) error { return nil },
+		prepareLayout:         func(hostenv.WSLLayout) error { return nil },
+		executable:            func() (string, error) { return "/home/alice/unsafe", nil },
+		binaryState:           func(hostenv.WSLLayout, string) (State, error) { return "", errors.New("unsafe bootstrap") },
+		loadPolicy:            func() (policy.Policy, error) { registryTouched = true; return policy.Policy{}, nil },
 		loadRegistry: func(string, registry.Authenticator) (registry.Registry, string, error) {
 			registryTouched = true
 			return registry.Registry{}, "", nil
@@ -199,10 +231,11 @@ func TestApplyRejectsToolCollisionBeforeBinaryMutation(t *testing.T) {
 	installed := false
 	reg := registry.Default()
 	c := command{
-		currentLayout: func() (hostenv.WSLLayout, error) { return layout, nil },
-		checkLayout:   func(hostenv.WSLLayout) (wslfs.Plan, error) { return wslfs.Plan{Layout: layout}, nil },
-		prepareLayout: func(hostenv.WSLLayout) error { return nil },
-		loadPolicy:    func() (policy.Policy, error) { return policy.Policy{}, nil },
+		currentLayout:         func() (hostenv.WSLLayout, error) { return layout, nil },
+		checkLayout:           func(hostenv.WSLLayout) (wslfs.Plan, error) { return wslfs.Plan{Layout: layout}, nil },
+		checkRegistryRecovery: func(hostenv.WSLLayout) error { return nil },
+		prepareLayout:         func(hostenv.WSLLayout) error { return nil },
+		loadPolicy:            func() (policy.Policy, error) { return policy.Policy{}, nil },
 		loadRegistry: func(path string, _ registry.Authenticator) (registry.Registry, string, error) {
 			return reg, path, nil
 		},
@@ -245,6 +278,26 @@ func TestPrepareStillDelegatesWithoutInstallDependencies(t *testing.T) {
 	}
 	if !called {
 		t.Fatal("prepare command was not delegated")
+	}
+}
+
+func TestPlannedToolNamesIncludesProspectiveUnsignedDefaults(t *testing.T) {
+	reg := registry.Registry{SchemaVersion: registry.MaxSchemaVersion, Tools: map[string]registry.Tool{
+		"custom": {Name: "custom", Image: "example.test/custom:1", Provider: "stateless"},
+	}, Defaults: map[string]string{}}
+	names := plannedToolNames(reg, false)
+	seen := map[string]bool{}
+	for _, name := range names {
+		seen[name] = true
+	}
+	for _, want := range append([]string{"custom"}, registry.Default().ToolNames()...) {
+		if !seen[want] {
+			t.Fatalf("unsigned prospective plan missing %q: %q", want, names)
+		}
+	}
+	signed := plannedToolNames(reg, true)
+	if len(signed) != 1 || signed[0] != "custom" {
+		t.Fatalf("signed registry plan = %q, want [custom]", signed)
 	}
 }
 

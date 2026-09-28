@@ -402,7 +402,7 @@ func handleBootstrapCommand(args []string) bool {
 }
 
 func bootstrapRegistryPath() string {
-	if current, err := hostenv.Current(); err == nil && current.Kind == hostenv.WSL2Native && current.Distro != "" && strings.TrimSpace(current.Distro) == current.Distro {
+	if current, err := hostenv.Current(); err == nil && current.Kind == hostenv.WSL2Native {
 		path, err := wslfs.CurrentRegistryPath()
 		if err != nil {
 			fatalf("native WSL registry path: %v", err)

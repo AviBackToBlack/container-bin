@@ -51,6 +51,34 @@ func Check(layout hostenv.WSLLayout) (Plan, error) {
 	return check(layout, runtime, machineID)
 }
 
+// CheckRegistryRecovery validates the optional backup that registry.LoadAt
+// would promote when the fixed registry is missing. A parse-valid backup is
+// not sufficient: it must retain the same private WSL file identity.
+func CheckRegistryRecovery(layout hostenv.WSLLayout) error {
+	runtime, err := hostenv.Current()
+	if err != nil {
+		return fmt.Errorf("classify native WSL runtime: %w", err)
+	}
+	machineID, err := readMachineIDFile("/etc/machine-id")
+	if err != nil {
+		return fmt.Errorf("read native WSL machine identity: %w", err)
+	}
+	return checkRegistryRecovery(layout, runtime, machineID)
+}
+
+func checkRegistryRecovery(layout hostenv.WSLLayout, runtime hostenv.Runtime, machineID string) error {
+	uid, rootDevice, err := validatePreflight(layout, runtime, machineID)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Lstat(layout.RegistryPath); err == nil {
+		return validateManagedFile(layout.RegistryPath, uid, rootDevice, privateFileMode, "registry")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect native WSL registry %s before recovery: %w", layout.RegistryPath, err)
+	}
+	return validateManagedFile(layout.RegistryPath+".bak", uid, rootDevice, privateFileMode, "registry backup")
+}
+
 func prepare(layout hostenv.WSLLayout, runtime hostenv.Runtime, machineID string) (err error) {
 	uid, rootDevice, err := validatePreflight(layout, runtime, machineID)
 	if err != nil {

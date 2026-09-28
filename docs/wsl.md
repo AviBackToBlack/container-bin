@@ -82,20 +82,30 @@ config read, loads machine policy only from `/etc/container-bin/policy.toml`,
 loads the registry only from the fixed path above without backup-recovery
 mutation, validates the running bootstrap executable, and reports whether the
 registry, managed binary, management shim and registry-derived tool shims are
-ready or require an explicit apply. `cb config` and the help output also report
-this fixed registry path when running natively in WSL2.
+ready or require an explicit apply. For an unsigned registry that needs its
+built-in defaults upgraded, the plan also preflights and reports the tool shims
+that apply would add. `cb config` and the help output report this fixed registry
+path whenever the Microsoft WSL2 kernel is recognized, even if
+`WSL_DISTRO_NAME` is missing or malformed. That bootstrap diagnostic derives
+only the per-user config location; it does not certify distribution/state
+identity, and install or execution still fail closed until that identity is
+canonical and complete.
 
 `cb wsl install --apply` first performs layout preparation, then acquires the
 fixed registry mutation lock and revalidates the layout. An unmanaged registry
 is recovered from a valid interrupted `.bak` when present, otherwise created,
-and non-destructively upgraded at mode `0600`. When policy requires a signed
-registry, automatic creation and upgrade are disabled: the administrator must
-provision an authenticated registry before apply can proceed. The source is the
-exact running executable returned by the OS; it must be a canonical absolute,
+and non-destructively upgraded at mode `0600`. A recovery candidate must itself
+be a current-user-owned regular non-symlink file on the distribution-root
+device with exact mode `0600`; parse-valid but permissive or foreign backups
+are rejected before promotion. When policy requires a signed registry,
+automatic creation and upgrade are disabled: the administrator must provision
+an authenticated registry before apply can proceed. The source is the exact
+running executable returned by the OS; it must be a canonical absolute,
 bounded, current-user-owned regular non-symlink file that is owner-executable,
 has no special bits and is not writable by group or other. Its bytes are copied
-through private same-directory staging and atomically published at the fixed
-managed-binary path with mode `0755`; an already byte-identical target is a
+and hashed together through private same-directory staging; the copied digest
+must still equal the preflight digest before an atomic publish at the fixed
+managed-binary path with mode `0755`. An already byte-identical target is a
 no-op. The management shim and every registry-derived tool shim are then
 created only when missing and fully revalidated. Foreign files, owners, targets
 or unsafe modes stop the transaction instead of being repaired or replaced.
