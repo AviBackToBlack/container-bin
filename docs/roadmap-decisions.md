@@ -341,9 +341,10 @@ is not completion.
    - narrow reusable Linux host interfaces, fail-closed boundary and native
      layout/state identity are merged in PRs #77 and #83;
    - explicit read-only/apply Linux ownership, permission and symlink layout
-     preparation is implemented, but install/runtime integration remains gated;
-   - Docker Desktop WSL integration proof is implemented but not yet wired into
-     an enabled frontend;
+     preparation and registry-derived tool-shim preflight are implemented;
+     installer/runtime integration and race-safe shim mutation remain;
+    - Docker Desktop WSL integration proof is implemented but not yet wired into
+      an enabled frontend;
    - namespace-prefixed/labeled WSL volume identity is implemented, but Docker
      creation and lifecycle commands are not yet wired to it;
    - canonical project storage classification and cross-boundary rejection are
