@@ -3,12 +3,14 @@
 package wsldocker
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"syscall"
 	"time"
@@ -17,8 +19,10 @@ import (
 )
 
 const (
-	probeTimeout   = 10 * time.Second
-	maxProbeOutput = 64 << 10
+	probeTimeout       = 10 * time.Second
+	operationTimeout   = 30 * time.Second
+	maxProbeOutput     = 64 << 10
+	maxOperationOutput = 1 << 20
 )
 
 // Check proves that the current native WSL2 distribution reaches Docker
@@ -29,6 +33,19 @@ func Check(ctx context.Context) (Result, error) {
 		lookupEnv:      os.LookupEnv,
 		statSocket:     statDockerSocket,
 		probeInfo:      probeDockerInfo,
+	})
+}
+
+// Execute performs one bounded control-plane request against the fixed Docker
+// Desktop WSL socket. It repeats the full endpoint proof and binds the request
+// to the same socket device/inode with a root peer before returning any result.
+func Execute(ctx context.Context, request Request) (Response, error) {
+	return execute(ctx, request, operationDependencies{
+		check:      Check,
+		statSocket: statDockerSocket,
+		perform: func(ctx context.Context, socketPath string, request Request) (operationResult, error) {
+			return performDockerRequest(ctx, socketPath, request, operationTimeout, maxOperationOutput, 0)
+		},
 	})
 }
 
@@ -45,10 +62,29 @@ func statDockerSocket(path string) (socketInfo, error) {
 }
 
 func probeDockerInfo(ctx context.Context, socketPath string) (probeResult, error) {
-	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+	return probeDockerInfoForPeer(ctx, socketPath, 0)
+}
+
+func probeDockerInfoForPeer(ctx context.Context, socketPath string, expectedPeerUID uint32) (probeResult, error) {
+	result, err := performDockerRequest(ctx, socketPath, Request{
+		Method:          http.MethodGet,
+		Path:            "/info",
+		SuccessStatuses: []int{http.StatusOK},
+	}, probeTimeout, maxProbeOutput, expectedPeerUID)
+	if err != nil {
+		return probeResult{}, err
+	}
+	if result.StatusCode != http.StatusOK {
+		return probeResult{}, fmt.Errorf("Docker Desktop engine identity request returned HTTP %d", result.StatusCode)
+	}
+	return probeResult{Raw: result.Raw, PeerUID: result.PeerUID}, nil
+}
+
+func performDockerRequest(ctx context.Context, socketPath string, request Request, timeout time.Duration, maxOutput int64, expectedPeerUID uint32) (operationResult, error) {
+	requestCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	var peerUID uint32
+	peerUID := ^uint32(0)
 	transport := &http.Transport{
 		DisableCompression:     true,
 		DisableKeepAlives:      true,
@@ -63,6 +99,10 @@ func probeDockerInfo(ctx context.Context, socketPath string) (probeResult, error
 				_ = conn.Close()
 				return nil, err
 			}
+			if uid != expectedPeerUID {
+				_ = conn.Close()
+				return nil, fmt.Errorf("Docker Desktop WSL socket peer is UID %d, expected %d", uid, expectedPeerUID)
+			}
 			peerUID = uid
 			return conn, nil
 		},
@@ -74,30 +114,36 @@ func probeDockerInfo(ctx context.Context, socketPath string) (probeResult, error
 			return http.ErrUseLastResponse
 		},
 	}
-	request, err := http.NewRequestWithContext(probeCtx, http.MethodGet, "http://docker/info", nil)
-	if err != nil {
-		return probeResult{}, fmt.Errorf("build Docker Desktop engine identity request: %w", err)
+	endpoint := url.URL{Scheme: "http", Host: "docker", Path: request.Path, RawQuery: request.Query.Encode()}
+	var body io.Reader
+	if len(request.Body) != 0 {
+		body = bytes.NewReader(request.Body)
 	}
-	request.Close = true
-	response, err := client.Do(request)
+	httpRequest, err := http.NewRequestWithContext(requestCtx, request.Method, endpoint.String(), body)
 	if err != nil {
-		if probeCtx.Err() != nil {
-			return probeResult{}, fmt.Errorf("query Docker Desktop engine through %s: %w", DockerHost, probeCtx.Err())
+		return operationResult{}, fmt.Errorf("build Docker Desktop Engine API request: %w", err)
+	}
+	httpRequest.Close = true
+	httpRequest.Header.Set("Accept", "application/json")
+	if len(request.Body) != 0 {
+		httpRequest.Header.Set("Content-Type", "application/json")
+	}
+	response, err := client.Do(httpRequest)
+	if err != nil {
+		if requestCtx.Err() != nil {
+			return operationResult{}, fmt.Errorf("query Docker Desktop engine through %s: %w", DockerHost, requestCtx.Err())
 		}
-		return probeResult{}, fmt.Errorf("query Docker Desktop engine through %s: %w", DockerHost, err)
+		return operationResult{}, fmt.Errorf("query Docker Desktop engine through %s: %w", DockerHost, err)
 	}
 	defer response.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(response.Body, maxProbeOutput+1))
+	raw, err := io.ReadAll(io.LimitReader(response.Body, maxOutput+1))
 	if err != nil {
-		return probeResult{}, fmt.Errorf("read Docker Desktop engine identity: %w", err)
+		return operationResult{}, fmt.Errorf("read Docker Desktop Engine API response: %w", err)
 	}
-	if len(raw) > maxProbeOutput {
-		return probeResult{}, fmt.Errorf("Docker Desktop engine probe output exceeds %d bytes", maxProbeOutput)
+	if int64(len(raw)) > maxOutput {
+		return operationResult{}, fmt.Errorf("Docker Desktop Engine API response exceeds %d bytes", maxOutput)
 	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return probeResult{}, fmt.Errorf("Docker Desktop engine identity request returned HTTP %d", response.StatusCode)
-	}
-	return probeResult{Raw: raw, PeerUID: peerUID}, nil
+	return operationResult{StatusCode: response.StatusCode, Raw: raw, PeerUID: peerUID}, nil
 }
 
 func unixPeerUID(conn net.Conn) (uint32, error) {

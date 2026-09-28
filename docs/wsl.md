@@ -153,9 +153,22 @@ Desktop exposes: Linux `OSType`, operating system `Docker Desktop`, engine name
 `docker-desktop`, an explicit Microsoft WSL2 kernel and exactly one supported
 `com.docker.desktop.address` label. A reachable in-distribution Docker Engine,
 remote context, TCP endpoint, Windows-container engine or ambiguous response
-fails closed. A successful request is not a durable authorization: later wiring
-must repeat the check for every Docker operation. This detector is not exposed
-or wired into tool execution yet; real WSL2 + Docker Desktop qualification
+fails closed. A successful request is not a durable authorization.
+
+The unexposed control-operation primitive repeats that complete proof for each
+request, then requires the fixed socket to retain the proven device/inode before
+and after the operation and independently requires a root peer on the operation
+connection. Method, canonical path, query, JSON body, accepted success statuses,
+duration and response size are all bounded explicitly: operation requests have
+a fixed 30-second ceiling, response headers are capped at 16 KiB and response
+bodies at 1 MiB. It never reads ambient Docker endpoint configuration. A socket
+replacement detected after a mutating request causes failure but cannot undo an
+operation the proven peer already accepted. Likewise, a client-side timeout
+does not prove the engine abandoned the request. Callers must keep any
+engine-side grace period within the fixed ceiling and must not retry either
+failure blindly. Streaming, attach and hijacked connections require a separate
+process/IO contract and are deliberately not supported by this primitive. It is
+not wired into tool execution yet; real WSL2 + Docker Desktop qualification
 remains mandatory before support.
 
 ## Native WSL volume identity
@@ -183,8 +196,9 @@ Later reviewable slices must still implement and qualify all of the following:
    into shared/project creation and every lifecycle command;
 3. wire the implemented project and descendant storage boundary into native
    Linux argument mapping, then complete stdin/TTY and signal semantics;
-4. wire the implemented Docker Desktop WSL-integration proof into every Docker
-   operation without accepting ambient endpoint overrides;
+4. wire the implemented bounded Docker Desktop control-operation primitive into
+   volume/container lifecycle calls, and add a separately reviewed streaming
+   execution path without accepting ambient endpoint overrides;
 5. Windows-filesystem and WSL-filesystem project tests plus mixed-invocation
    rejection; and
 6. real WSL2 + Docker Desktop end-to-end qualification before any support claim.
