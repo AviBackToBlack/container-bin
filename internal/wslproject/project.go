@@ -5,6 +5,7 @@ package wslproject
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"strconv"
@@ -30,6 +31,18 @@ type Project struct {
 	Storage      Storage
 	MountPoint   string
 	WindowsDrive string
+	mountID      int
+	device       uint64
+}
+
+// Descendant is one canonical path proven to remain within a Project's exact
+// storage and mount identity. A missing output path is accepted only through
+// its nearest existing non-symlink directory ancestor.
+type Descendant struct {
+	Path            string
+	Relative        string
+	Exists          bool
+	NearestExisting string
 }
 
 type pathInfo struct {
@@ -98,7 +111,7 @@ func classify(root string, d dependencies) (Project, error) {
 		if root == mount.point {
 			return Project{}, fmt.Errorf("WSL project root %s cannot be an entire Windows drive", root)
 		}
-		return Project{Root: root, Storage: WindowsDrive, MountPoint: mount.point, WindowsDrive: drive}, nil
+		return Project{Root: root, Storage: WindowsDrive, MountPoint: mount.point, WindowsDrive: drive, mountID: mount.id, device: mount.device}, nil
 	}
 	if isDrvFS(mount, "") {
 		if _, ok := defaultDriveMount(mount.point); !ok {
@@ -115,7 +128,90 @@ func classify(root string, d dependencies) (Project, error) {
 	if info.Dev != distroRoot.Dev {
 		return Project{}, fmt.Errorf("WSL project root %s is on an unqualified filesystem device", root)
 	}
-	return Project{Root: root, Storage: Distribution, MountPoint: mount.point}, nil
+	return Project{Root: root, Storage: Distribution, MountPoint: mount.point, mountID: mount.id, device: mount.device}, nil
+}
+
+func resolveDescendant(project Project, candidate string, d dependencies) (Descendant, error) {
+	if err := validateRoot(project.Root); err != nil {
+		return Descendant{}, fmt.Errorf("invalid classified WSL project root: %w", err)
+	}
+	if err := validateRoot(candidate); err != nil {
+		return Descendant{}, fmt.Errorf("invalid WSL project path: %w", err)
+	}
+	if candidate != project.Root && !strings.HasPrefix(candidate, project.Root+"/") {
+		return Descendant{}, fmt.Errorf("WSL path %s is outside project root %s", candidate, project.Root)
+	}
+	current, err := classify(project.Root, d)
+	if err != nil {
+		return Descendant{}, fmt.Errorf("revalidate WSL project root %s: %w", project.Root, err)
+	}
+	if !sameProjectIdentity(project, current) {
+		return Descendant{}, fmt.Errorf("WSL project root %s changed storage or mount identity", project.Root)
+	}
+
+	nearest := candidate
+	exists := true
+	var info pathInfo
+	for {
+		info, err = d.lstat(nearest)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return Descendant{}, fmt.Errorf("inspect WSL project path %s: %w", nearest, err)
+		}
+		exists = false
+		if nearest == project.Root {
+			return Descendant{}, fmt.Errorf("WSL project root %s disappeared during path classification", project.Root)
+		}
+		nearest = path.Dir(nearest)
+		if nearest != project.Root && !strings.HasPrefix(nearest, project.Root+"/") {
+			return Descendant{}, fmt.Errorf("nearest existing ancestor escaped WSL project root %s", project.Root)
+		}
+	}
+	if info.Mode&os.ModeSymlink != 0 {
+		return Descendant{}, fmt.Errorf("WSL project path %s is a symlink", nearest)
+	}
+	if !exists && !info.Mode.IsDir() {
+		return Descendant{}, fmt.Errorf("nearest existing ancestor %s is not a directory", nearest)
+	}
+	resolved, err := d.evalSymlinks(nearest)
+	if err != nil {
+		return Descendant{}, fmt.Errorf("resolve WSL project path %s: %w", nearest, err)
+	}
+	if resolved != nearest {
+		return Descendant{}, fmt.Errorf("WSL project path %s resolves through a symlink to %s", nearest, resolved)
+	}
+	rawMounts, err := d.readMountInfo()
+	if err != nil {
+		return Descendant{}, fmt.Errorf("read WSL mount table for path %s: %w", nearest, err)
+	}
+	mounts, err := parseMountInfo(rawMounts)
+	if err != nil {
+		return Descendant{}, fmt.Errorf("parse WSL mount table for path %s: %w", nearest, err)
+	}
+	mount, err := containingMount(nearest, mounts)
+	if err != nil {
+		return Descendant{}, fmt.Errorf("select mount for WSL project path %s: %w", nearest, err)
+	}
+	if mount.device != info.Dev {
+		return Descendant{}, fmt.Errorf("mount selected for WSL project path %s does not back its nearest existing dentry", nearest)
+	}
+	if mount.id != current.mountID || mount.device != current.device || mount.point != current.MountPoint {
+		return Descendant{}, fmt.Errorf("WSL project path %s crosses mount boundary %s", nearest, mount.point)
+	}
+	relative := strings.TrimPrefix(candidate, project.Root)
+	if relative == "" {
+		relative = "."
+	} else {
+		relative = strings.TrimPrefix(relative, "/")
+	}
+	return Descendant{Path: candidate, Relative: relative, Exists: exists, NearestExisting: nearest}, nil
+}
+
+func sameProjectIdentity(first, second Project) bool {
+	return first.Root == second.Root && first.Storage == second.Storage && first.MountPoint == second.MountPoint &&
+		first.WindowsDrive == second.WindowsDrive && first.mountID == second.mountID && first.device == second.device
 }
 
 func validateRoot(root string) error {

@@ -616,8 +616,11 @@ The project classifier preserves exact canonical Linux spelling, rejects every
 symlink component, and accepts only distribution-root-device projects or paths
 below a proven default `/mnt/<drive>` 9p DrvFs/WSL virtiofs mount. It rejects
 entire-drive roots, custom DrvFs roots, lookalike `/mnt` paths and unqualified
-separate filesystems. Later argument mapping must consume this boundary without
-turning it into a Windows-path equivalence rule.
+separate filesystems. Its descendant classifier revalidates the exact project
+mount, rejects symlink and nested-mount escape, and permits missing output paths
+only through a proven same-mount directory ancestor. Later argument mapping
+must consume this boundary without turning it into a Windows-path equivalence
+rule.
 
 The implemented volume contract prefixes names and labels with the opaque
 distribution/machine/user namespace, length-delimits group/logical segments,
