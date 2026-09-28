@@ -77,7 +77,7 @@ The minimum delivery gate for a code change is:
 | RM-34 Cargo expose enhancement | **Intentionally deferred** | Existing expose-all/explicit selection are sufficient; reopen only for concrete unmet use case |
 | Linux/macOS hosts | **Demand-gated** | WSL may factor reusable Linux host code; standalone support needs its own demand and qualification |
 | Enterprise policy | **Foundation and signed registry shipped / image trust remains** | PRs #75 and #84 shipped the machine-owned constraint layer and authenticated registry; image trust remains |
-| Image trust | **Policy, evidence schema and online invocation implemented / integration remains** | Wire verification into lock/update evidence production, add runtime freshness authorization, then add fully pinned offline inputs and private-registry credentials |
+| Image trust | **Online production and runtime authorization implemented / offline and private-registry work remains** | Add fully pinned offline inputs and an explicit private-registry credential bridge |
 | Plugin/provider architecture | **Intentionally deferred** | Reopen only after at least two real integrations cannot fit the declarative model |
 | WSL2 | **Host boundary and layout identity shipped / implementation remaining** | PRs #77 and #83 shipped the fail-closed host boundary and fixed native layout/state identity; explicit read-only/apply filesystem preparation, registry-derived tool-shim preflight, namespace-prefixed/labeled volume identity, Docker Desktop integration proof and a proof-bound bounded control-request primitive are available, while race-safe shim mutation, Docker lifecycle/frontend wiring, streaming execution and real WSL qualification remain |
 | Per-project overlays | **Completed in PR #80** | Add-only digest-bound trust model shipped on the merged enterprise-policy foundation |
@@ -559,14 +559,14 @@ internal online invocation slice authenticates pinned verifier/key snapshots,
 stages them under current-user-only permissions, downloads bounded signature
 bundles for the exact digest with a minimal environment, and locally re-verifies
 each bundle against the digest, cosign predicate and configured identity/key.
-Lock/update integration now resolves the exact
-digest first and promotes the document to schema 2 only after one authenticated
-transparency bundle can be recorded; zero/multiple bundle results and verifier
-failures abort without a digest-only fallback. Runtime freshness authorization
-remains unimplemented, so policy-covered images still fail execution with
-`policy.image_trust_unverified`. Offline mode remains blocked until all
-trusted-root inputs can be pinned, and private-registry credentials require an
-explicit non-ambient bridge.
+Lock/update integration resolves the exact digest first and promotes the
+document to schema 2 only after one authenticated transparency bundle can be
+recorded; zero/multiple bundle results and verifier failures abort without a
+digest-only fallback. Runtime freshness authorization consumes that evidence
+only while its repository, digest, verifier, signer/key identity and complete
+policy fingerprint match current machine policy. Offline mode remains blocked
+until all trusted-root inputs can be pinned, and private-registry credentials
+require an explicit non-ambient bridge.
 
 ## Plugin/provider architecture
 

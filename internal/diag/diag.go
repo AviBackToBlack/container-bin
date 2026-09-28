@@ -238,7 +238,7 @@ func Doctor(reg registry.Registry, cfgPath string, machinePolicy policy.Policy) 
 				missing++
 				continue
 			}
-			if err := machinePolicy.AuthorizeResolvedImage(image, e.Resolved, lockfile.IsLocalResolved(e.Resolved)); err != nil {
+			if err := machinePolicy.AuthorizeResolvedImage(image, e.Resolved, lockfile.IsLocalResolved(e.Resolved), e.RuntimeTrustEvidence()); err != nil {
 				fmt.Printf("FAIL     image %s is denied: %v\n", image, err)
 				missing++
 				continue
