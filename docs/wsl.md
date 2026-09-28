@@ -118,6 +118,12 @@ component resolves through a symlink. It never accepts Windows drive/UNC
 spelling and never translates a Windows path into a WSL path. Exact Linux case
 and spelling remain the project identity.
 
+Its descendant classifier revalidates that project identity for each candidate
+path, rejects lexical escape, symlinks and nested mount crossings, and returns
+the exact case-sensitive project-relative path. A not-yet-created output is
+accepted only through its nearest existing non-symlink directory ancestor on
+the same exact mount. This classifier is not yet wired into argument mapping.
+
 A WSL-filesystem project root must be on the same filesystem device as the
 distribution root. A Windows-filesystem project root must be below a proven default
 `/mnt/<lowercase-drive>` mount reported as 9p DrvFs or WSL's exact
@@ -175,8 +181,8 @@ Later reviewable slices must still implement and qualify all of the following:
    add race-safe shim mutation;
 2. wire the implemented distribution/machine/user volume identity contract
    into shared/project creation and every lifecycle command;
-3. wire the implemented project storage boundary, then complete native Linux
-   argument mapping, stdin/TTY and signal semantics;
+3. wire the implemented project and descendant storage boundary into native
+   Linux argument mapping, then complete stdin/TTY and signal semantics;
 4. wire the implemented Docker Desktop WSL-integration proof into every Docker
    operation without accepting ambient endpoint overrides;
 5. Windows-filesystem and WSL-filesystem project tests plus mixed-invocation

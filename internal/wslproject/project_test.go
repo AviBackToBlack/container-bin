@@ -3,6 +3,7 @@ package wslproject
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"strings"
 	"testing"
@@ -38,6 +39,167 @@ func TestClassifyDefaultWindowsDriveMounts(t *testing.T) {
 				t.Fatalf("classify() = %+v", project)
 			}
 		})
+	}
+}
+
+func TestResolveDescendantAcceptsExistingAndMissingPathsOnProjectMount(t *testing.T) {
+	root := "/home/alice/project"
+	existing := root + "/pkg/file.go"
+	missing := root + "/dist/output.bin"
+	deps := validDependencies(root, rootMount)
+	baseLstat := deps.lstat
+	deps.lstat = func(name string) (pathInfo, error) {
+		switch name {
+		case existing:
+			return pathInfo{Mode: 0o644, Dev: linuxDevice(8, 1)}, nil
+		case missing, root + "/dist":
+			return pathInfo{}, fs.ErrNotExist
+		default:
+			return baseLstat(name)
+		}
+	}
+	deps.evalSymlinks = func(name string) (string, error) { return name, nil }
+	project, err := classify(root, deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := resolveDescendant(project, existing, deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Path != existing || got.Relative != "pkg/file.go" || !got.Exists || got.NearestExisting != existing {
+		t.Fatalf("existing descendant = %+v", got)
+	}
+	got, err = resolveDescendant(project, missing, deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Path != missing || got.Relative != "dist/output.bin" || got.Exists || got.NearestExisting != root {
+		t.Fatalf("missing descendant = %+v", got)
+	}
+	got, err = resolveDescendant(project, root, deps)
+	if err != nil || got.Relative != "." || !got.Exists {
+		t.Fatalf("project root descendant = (%+v, %v)", got, err)
+	}
+}
+
+func TestResolveDescendantPreservesWindowsDriveProjectIdentity(t *testing.T) {
+	root := "/mnt/c/Users/Alice/Project"
+	candidate := root + "/src/main.go"
+	mounts := rootMount + "25 24 0:45 / /mnt/c rw - 9p drvfsa rw,aname=drvfs;path=C:\\134;uid=1000\n"
+	deps := validDependencies(root, mounts)
+	baseLstat := deps.lstat
+	deps.lstat = func(name string) (pathInfo, error) {
+		if name == candidate {
+			return pathInfo{Mode: 0o644, Dev: linuxDevice(0, 45)}, nil
+		}
+		return baseLstat(name)
+	}
+	deps.evalSymlinks = func(name string) (string, error) { return name, nil }
+	project, err := classify(root, deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := resolveDescendant(project, candidate, deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if project.Storage != WindowsDrive || project.WindowsDrive != "c" || got.Relative != "src/main.go" {
+		t.Fatalf("Windows-drive descendant = project %+v, path %+v", project, got)
+	}
+}
+
+func TestResolveDescendantRejectsSymlinkAndNestedMountEscapes(t *testing.T) {
+	root := "/home/alice/project"
+	candidate := root + "/vendor/pkg"
+	tests := map[string]func(*dependencies){
+		"final symlink": func(d *dependencies) {
+			base := d.lstat
+			d.lstat = func(name string) (pathInfo, error) {
+				if name == candidate {
+					return pathInfo{Mode: os.ModeSymlink | 0o777, Dev: linuxDevice(8, 1)}, nil
+				}
+				return base(name)
+			}
+		},
+		"parent symlink": func(d *dependencies) {
+			base := d.lstat
+			d.lstat = func(name string) (pathInfo, error) {
+				if name == candidate {
+					return pathInfo{Mode: os.ModeDir | 0o755, Dev: linuxDevice(8, 1)}, nil
+				}
+				return base(name)
+			}
+			d.evalSymlinks = func(name string) (string, error) {
+				if name == candidate {
+					return "/srv/vendor/pkg", nil
+				}
+				return name, nil
+			}
+		},
+		"nested mount": func(d *dependencies) {
+			d.readMountInfo = func() ([]byte, error) {
+				return []byte(rootMount + "25 24 8:1 / /home/alice/project/vendor rw - ext4 /dev/sdb rw\n"), nil
+			}
+			base := d.lstat
+			d.lstat = func(name string) (pathInfo, error) {
+				if name == candidate {
+					return pathInfo{Mode: os.ModeDir | 0o755, Dev: linuxDevice(8, 1)}, nil
+				}
+				return base(name)
+			}
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			baseDeps := validDependencies(root, rootMount)
+			baseDeps.evalSymlinks = func(name string) (string, error) { return name, nil }
+			project, err := classify(root, baseDeps)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mutate(&baseDeps)
+			if _, err := resolveDescendant(project, candidate, baseDeps); err == nil {
+				t.Fatal("resolveDescendant() accepted boundary escape")
+			}
+		})
+	}
+}
+
+func TestResolveDescendantRejectsInvalidInputsAndChangedProjectIdentity(t *testing.T) {
+	root := "/home/alice/project"
+	deps := validDependencies(root, rootMount)
+	project, err := classify(root, deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, candidate := range []string{"/home/alice/other", root + "/../other", `C:\project`, "relative"} {
+		if _, err := resolveDescendant(project, candidate, deps); err == nil {
+			t.Errorf("resolveDescendant(%q) succeeded", candidate)
+		}
+	}
+	changed := project
+	changed.mountID++
+	if _, err := resolveDescendant(changed, root, deps); err == nil || !strings.Contains(err.Error(), "changed storage or mount identity") {
+		t.Fatalf("changed-identity error = %v", err)
+	}
+
+	missingUnderFile := root + "/file/child"
+	baseLstat := deps.lstat
+	deps.lstat = func(name string) (pathInfo, error) {
+		switch name {
+		case missingUnderFile:
+			return pathInfo{}, fs.ErrNotExist
+		case root + "/file":
+			return pathInfo{Mode: 0o644, Dev: linuxDevice(8, 1)}, nil
+		default:
+			return baseLstat(name)
+		}
+	}
+	deps.evalSymlinks = func(name string) (string, error) { return name, nil }
+	if _, err := resolveDescendant(project, missingUnderFile, deps); err == nil || !strings.Contains(err.Error(), "not a directory") {
+		t.Fatalf("missing-under-file error = %v", err)
 	}
 }
 
