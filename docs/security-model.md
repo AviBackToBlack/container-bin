@@ -29,9 +29,10 @@ An optional administrator-owned machine policy sits above this user-controlled
 boundary. Its fixed path, owner and permissions are validated before use. It
 can require locking, restrict image origins and authenticate exact registry
 bytes through a detached Ed25519 signature. Schema 3 can declare exact
-repository-bound image-signature requirements; covered images currently fail
-closed until the evidence-producing lock slice lands. Policy cannot grant
-mounts, environment access or commands. See [enterprise machine
+repository-bound image-signature requirements; lock/update can produce
+schema-2 evidence, while covered image execution remains fail closed until the
+runtime freshness gate consumes it. Policy cannot grant mounts, environment
+access or commands. See [enterprise machine
 policy](enterprise-policy.md).
 
 Treat the registry and lockfile like your PowerShell `$PROFILE`: yours,
@@ -78,12 +79,15 @@ readable, and dangerous to let others edit.
   the digest-only compatibility format. The invocation layer executes only
   authenticated verifier/key snapshots from a protected private directory,
   bounds time and output, scrubs ambient environment state, checks staged bytes
-  again after execution and independently binds JSON results to the exact
-  digest and keyless identity. Covered repositories still fail closed until
-  that result can be recorded and consumed; missing implementation is never
-  permission to fall back to digest-only locking. Transparency-log verification
-  is mandatory. Offline rules refuse process execution until policy can pin the
-  complete trusted-root and bundle inputs needed to forbid network fallback.
+  again after execution, and re-verifies every downloaded bundle locally
+  against the exact digest, cosign predicate, and configured identity/key.
+  Lock/update records an online result only when
+  exactly one authenticated transparency bundle fits the schema-2 evidence
+  contract. Covered repositories still fail closed at runtime until that result
+  can be consumed; missing implementation is never permission to fall back to
+  digest-only locking. Offline rules refuse process execution until policy can
+  pin the complete trusted-root and bundle inputs needed to forbid network
+  fallback.
 - **Fail-closed host boundary.** Non-bootstrap work currently runs only in a
   native Windows process. Windows binaries launched through detected WSL
   interoperability, WSL1, ordinary work on recognized-but-not-yet-enabled native WSL2,
@@ -99,6 +103,13 @@ readable, and dangerous to let others edit.
   projects require a proven default `/mnt/<drive>` DrvFs/virtiofs mount and
   cannot select an entire drive. Custom mounts and mixed Windows spellings fail
   closed, and exact Linux case remains part of project identity.
+- **Native WSL Docker provenance fails closed.** The unexposed detector uses a
+  direct Engine API request on the pinned local Unix socket, never an ambient
+  CLI/config/context. It rejects Docker endpoint/TLS/API overrides, validates
+  root ownership, non-world-writable permissions, a root socket peer and stable
+  device/inode identity, then requires Docker Desktop name, OS, Microsoft WSL2
+  kernel and address-label evidence. The proof must be repeated per operation;
+  merely reaching an in-distribution or remote Docker Engine is not accepted.
 - **Native WSL volumes are namespace-bound.** The unexposed volume contract
   places the opaque distribution/machine/user namespace in both every managed
   name and `cb.wsl_namespace` label, and length-delimits owner components so
@@ -113,12 +124,12 @@ readable, and dangerous to let others edit.
   unmanaged; unreadable, malformed, expired or unsupported means stop.
 - **Reserved shim names.** Tool names that would collide with `cb` itself or
   Windows device names (`con`, `nul`, `com1`, …) are rejected at validation,
-  as are versioned management-binary names beginning with `cb-v` plus a digit.
-  Names such as `cb-vault` that lack that version digit remain available to
-  registered tools. The same validation applies to binaries discovered from
-  managed global stores or selected from a shared volume (which are untrusted
-  input). Case-colliding names fail closed because Windows shims cannot
-  represent both safely.
+  as are the private `cb-update-helper` dispatch name and versioned
+  management-binary names beginning with `cb-v` plus a digit. Names such as
+  `cb-vault` that lack that version digit remain available to registered tools.
+  The same validation applies to binaries discovered from managed global stores
+  or selected from a shared volume (which are untrusted input). Case-colliding
+  names fail closed because Windows shims cannot represent both safely.
 - **Conservative deletion.** `cb gc` is dry-run by default, deletes only
   explicitly selected current-project state with `--apply`, and only considers
   a volume an orphan when *its own labels* record a project path that no
@@ -152,21 +163,26 @@ readable, and dangerous to let others edit.
   Tar extraction occurs only inside the named Docker volume through an immutable,
   network-disabled helper with a read-only container root; no archive member is
   turned into a Windows host path.
-- **Fail-closed self-update selection.** `cb self-update --check` accepts only a
+- **Fail-closed transactional self-update.** `cb self-update --check` accepts only a
   release-qualified Windows/amd64 or Windows/arm64 build selected from native
   `GOARCH`, queries the canonical GitHub repository
   over HTTPS with a bounded response, and requires exact canonical release and
   asset URLs, names and sizes. Downgrades and prereleases require explicit
-  flags. The command performs no asset download and changes no installed files.
-  A separate, not-yet-exposed staging phase downloads exact advertised bytes
-  for the selected artifact and `SHA256SUMS` beside a supplied, existing installed
-  executable, accepting only the canonical URL or one HTTPS redirect to
-  GitHub's release-asset host. Staging applies a protected current-user-only
-  DACL on Windows and removes partial staging on any failure. Later phases must
-  require both checksums and GitHub provenance without a fallback before
-  replacement is possible. On ARM64, archive checksum and provenance are
-  verified before an exact three-file archive layout is parsed and `cb.exe` is
-  extracted; unexpected, duplicate or unsafe entries fail closed.
+  flags. Check mode performs no asset download and changes no installed files.
+  Explicit `--apply` additionally requires the installed `cb.exe`, an absolute
+  Authenticode-valid GitHub CLI path and an explicit token. It downloads exact
+  advertised bytes plus `SHA256SUMS` to protected same-volume staging, accepting
+  only the canonical URL or one HTTPS redirect to GitHub's release-asset host,
+  then requires checksum and GitHub provenance without fallback. On ARM64,
+  archive checksum and provenance are verified before an exact three-file
+  archive layout is parsed and `cb.exe` is extracted.
+- **Self-update mutation stays behind a re-verifying helper.** No installed byte
+  changes before the parent has verified the complete result. A protected
+  helper copy waits for the parent, revalidates the versioned request and exact
+  paths, repeats remote verification, and requires the same opaque result before
+  entering the serialized rollback-safe transaction. Only proven managed shims
+  are reconciled. Timeout, changed inputs, malformed requests, lock contention,
+  smoke-test failure and unrelated executable files all fail closed.
 
 ## What ContainerBin does NOT protect against
 

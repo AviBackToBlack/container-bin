@@ -41,6 +41,34 @@ func TestClassifyDefaultWindowsDriveMounts(t *testing.T) {
 	}
 }
 
+func TestClassifyRejectsMountHiddenAtAncestor(t *testing.T) {
+	root := "/mnt/c/Users/Alice/Project"
+	mounts := rootMount +
+		"25 24 0:45 / /mnt/c rw - 9p drvfsa rw,aname=drvfs\n" +
+		"26 24 0:46 / /mnt rw - tmpfs none rw\n"
+	deps := validDependencies(root, mounts)
+	deps.lstat = func(name string) (pathInfo, error) {
+		if name == root {
+			return pathInfo{Mode: os.ModeDir | 0o755, Dev: linuxDevice(0, 46)}, nil
+		}
+		return pathInfo{Mode: os.ModeDir | 0o755, Dev: linuxDevice(8, 1)}, nil
+	}
+	if _, err := classify(root, deps); err == nil || !strings.Contains(err.Error(), "does not back the root dentry") {
+		t.Fatalf("classify() error = %v", err)
+	}
+}
+
+func TestClassifyRejectsMismatchedDrvFSDevice(t *testing.T) {
+	root := "/mnt/c/Users/Alice/Project"
+	deps := validDependencies(root, rootMount+"25 24 0:45 / /mnt/c rw - 9p drvfsa rw,aname=drvfs\n")
+	deps.lstat = func(name string) (pathInfo, error) {
+		return pathInfo{Mode: os.ModeDir | 0o755, Dev: linuxDevice(0, 46)}, nil
+	}
+	if _, err := classify(root, deps); err == nil || !strings.Contains(err.Error(), "does not back the root dentry") {
+		t.Fatalf("classify() error = %v", err)
+	}
+}
+
 func TestClassifyUsesDeepestContainingMount(t *testing.T) {
 	root := "/home/alice/My Project/repo"
 	mounts := rootMount + "25 24 8:1 /home/alice/My\\040Project /home/alice/My\\040Project rw - ext4 /dev/sdb rw\n"
@@ -130,6 +158,14 @@ func TestClassifyRejectsAmbiguousBoundaries(t *testing.T) {
 				}
 			},
 		},
+		"lookalike virtiofs tag": {
+			root: "/mnt/c/Users/Alice/Project",
+			mutate: func(d *dependencies) {
+				d.readMountInfo = func() ([]byte, error) {
+					return []byte(rootMount + "25 24 0:45 / /mnt/c rw - virtiofs drvfs-evil rw\n"), nil
+				}
+			},
+		},
 		"entire Windows drive": {
 			root: "/mnt/c",
 			mutate: func(d *dependencies) {
@@ -169,14 +205,24 @@ func TestClassifyRejectsAmbiguousBoundaries(t *testing.T) {
 func TestParseMountInfoRejectsMalformedOrUnknownEscapes(t *testing.T) {
 	for _, raw := range []string{
 		"bad\n",
-		"24 24 8:1 / / rw - ext4 /dev/sdb rw\n",
 		rootMount + "24 1 8:2 / /other rw - ext4 /dev/sdc rw\n",
+		"24 1 bad / / rw - ext4 /dev/sdb rw\n",
 		"24 1 8:1 / /bad\\999 rw - ext4 /dev/sdb rw\n",
 		"24 1 8:1 / relative rw - ext4 /dev/sdb rw\n",
 	} {
 		if _, err := parseMountInfo([]byte(raw)); err == nil {
 			t.Fatalf("parseMountInfo(%q) succeeded", raw)
 		}
+	}
+}
+
+func TestParseMountInfoAcceptsSelfParentedRoot(t *testing.T) {
+	mounts, err := parseMountInfo([]byte("24 24 8:1 / / rw - ext4 /dev/sdb rw\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mounts) != 1 || mounts[0].parentID != mounts[0].id {
+		t.Fatalf("parseMountInfo() = %+v", mounts)
 	}
 }
 
@@ -194,6 +240,12 @@ func TestClassifyPropagatesRuntimeAndFilesystemErrors(t *testing.T) {
 }
 
 func validDependencies(root, mounts string) dependencies {
+	device := linuxDevice(8, 1)
+	if parsed, err := parseMountInfo([]byte(mounts)); err == nil {
+		if mount, err := containingMount(root, parsed); err == nil {
+			device = mount.device
+		}
+	}
 	return dependencies{
 		currentRuntime: func() (hostenv.Runtime, error) {
 			return hostenv.Runtime{Kind: hostenv.WSL2Native, Distro: "Ubuntu-24.04"}, nil
@@ -202,7 +254,10 @@ func validDependencies(root, mounts string) dependencies {
 			if name != root && name != "/" {
 				return pathInfo{}, errors.New("unexpected path")
 			}
-			return pathInfo{Mode: os.ModeDir | 0o755, Dev: 1}, nil
+			if name == "/" {
+				return pathInfo{Mode: os.ModeDir | 0o755, Dev: linuxDevice(8, 1)}, nil
+			}
+			return pathInfo{Mode: os.ModeDir | 0o755, Dev: device}, nil
 		},
 		evalSymlinks:  func(string) (string, error) { return root, nil },
 		readMountInfo: func() ([]byte, error) { return []byte(mounts), nil },

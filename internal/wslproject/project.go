@@ -22,7 +22,9 @@ const (
 	WindowsDrive Storage = "windows-drive"
 )
 
-// Project is a canonical, case-sensitive native-WSL project identity.
+// Project is a canonical, case-sensitive native-WSL project identity. Storage
+// describes Root only; callers must classify each resolved descendant path
+// before relying on its storage boundary.
 type Project struct {
 	Root         string
 	Storage      Storage
@@ -45,6 +47,7 @@ type dependencies struct {
 type mountInfo struct {
 	id           int
 	parentID     int
+	device       uint64
 	point        string
 	filesystem   string
 	source       string
@@ -88,15 +91,19 @@ func classify(root string, d dependencies) (Project, error) {
 	if err != nil {
 		return Project{}, fmt.Errorf("select mount for WSL project root %s: %w", root, err)
 	}
-	if isDrvFS(mount) {
-		drive, ok := defaultDriveMount(mount.point)
-		if !ok {
-			return Project{}, fmt.Errorf("WSL project root %s uses DrvFs at unsupported mount point %s", root, mount.point)
-		}
+	if mount.device != info.Dev {
+		return Project{}, fmt.Errorf("mount selected for WSL project root %s does not back the root dentry", root)
+	}
+	if drive, ok := defaultDriveMount(mount.point); ok && isDrvFS(mount, drive) {
 		if root == mount.point {
 			return Project{}, fmt.Errorf("WSL project root %s cannot be an entire Windows drive", root)
 		}
 		return Project{Root: root, Storage: WindowsDrive, MountPoint: mount.point, WindowsDrive: drive}, nil
+	}
+	if isDrvFS(mount, "") {
+		if _, ok := defaultDriveMount(mount.point); !ok {
+			return Project{}, fmt.Errorf("WSL project root %s uses DrvFs at unsupported mount point %s", root, mount.point)
+		}
 	}
 	if _, ok := defaultDriveRoot(root); ok {
 		return Project{}, fmt.Errorf("WSL project root %s is under /mnt/<drive> but the mount is not proven DrvFs", root)
@@ -148,8 +155,12 @@ func parseMountInfo(raw []byte) ([]mountInfo, error) {
 		}
 		seenIDs[mountID] = true
 		parentID, err := strconv.Atoi(fields[1])
-		if err != nil || parentID <= 0 || parentID == mountID {
+		if err != nil || parentID <= 0 {
 			return nil, fmt.Errorf("line %d has invalid parent mount ID", index+1)
+		}
+		device, err := parseMountDevice(fields[2])
+		if err != nil {
+			return nil, fmt.Errorf("line %d has invalid mount device", index+1)
 		}
 		point, err := unescapeMountField(fields[4])
 		if err != nil || !path.IsAbs(point) || path.Clean(point) != point {
@@ -162,6 +173,7 @@ func parseMountInfo(raw []byte) ([]mountInfo, error) {
 		mounts = append(mounts, mountInfo{
 			id:           mountID,
 			parentID:     parentID,
+			device:       device,
 			point:        point,
 			filesystem:   fields[separator+1],
 			source:       source,
@@ -169,6 +181,31 @@ func parseMountInfo(raw []byte) ([]mountInfo, error) {
 		})
 	}
 	return mounts, nil
+}
+
+func parseMountDevice(field string) (uint64, error) {
+	majorText, minorText, ok := strings.Cut(field, ":")
+	if !ok || majorText == "" || minorText == "" || strings.Contains(minorText, ":") {
+		return 0, errors.New("invalid major:minor device")
+	}
+	major, err := strconv.ParseUint(majorText, 10, 32)
+	if err != nil {
+		return 0, err
+	}
+	minor, err := strconv.ParseUint(minorText, 10, 32)
+	if err != nil {
+		return 0, err
+	}
+	return linuxDevice(major, minor), nil
+}
+
+// linuxDevice encodes Linux major/minor values in the dev_t layout exposed by
+// syscall.Stat_t.Dev.
+func linuxDevice(major, minor uint64) uint64 {
+	return (minor & 0xff) |
+		((major & 0xfff) << 8) |
+		((minor &^ 0xff) << 12) |
+		((major &^ 0xfff) << 32)
 }
 
 func unescapeMountField(field string) (string, error) {
@@ -256,7 +293,7 @@ func mountDescendsFrom(mount mountInfo, ancestorID int, byID map[int]mountInfo) 
 	return false
 }
 
-func isDrvFS(mount mountInfo) bool {
+func isDrvFS(mount mountInfo, drive string) bool {
 	switch mount.filesystem {
 	case "9p":
 		for _, option := range strings.Split(mount.superOptions, ",") {
@@ -266,7 +303,11 @@ func isDrvFS(mount mountInfo) bool {
 		}
 		return false
 	case "virtiofs":
-		return strings.HasPrefix(mount.source, "drvfs")
+		if drive == "" {
+			return false
+		}
+		tag := "drvfs" + strings.ToUpper(drive)
+		return mount.source == tag+"0" || mount.source == tag+"1"
 	default:
 		return false
 	}

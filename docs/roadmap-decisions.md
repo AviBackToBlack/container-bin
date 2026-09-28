@@ -21,7 +21,7 @@ items from being repeatedly rediscovered as if they were immediately actionable.
 | Image trust | **Policy-driven Sigstore/cosign at lock time** | Ready after signed-registry policy. Digest locking remains default where policy permits. Required trust never silently falls back to digest-only. |
 | Per-project overlays | **Explicit digest-bound, add-only trust model** | Implementation-ready on the merged policy foundation. Initial overlays exclude host mounts, env prefixes and shared cross-project volumes. |
 | Plugin/provider architecture | **Intentionally deferred** | Reopen only after at least two concrete integrations cannot be expressed safely by the declarative model. |
-| RM-31 self-update | **Explicit transactional, attestation-verifying update** | Selection/check, staging, verification and ARM64 artifact selection are implemented; the internal Windows transaction now replaces and rolls back the complete proven managed set. Helper/user-facing apply wiring and release E2E remain. |
+| RM-31 self-update | **Explicit transactional, attestation-verifying update** | Selection/check, staging, verification, ARM64 artifact selection, the private wait helper and explicit apply wiring are implemented. Real published-release E2E remains. |
 | RM-30 Authenticode | **Design accepted; externally blocked** | Implement only after a real code-signing certificate and protected signing mechanism exist. Stable and prerelease release artifacts are both signed. |
 | RM-29 Windows ARM64 | **Lowest priority** | Native GitHub Windows ARM64 CI shipped in PR #78, reproducible release packaging in PR #86 and ARM64 self-update selection in PR #91. Real Windows-on-Arm + Docker Desktop qualification remains. Do not delay other roadmap work. |
 | Standalone Linux/macOS | **Demand-gated** | No support claim yet. WSL should create reusable narrow Linux host abstractions, but standalone hosts require their own contract and real Docker qualification. |
@@ -226,6 +226,15 @@ runs bootstrap version/shim-identity checks. Failure restores the prior managed
 set where possible and preserves actionable recovery artifacts otherwise.
 Normal operation does not schedule replacement for reboot.
 
+The mutating surface is explicit:
+`cb self-update --apply --gh-executable ABSOLUTE_GH_EXE`. It accepts only the
+installed `cb.exe`, never searches `PATH` for the verifier, requires the
+supplied native GitHub CLI to pass publisher verification, and transfers a
+bounded versioned request to a protected same-volume helper. The helper waits
+for the parent with a fixed timeout, repeats artifact verification, requires
+the result to match the parent-bound identity and only then enters the existing
+rollback-safe transaction. `--check` remains read-only.
+
 ### RM-30 — Authenticode release contract
 
 Every published stable and prerelease Windows release artifact is signed once
@@ -314,30 +323,32 @@ native Windows ARM64 CI in PR #78, reproducible ARM64 release packaging in PR
 is not completion.
 
 1. **Image trust**
-   - cosign verifier configuration and verifier hash validation;
-   - per-repository trust policy;
-   - lock schema/evidence migration;
-   - online/offline verification and stale-evidence behavior.
+   - cosign verifier configuration, per-repository policy, schema-2 storage and
+     online lock-evidence production are implemented;
+   - runtime freshness authorization, offline verification and explicit
+     private-registry credential bridging remain.
 
-2. **Remaining RM-31 self-update**
+2. **Remaining RM-31 self-update qualification**
    - selection/check, bounded staging and `gh attestation verify` are merged in
      PRs #76, #81 and #82;
    - ARM64 archive selection, verification and exact extraction are merged in
      PR #91;
-   - rollback-safe Windows transaction and managed-shim reconciliation are implemented internally;
-   - temporary wait helper and user-facing apply wiring;
-   - release/self-test E2E.
+   - rollback-safe Windows transaction, managed-shim reconciliation, the
+     temporary wait helper and user-facing apply wiring are implemented;
+   - real published-release/self-test E2E remains.
 
 3. **Remaining WSL2**
    - narrow reusable Linux host interfaces, fail-closed boundary and native
      layout/state identity are merged in PRs #77 and #83;
    - explicit read-only/apply Linux ownership, permission and symlink layout
      preparation is implemented, but install/runtime integration remains gated;
+   - Docker Desktop WSL integration proof is implemented but not yet wired into
+     an enabled frontend;
    - namespace-prefixed/labeled WSL volume identity is implemented, but Docker
      creation and lifecycle commands are not yet wired to it;
-   - Docker Desktop WSL integration;
    - canonical project storage classification and cross-boundary rejection are
      implemented but not yet wired into argument mapping or an enabled frontend;
+   - project identity and cross-boundary rejection integration tests;
    - real WSL Docker E2E.
 
 4. **RM-30 Authenticode**

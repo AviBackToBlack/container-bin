@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -38,15 +39,23 @@ type runContext struct {
 	found         bool
 }
 
+type fileStatter interface {
+	Stat() (os.FileInfo, error)
+}
+
 // interactiveTerminal is intentionally conservative: Docker gets a TTY only
 // when both stdin and stdout are character devices. Pipes/redirection and
 // process-captured output remain plain -i, preserving automation semantics.
 func interactiveTerminal() bool {
-	in, err := os.Stdin.Stat()
+	return interactiveTerminalFor(os.Stdin, os.Stdout)
+}
+
+func interactiveTerminalFor(stdin, stdout fileStatter) bool {
+	in, err := stdin.Stat()
 	if err != nil || in.Mode()&os.ModeCharDevice == 0 {
 		return false
 	}
-	out, err := os.Stdout.Stat()
+	out, err := stdout.Stat()
 	return err == nil && out.Mode()&os.ModeCharDevice != 0
 }
 
@@ -82,9 +91,13 @@ func RunTool(t registry.Tool, userArgs []string, machinePolicy policy.Policy) (i
 		return 1, err
 	}
 
-	cmd := exec.Command("docker", args...)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr, cmd.Env = os.Stdin, os.Stdout, os.Stderr, os.Environ()
-	err = cmd.Run()
+	return runCommand("docker", args, os.Stdin, os.Stdout, os.Stderr, os.Environ())
+}
+
+func runCommand(executable string, args []string, stdin io.Reader, stdout, stderr io.Writer, env []string) (int, error) {
+	cmd := exec.Command(executable, args...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr, cmd.Env = stdin, stdout, stderr, env
+	err := cmd.Run()
 	if err == nil {
 		return 0, nil
 	}
@@ -362,29 +375,43 @@ func ensureDockerVolumes(t registry.Tool, ctx runContext) error {
 }
 
 func selectedHostEnv(t registry.Tool) []string {
+	return selectedHostEnvForHost(runtime.GOOS, t, os.Environ())
+}
+
+func selectedHostEnvForHost(goos string, t registry.Tool, environ []string) []string {
 	if len(t.EnvNames) == 0 && len(t.EnvPrefixes) == 0 {
 		return nil
 	}
+	key := func(value string) string {
+		if goos == "windows" {
+			return strings.ToUpper(value)
+		}
+		return value
+	}
 	exact := map[string]bool{}
 	for _, n := range t.EnvNames {
-		exact[strings.ToUpper(n)] = true
+		exact[key(n)] = true
+	}
+	prefixes := make([]string, len(t.EnvPrefixes))
+	for i, prefix := range t.EnvPrefixes {
+		prefixes[i] = key(prefix)
 	}
 	seen := map[string]bool{}
 	var out []string
-	for _, kv := range os.Environ() {
+	for _, kv := range environ {
 		name := strings.SplitN(kv, "=", 2)[0]
-		upper := strings.ToUpper(name)
-		match := exact[upper]
+		matchKey := key(name)
+		match := exact[matchKey]
 		if !match {
-			for _, p := range t.EnvPrefixes {
-				if strings.HasPrefix(upper, strings.ToUpper(p)) {
+			for _, prefix := range prefixes {
+				if strings.HasPrefix(matchKey, prefix) {
 					match = true
 					break
 				}
 			}
 		}
-		if match && !seen[upper] {
-			seen[upper] = true
+		if match && !seen[matchKey] {
+			seen[matchKey] = true
 			out = append(out, name)
 		}
 	}

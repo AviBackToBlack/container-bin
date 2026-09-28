@@ -211,14 +211,43 @@ contents.
 Schema 3 retains every earlier control and adds the fail-closed policy contract
 for Sigstore/cosign image verification. ContainerBin can authenticate the exact
 configured cosign executable against its pin, and lock schema 2 defines and
-strictly validates the structured evidence record. The internal verifier can
-now privately stage authenticated verifier/key snapshots and validate bounded
-online cosign results for an exact repository digest. No command invokes that
-layer yet, produces lock evidence or authorizes execution from it. A repository
-covered by an `image_trust_rules` entry is therefore rejected with
-`policy.image_trust_unverified` until the later verification/evidence slice can
-prove and record the required evidence. It never falls back to a digest-only
-lock merely because that slice is absent.
+strictly validates the structured evidence record. `cb lock` and `cb update`
+now privately stage authenticated verifier/key snapshots after exact digest
+resolution, validate bounded online cosign results and record one authenticated
+transparency bundle as schema-2 evidence. Zero or multiple distinct bundles,
+verification failure or malformed output aborts the refresh; a covered image
+never falls back to a digest-only lock. Execution remains rejected with
+`policy.image_trust_unverified` until the separate runtime freshness gate can
+consume the stored evidence.
+
+The repository includes an opt-in Windows qualification test for this producer
+path. Build it with the `image_trust_e2e` tag and set the five
+`CONTAINERBIN_IMAGE_TRUST_E2E*` variables documented by the test. It calls the
+real `Lock` and `Update` entry points against a Linux-container Docker Desktop
+engine, authenticates and privately stages the selected native cosign binary,
+verifies the selected public image, and reloads the resulting schema-2 lockfile
+after each operation. The test synthesizes an isolated policy and registry in
+its temporary directory; the build-tagged policy loader skips only the
+administrator-ownership check and is not compiled into production binaries.
+Normal CI does not claim this qualification because GitHub-hosted Windows
+runners do not provide Docker Desktop.
+
+From an explicit repository working directory, cross-compile the tagged test
+with the ContainerBin Go shim, then run the PE test binary natively:
+
+```powershell
+$env:GOOS = "windows"
+$env:GOARCH = "amd64"
+go test -c -tags=image_trust_e2e -o "$env:TEMP\container-bin-image-trust-e2e.test.exe" ./internal/cli
+
+$env:CONTAINERBIN_IMAGE_TRUST_E2E = "1"
+$env:CONTAINERBIN_IMAGE_TRUST_E2E_COSIGN = "C:\absolute\path\to\cosign.exe"
+$env:CONTAINERBIN_IMAGE_TRUST_E2E_IMAGE = "registry.example.com/team/signed-image:immutable-tag"
+$env:CONTAINERBIN_IMAGE_TRUST_E2E_ISSUER = "https://issuer.example"
+$env:CONTAINERBIN_IMAGE_TRUST_E2E_SUBJECT = "exact-certificate-identity"
+& "$env:TEMP\container-bin-image-trust-e2e.test.exe" `
+  '-test.v' '-test.run=^TestImageTrustLockAndUpdateWindowsDockerDesktop$'
+```
 
 ```toml
 policy_version = 3
@@ -254,8 +283,8 @@ Each rule has five pipe-delimited fields:
 - A `keyless` rule supplies an exact HTTPS OIDC issuer and exact certificate
   subject. The issuer cannot contain userinfo, query or fragment data.
 - A `key` rule supplies a clean absolute public-key path and a lowercase
-  SHA-256 pin for those exact bytes. The later verifier layer must authenticate
-  that key file just as strictly as the cosign executable.
+  SHA-256 pin for those exact bytes. The verifier authenticates that key file
+  just as strictly as the cosign executable.
 - `NETWORK_MODE` is `online` or `offline-bundle`. `online` permits the verifier
   to obtain required Sigstore material from the network. `offline-bundle`
   requires complete bundled evidence and forbids network fallback. The current

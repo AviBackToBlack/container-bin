@@ -73,13 +73,13 @@ The minimum delivery gate for a code change is:
 | RM-26 Python global CLI exposure | **Completed in PR #74** | Stateful pipx + `cb expose pipx` shipped; plain pip `/venv/bin` remains intentionally unexposed |
 | RM-29 Windows ARM64 | **Native CI, release packaging and update selection shipped / hardware work remains** | PR #78 added native hosted ARM64 CI, PR #86 added reproducible release packaging and PR #91 added ARM64 self-update selection; real Windows-on-Arm + Docker Desktop E2E remains |
 | RM-30 Authenticode | **Design complete / externally blocked** | Provision real code-signing certificate and protected signing mechanism |
-| RM-31 self-update | **Selection, staging and verification shipped / ARM64 selection and transaction implemented** | PRs #76, #81, #82 and #91 shipped the read-only plan, fail-closed staging, provenance verification and ARM64 artifact selection; this tree adds the rollback-safe replacement transaction, while the temporary helper, user-facing apply wiring and release E2E remain |
+| RM-31 self-update | **Core pipeline shipped / explicit apply implemented** | PRs #76, #81, #82 and #91 shipped the read-only plan, fail-closed staging, provenance verification and ARM64 artifact selection; this tree adds the rollback-safe replacement transaction, protected wait helper and explicit user-facing apply wiring. Real published-release E2E remains |
 | RM-34 Cargo expose enhancement | **Intentionally deferred** | Existing expose-all/explicit selection are sufficient; reopen only for concrete unmet use case |
 | Linux/macOS hosts | **Demand-gated** | WSL may factor reusable Linux host code; standalone support needs its own demand and qualification |
 | Enterprise policy | **Foundation and signed registry shipped / image trust remains** | PRs #75 and #84 shipped the machine-owned constraint layer and authenticated registry; image trust remains |
 | Image trust | **Policy, evidence schema and online invocation implemented / integration remains** | Wire verification into lock/update evidence production, add runtime freshness authorization, then add fully pinned offline inputs and private-registry credentials |
 | Plugin/provider architecture | **Intentionally deferred** | Reopen only after at least two real integrations cannot fit the declarative model |
-| WSL2 | **Host boundary and layout identity shipped / implementation remaining** | PRs #77 and #83 shipped the fail-closed host boundary and fixed native layout/state identity; explicit read-only/apply filesystem preparation and namespace-prefixed/labeled volume identity are available, while Docker lifecycle/frontend wiring, Docker Desktop integration and real WSL qualification remain |
+| WSL2 | **Host boundary and layout identity shipped / implementation remaining** | PRs #77 and #83 shipped the fail-closed host boundary and fixed native layout/state identity; explicit read-only/apply filesystem preparation, namespace-prefixed/labeled volume identity and Docker Desktop integration proof are available, while Docker lifecycle/frontend wiring and real WSL qualification remain |
 | Per-project overlays | **Completed in PR #80** | Add-only digest-bound trust model shipped on the merged enterprise-policy foundation |
 | Release SBOM | **Conditionally deferred** | Trigger on shipped third-party/runtime dependencies or concrete compliance/consumer demand |
 | Snyk | **Conditionally deferred** | Trigger only for a real coverage gap plus owner/account/token and triage/outage policy |
@@ -402,9 +402,9 @@ strict Windows/amd64 asset selection and bounded metadata rules. Private
 same-volume staging and provenance verification followed. The current pipeline
 also selects, stages and verifies the Windows/arm64 archive from native
 `GOARCH`; unsupported architectures still fail closed. This tree also
-implements the unexposed rollback-safe Windows replacement transaction and
-complete proven-shim reconciliation. The temporary helper, user-facing apply
-wiring and release E2E remain incomplete.
+implements the rollback-safe Windows replacement transaction, complete
+proven-shim reconciliation, protected wait helper and explicit user-facing
+apply wiring. Real published-release E2E remains incomplete.
 
 ### Command and selection requirements
 
@@ -461,6 +461,14 @@ wiring and release E2E remain incomplete.
   hardlinks dispatching the new version, a locked file, insufficient
   permissions, helper interruption and rollback.
 - No installed byte changes occur before all remote verification succeeds.
+
+**Implementation status:** `cb self-update --apply --gh-executable
+ABSOLUTE_GH_EXE` is now wired through private same-volume staging and a
+protected copy of the proven installed binary. The helper waits for the parent,
+re-verifies the staged artifact and bound identities, then enters the serialized
+rollback-safe transaction. Unit/native-Windows CI covers the process boundary;
+the remaining acceptance gate is real published-release E2E across the manual
+release matrix.
 
 ## Linux and macOS hosts
 
@@ -548,13 +556,17 @@ old-binary/new-lock tests and security-model documentation.
 strict repository/digest/evidence validation, schema-1 compatibility,
 old-parser/new-lock rejection tests and security-model documentation. The
 internal online invocation slice authenticates pinned verifier/key snapshots,
-stages them under current-user-only permissions, runs a bounded exact-digest
-verification with a minimal environment, and independently checks the JSON
-digest and keyless identity. It does not yet produce lock evidence or authorize
-runtime use. Offline mode remains blocked until all trusted-root inputs can be
-pinned, and private-registry credentials require an explicit non-ambient bridge.
-Until those integration slices land, policy-covered images continue to fail
-with `policy.image_trust_unverified`.
+stages them under current-user-only permissions, downloads bounded signature
+bundles for the exact digest with a minimal environment, and locally re-verifies
+each bundle against the digest, cosign predicate and configured identity/key.
+Lock/update integration now resolves the exact
+digest first and promotes the document to schema 2 only after one authenticated
+transparency bundle can be recorded; zero/multiple bundle results and verifier
+failures abort without a digest-only fallback. Runtime freshness authorization
+remains unimplemented, so policy-covered images still fail execution with
+`policy.image_trust_unverified`. Offline mode remains blocked until all
+trusted-root inputs can be pinned, and private-registry credentials require an
+explicit non-ambient bridge.
 
 ## Plugin/provider architecture
 
@@ -590,9 +602,9 @@ the supported WSL models.
 PR #77 shipped the fail-closed host runtime boundary and explicit Windows/WSL
 separation. The fixed native Linux config/shim/state layout can now be checked
 or prepared explicitly without enabling tool execution, and canonical project
-storage classification is implemented but unexposed. Installer/runtime wiring,
-Docker Desktop WSL integration, argument/process behavior and real WSL
-qualification remain.
+storage classification and fail-closed Docker Desktop WSL integration proof are
+implemented but not yet wired into an enabled frontend. Installer/runtime
+wiring, argument/process behavior and real WSL qualification remain.
 
 Implementation must define native config/shim location, Docker endpoint,
 project identity, named-volume behavior, file permissions, case sensitivity,
@@ -695,7 +707,7 @@ in PR #91.
 1. Per-project overlay trust foundation.
 2. Signed-registry enterprise policy.
 3. Image trust at lock time, after signed-registry policy merges.
-4. Remaining RM-31 helper/user-facing transactional apply wiring and E2E.
+4. Remaining RM-31 real published-release/self-test E2E qualification.
 5. Remaining WSL2 installer/runtime wiring, Docker Desktop integration and real E2E.
 6. RM-30 Authenticode only after certificate/protected-signing prerequisites exist.
 7. RM-29 real Windows-on-Arm + Docker Desktop qualification last; do not delay

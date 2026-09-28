@@ -109,15 +109,39 @@ component resolves through a symlink. It never accepts Windows drive/UNC
 spelling and never translates a Windows path into a WSL path. Exact Linux case
 and spelling remain the project identity.
 
-A WSL-filesystem project must be on the same filesystem device as the
-distribution root. A Windows-filesystem project must be below a proven default
-`/mnt/<lowercase-drive>` mount reported as 9p DrvFs or WSL's `drvfs*` virtiofs
-share. The drive root itself, a lookalike `/mnt` directory, custom DrvFs
+A WSL-filesystem project root must be on the same filesystem device as the
+distribution root. A Windows-filesystem project root must be below a proven default
+`/mnt/<lowercase-drive>` mount reported as 9p DrvFs or WSL's exact
+`drvfs<uppercase-drive><privilege-bit>` virtiofs share tag. The drive root
+itself, a lookalike `/mnt` directory, custom DrvFs
 automount roots, mounts masking a Windows drive and separate unqualified native
 filesystems fail closed. Same-device distribution bind mounts remain separate
 projects under their exact canonical spelling. This deliberately supports the
 standard WSL boundary first instead of guessing how a custom mount maps back to
-Windows.
+Windows. This classification proves the storage backing the root dentry only;
+consumers must resolve and classify each descendant path before mapping or
+executing it because a nested mount may cross the project-root boundary.
+
+## Docker Desktop integration proof
+
+The implemented detector issues a direct, bounded Engine API request only over
+`unix:///var/run/docker.sock`. It does not execute a `docker` binary, search
+`PATH`, or read Docker CLI config/context state. `DOCKER_HOST`, `DOCKER_CONTEXT`,
+`DOCKER_CONFIG`, Docker TLS/certificate variables and `DOCKER_API_VERSION` must
+still be unset so later execution cannot silently target or downgrade a
+different daemon. The socket must resolve to a root-owned Unix socket that is
+not world-writable; the connected peer must also be root, and the socket device
+and inode must remain unchanged across the identity request.
+
+The bounded engine query then requires all of the independent signals Docker
+Desktop exposes: Linux `OSType`, operating system `Docker Desktop`, engine name
+`docker-desktop`, an explicit Microsoft WSL2 kernel and exactly one supported
+`com.docker.desktop.address` label. A reachable in-distribution Docker Engine,
+remote context, TCP endpoint, Windows-container engine or ambiguous response
+fails closed. A successful request is not a durable authorization: later wiring
+must repeat the check for every Docker operation. This detector is not exposed
+or wired into tool execution yet; real WSL2 + Docker Desktop qualification
+remains mandatory before support.
 
 ## Native WSL volume identity
 
@@ -144,8 +168,8 @@ Later reviewable slices must still implement and qualify all of the following:
    into shared/project creation and every lifecycle command;
 3. wire the implemented project storage boundary, then complete native Linux
    argument mapping, stdin/TTY and signal semantics;
-4. Docker Desktop WSL-integration detection without accepting a separate local
-   Docker Engine by accident;
+4. wire the implemented Docker Desktop WSL-integration proof into every Docker
+   operation without accepting ambient endpoint overrides;
 5. Windows-filesystem and WSL-filesystem project tests plus mixed-invocation
    rejection; and
 6. real WSL2 + Docker Desktop end-to-end qualification before any support claim.

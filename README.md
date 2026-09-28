@@ -163,11 +163,12 @@ keys **fail validation** instead of being silently ignored, and a
 Edit the file, then run `cb install` to reconcile shims.
 
 Tool names use lowercase letters, digits, `-`, and `_`. Names that collide
-with ContainerBin or Windows devices are reserved. Release binaries named
-`cb-v` followed immediately by a digit (for example, `cb-v1.2.3.exe`) also
-remain reserved for the management CLI; ordinary names that merely start with
-`cb-v` but have no digit there, such as `cb-vault`, are valid tool shims and
-dispatch to their registered profile.
+with ContainerBin or Windows devices are reserved. This includes the private
+`cb-update-helper` dispatch name. Release binaries named `cb-v` followed
+immediately by a digit (for example, `cb-v1.2.3.exe`) also remain reserved for
+the management CLI; ordinary names that merely start with `cb-v` but have no
+digit there, such as `cb-vault`, are valid tool shims and dispatch to their
+registered profile.
 
 For an image whose entrypoint is already the desired command, `cb add` appends
 a minimal stateless profile and reconciles the shim without pulling or running
@@ -716,19 +717,25 @@ Runtime behavior is fail-closed:
 - an image configured in the registry but missing from the lock → execution
   **fails** and asks for `cb update TOOL` or `cb lock`.
 
-Lock schema 1 remains the default digest-only format. Schema 2 adds optional,
-structured repository-signature evidence to an entry: evidence version,
+Lock schema 1 remains the default digest-only format for images outside an
+image-trust rule. Schema 2 adds structured repository-signature evidence to an
+entry: evidence version,
 `keyless`/`key` mechanism, canonical repository, exact locked digest,
 signer/administrator-key SHA-256, keyless issuer where applicable, the
 authenticated bundle SHA-256, canonical UTC verification time, verifier
 identity/hash and the complete effective machine-policy fingerprint. Partial,
 duplicate, malformed, cross-repository or local-image evidence is rejected.
-Schema 2 storage is implemented before verifier execution on purpose: new
-`cb lock`/`cb update` results continue using schema 1, while a project-scoped
-refresh preserves an existing shared schema-2 document and its unrelated
-evidence. Covered policy schema 3 images still fail closed until the
-verification producer and runtime staleness check land. Old ContainerBin builds
-reject schema 2 as unsupported; there is no silent down-conversion.
+For an online policy-covered repository, `cb lock` and `cb update` resolve the
+exact digest first, execute only the authenticated staged cosign snapshot,
+download bounded signature bundles for that immutable reference, and locally
+reverify each bundle against the exact digest, cosign predicate, and configured
+identity/key. The lockfile is promoted to schema 2 only when exactly one bundle
+passes. Zero or multiple matching bundles, verifier failure, malformed output,
+or unavailable policy material aborts the refresh without a digest-only
+fallback. Project-scoped refresh preserves unrelated schema-2 evidence. Runtime
+freshness authorization is still fail closed, so covered tools cannot execute
+yet and `cb lock --check` reports them denied. Old ContainerBin builds reject
+schema 2 as unsupported; there is no silent down-conversion.
 
 Tools sharing an image share one lock entry. The Node 24 family
 (`node24`, `npm24`, `npx24`, its aliases when selected, and anything exposed
@@ -768,13 +775,12 @@ Policy schema 2 can also require a strict detached Ed25519 signature over the
 exact `container-bin.toml` bytes, with machine-owned key validity, revocation
 and overlap rotation. Signed registries are read-only to `cb`; updates must be
 provisioned with a matching signature by the administrator. Policy schema 3 can
-add repository-bound image-signature requirements; covered images fail closed
-until `cb lock` records verification evidence from the pinned cosign verifier.
-The internal verification boundary can now authenticate and privately stage
-the pinned verifier and key bytes, run online verification against one exact
-repository digest, and independently validate bounded JSON results. It is not
-yet wired into `cb lock`; offline bundles, evidence production and runtime
-freshness authorization remain fail closed.
+add repository-bound image-signature requirements. `cb lock` and `cb update`
+now authenticate and privately stage the pinned verifier and key bytes, run
+online verification against the resolved exact repository digest, independently
+validate bounded JSON results, and record the result as schema-2 evidence.
+Offline rules, private-registry credential bridging and runtime freshness
+authorization remain fail closed.
 Lower-precedence registry or command-line choices cannot weaken policy. See
 [enterprise machine policy](docs/enterprise-policy.md) for the schema,
 ownership rules, normalization behavior and stable diagnostic codes.
@@ -876,6 +882,7 @@ cb list
 cb default
 cb default set node 22
 cb self-update --check             # read-only stable-release selection; no download or file changes
+cb self-update --apply --gh-executable C:\Path\To\Signed\gh.exe
 cb wsl prepare --check             # native WSL2 only; read-only fixed-layout validation
 cb wsl prepare --apply             # create missing fixed-layout directories, then revalidate
 ```
@@ -908,23 +915,38 @@ Docker, or enable ordinary commands. See [docs/wsl.md](docs/wsl.md).
 
 ### Self-update release selection
 
-`cb self-update --check` is the currently exposed, read-only command. It
-compares a release-qualified Windows/amd64 or Windows/arm64 build with the latest
-stable release and reports the exact artifact, archive, checksum and provenance
-policy. It does not download assets or change any files, and development builds
-fail closed because their installed version cannot be proved.
+`cb self-update --check` compares a release-qualified Windows/amd64 or
+Windows/arm64 build with the latest stable release and reports the exact
+artifact, archive, checksum and provenance policy. It does not download assets
+or change any files. Development builds fail closed because their installed
+version cannot be proved.
 
-The internal next phases use private same-volume staging, exact checksum plus
-GitHub build-provenance verification, and a rollback-safe Windows replacement
-transaction. That transaction re-hashes the verified bytes before mutation,
-serializes with registry/shim changes, discovers only shims proven to contain
-the installed ContainerBin bytes, replaces and checks the complete proven set,
-and restores the prior set after any smoke-test or identity failure. The helper
-that waits for the invoking process to exit and the user-facing apply command
-are not wired yet, so `--check` remains the only accepted command mode.
+`cb self-update --apply --gh-executable ABSOLUTE_GH_EXE` is the explicit
+mutating mode. Invoke it through the installed `cb.exe`, not a tool shim or a
+versioned copy. The supplied native GitHub CLI must be a regular absolute file
+with a valid `GitHub, Inc.` Authenticode signature; ContainerBin never searches
+`PATH`. Set `GH_TOKEN` or `GITHUB_TOKEN` for the fixed `github.com` attestation
+request. A target equal to the installed version exits without downloading or
+changing files.
+
+Apply uses private same-volume staging, exact checksum plus GitHub
+build-provenance verification, and a rollback-safe Windows replacement
+transaction. Only after all remote verification succeeds does ContainerBin
+copy its already-proven installed binary into a private helper, transfer the
+bounded request, and exit. The helper waits up to two minutes for the parent,
+re-verifies the staged artifact and installed identity, serializes with
+registry/shim mutations, replaces only the management executable and shims
+proven to contain the installed bytes, then runs version and shim-identity
+checks. Failure restores the prior complete managed set where possible.
+
+The parent command returns after the authenticated helper launches because the
+running `cb.exe` must exit before it can be replaced. The helper writes the
+final success or failure to the same console. Run `cb version` afterward when
+automation needs a separate confirmation of the installed result.
 
 A hard process or host crash can leave a private `.container-bin-update-*`
-staging/rollback directory or `.cb.exe-update-*.tmp` file beside `cb.exe`.
+staging, helper or rollback directory, or a `.cb.exe-update-*.tmp` file beside
+`cb.exe`.
 ContainerBin does not wildcard-delete these names on a later run because a name
 alone does not prove ownership; inspect the object before removing it manually.
 

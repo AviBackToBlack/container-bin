@@ -34,7 +34,7 @@ func TestNormalizeToolArgsJoinsSplitValue(t *testing.T) {
 	tool := registry.Tool{Name: "demo", PathEquals: []string{"--file"}}
 	in := []string{"--file=", "value", "rest"}
 	want := []string{"--file=value", "rest"}
-	got := NormalizeToolArgs(tool, in)
+	got := normalizeToolArgsForHost("windows", tool, in)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("A1: got %#v, want %#v", got, want)
 	}
@@ -43,7 +43,7 @@ func TestNormalizeToolArgsJoinsSplitValue(t *testing.T) {
 func TestNormalizeToolArgsTrailingBarePrefix(t *testing.T) {
 	tool := registry.Tool{Name: "demo", PathEquals: []string{"--file"}}
 	in := []string{"validate", "--file="}
-	got := NormalizeToolArgs(tool, in)
+	got := normalizeToolArgsForHost("windows", tool, in)
 	if !reflect.DeepEqual(got, in) {
 		t.Fatalf("A2: got %#v, want unchanged %#v", got, in)
 	}
@@ -53,7 +53,7 @@ func TestNormalizeToolArgsStopsAtDoubleDash(t *testing.T) {
 	tool := registry.Tool{Name: "demo", PathEquals: []string{"--file"}}
 	in := []string{"run", "--file=", "before", "--", "--file=", "payload"}
 	want := []string{"run", "--file=before", "--", "--file=", "payload"}
-	got := NormalizeToolArgs(tool, in)
+	got := normalizeToolArgsForHost("windows", tool, in)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %#v, want %#v", got, want)
 	}
@@ -62,7 +62,7 @@ func TestNormalizeToolArgsStopsAtDoubleDash(t *testing.T) {
 func TestNormalizeToolArgsEmptyPathEquals(t *testing.T) {
 	tool := registry.Tool{Name: "demo"}
 	in := []string{"--file=", "value", "x"}
-	got := NormalizeToolArgs(tool, in)
+	got := normalizeToolArgsForHost("windows", tool, in)
 	if !reflect.DeepEqual(got, in) {
 		t.Fatalf("A3: got %#v, want unchanged %#v", got, in)
 	}
@@ -78,12 +78,25 @@ func TestMapToolArgsNonWindowsContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("A4: err=%v", err)
 	}
-	want := []string{"--file=value", "rest"}
+	want := append([]string(nil), in...)
 	if !reflect.DeepEqual(mapped, want) {
 		t.Fatalf("A4: mapped=%#v, want %#v", mapped, want)
 	}
 	if mounts != nil {
 		t.Fatalf("A4: mounts=%#v, want nil", mounts)
+	}
+}
+
+func TestNormalizeToolArgsNonWindowsPreservesArgv(t *testing.T) {
+	tool := registry.Tool{Name: "demo", PathEquals: []string{"--file"}}
+	in := []string{"--file=", "value", "", "--", "payload"}
+	got := normalizeToolArgsForHost("linux", tool, in)
+	if !reflect.DeepEqual(got, in) {
+		t.Fatalf("non-Windows argv = %#v, want exact pass-through %#v", got, in)
+	}
+	got[0] = "mutated"
+	if in[0] != "--file=" {
+		t.Fatalf("normalization returned input storage: input = %#v", in)
 	}
 }
 

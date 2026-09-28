@@ -1498,12 +1498,12 @@ func lockRegistry(reg registry.Registry, cfgPath string, args []string, machineP
 		if localImages[image] {
 			e, err = lockfile.ResolveLocalImage(image, machinePolicy)
 		} else {
-			e, err = lockfile.ResolveRepositoryImage(image, machinePolicy)
+			e, err = resolveRepositoryImageWithTrust(image, machinePolicy)
 		}
 		if err != nil {
 			return err
 		}
-		lf.Images[image] = e
+		storeResolvedLockEntry(lf, image, e)
 		fmt.Printf("  -> %s\n", e.Resolved)
 	}
 	if err := lockfile.Write(path, lf); err != nil {
@@ -1538,7 +1538,7 @@ func lockFileForRefresh(path string, refreshed []string, preserve bool, machineP
 		if refreshSet[image] {
 			continue
 		}
-		if err := machinePolicy.AuthorizeResolvedImage(image, entry.Resolved, lockfile.IsLocalResolved(entry.Resolved)); err != nil {
+		if err := machinePolicy.AuthorizeResolvedLockTarget(image, entry.Resolved, lockfile.IsLocalResolved(entry.Resolved)); err != nil {
 			return nil, 0, fmt.Errorf("cannot preserve image lock entry %q from another project overlay: %w", image, err)
 		}
 		result.Images[image] = entry
@@ -1657,12 +1657,12 @@ func Update(reg registry.Registry, cfgPath string, args []string, machinePolicy 
 		if mode == "local" || (mode == "" && lockfile.IsLocalResolved(old.Resolved)) {
 			e, err = lockfile.ResolveLocalImage(image, machinePolicy)
 		} else {
-			e, err = lockfile.ResolveRepositoryImage(image, machinePolicy)
+			e, err = resolveRepositoryImageWithTrust(image, machinePolicy)
 		}
 		if err != nil {
 			return err
 		}
-		lf.Images[image] = e
+		storeResolvedLockEntry(lf, image, e)
 		if old.Resolved == "" {
 			fmt.Printf("  new: %s\n", e.Resolved)
 		} else if old.Resolved == e.Resolved {

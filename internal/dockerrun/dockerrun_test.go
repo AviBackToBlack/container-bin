@@ -199,6 +199,110 @@ func setTestHome(t *testing.T, dir string) {
 	}
 }
 
+type testFileInfo struct {
+	mode os.FileMode
+}
+
+func (f testFileInfo) Name() string       { return "test" }
+func (f testFileInfo) Size() int64        { return 0 }
+func (f testFileInfo) Mode() os.FileMode  { return f.mode }
+func (f testFileInfo) ModTime() time.Time { return time.Time{} }
+func (f testFileInfo) IsDir() bool        { return false }
+func (f testFileInfo) Sys() any           { return nil }
+
+type testStatter struct {
+	info os.FileInfo
+	err  error
+}
+
+func (s testStatter) Stat() (os.FileInfo, error) { return s.info, s.err }
+
+func TestInteractiveTerminalRequiresCharacterDeviceStreams(t *testing.T) {
+	character := testStatter{info: testFileInfo{mode: os.ModeCharDevice}}
+	regular := testStatter{info: testFileInfo{mode: 0644}}
+	broken := testStatter{err: fmt.Errorf("stat failed")}
+
+	for _, tc := range []struct {
+		name        string
+		stdin       testStatter
+		stdout      testStatter
+		interactive bool
+	}{
+		{name: "both character devices", stdin: character, stdout: character, interactive: true},
+		{name: "stdin pipe", stdin: regular, stdout: character},
+		{name: "stdout redirected", stdin: character, stdout: regular},
+		{name: "stdin stat error", stdin: broken, stdout: character},
+		{name: "stdout stat error", stdin: character, stdout: broken},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := interactiveTerminalFor(tc.stdin, tc.stdout); got != tc.interactive {
+				t.Fatalf("interactiveTerminalFor() = %v, want %v", got, tc.interactive)
+			}
+		})
+	}
+}
+
+func TestSelectedHostEnvUsesHostCaseSemantics(t *testing.T) {
+	tool := registry.Tool{EnvNames: []string{"PATH"}, EnvPrefixes: []string{"CB_"}}
+	environ := []string{"Path=windows", "PATH=linux", "cb_token=lower", "CB_TOKEN=upper", "OTHER=value"}
+
+	windows := selectedHostEnvForHost("windows", tool, []string{"Path=windows", "cb_token=lower", "OTHER=value"})
+	if want := []string{"Path", "cb_token"}; !reflect.DeepEqual(windows, want) {
+		t.Fatalf("Windows environment selection = %#v, want %#v", windows, want)
+	}
+
+	linux := selectedHostEnvForHost("linux", tool, environ)
+	if want := []string{"CB_TOKEN", "PATH"}; !reflect.DeepEqual(linux, want) {
+		t.Fatalf("Linux environment selection = %#v, want %#v", linux, want)
+	}
+}
+
+func TestRunCommandPreservesStreamsEnvironmentAndExitCode(t *testing.T) {
+	if os.Getenv("CB_RUN_COMMAND_HELPER") == "1" {
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(98)
+		}
+		fmt.Fprintf(os.Stdout, "stdout:%s:%s", os.Getenv("CB_RUN_COMMAND_VALUE"), data)
+		fmt.Fprint(os.Stderr, "stderr:direct")
+		os.Exit(37)
+	}
+
+	var stdout, stderr bytes.Buffer
+	env := append(os.Environ(), "CB_RUN_COMMAND_HELPER=1", "CB_RUN_COMMAND_VALUE=visible")
+	exitCode, err := runCommand(
+		os.Args[0],
+		[]string{"-test.run=^TestRunCommandPreservesStreamsEnvironmentAndExitCode$"},
+		strings.NewReader("stdin"),
+		&stdout,
+		&stderr,
+		env,
+	)
+	if err != nil {
+		t.Fatalf("runCommand: %v", err)
+	}
+	if exitCode != 37 {
+		t.Fatalf("exit code = %d, want 37", exitCode)
+	}
+	if got, want := stdout.String(), "stdout:visible:stdin"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+	if got, want := stderr.String(), "stderr:direct"; got != want {
+		t.Fatalf("stderr = %q, want %q", got, want)
+	}
+}
+
+func TestRunCommandReportsStartFailure(t *testing.T) {
+	exitCode, err := runCommand(filepath.Join(t.TempDir(), "missing-command"), nil, nil, io.Discard, io.Discard, os.Environ())
+	if err == nil {
+		t.Fatal("runCommand start failure returned nil error")
+	}
+	if exitCode != 1 {
+		t.Fatalf("start failure exit code = %d, want 1", exitCode)
+	}
+}
+
 func TestMountSpecMode(t *testing.T) {
 	got, err := MountSpecMode("bind", "/some/src", "/some/dst", "ro")
 	if err != nil {
