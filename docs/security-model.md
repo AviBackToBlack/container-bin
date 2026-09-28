@@ -97,11 +97,14 @@ readable, and dangerous to let others edit.
   native-WSL exception is `cb wsl prepare --check|--apply`: it validates or
   creates only the fixed current-user layout, loads no registry or machine
   policy, performs no Docker work, and does not enable tool execution.
-- **Native WSL tool shims have explicit provenance.** The read-only preflight
-  derives direct-child paths only from valid registry names and the fixed
-  layout. Existing tool shims must be current-user-owned symlinks to the fixed
-  managed binary; foreign files, owners or targets fail closed. Missing shims
-  are reported without creating or replacing anything.
+- **Native WSL tool shims have explicit provenance.** Preflight and mutation
+  derive direct-child paths only from valid registry names and the fixed
+  layout. Existing tool shims must be current-user-owned symlinks whose
+  canonical target is the fixed managed binary; foreign files, owners or
+  targets fail closed. Missing tool shims are published without clobbering
+  through a no-follow, inode-pinned directory handle and revalidated after
+  mutation. ContainerBin never replaces foreign objects or sweeps unrelated
+  filename lookalikes.
 - **Native WSL project roots are proven, not translated.** The unexposed
   classifier accepts only canonical existing directories with no symlink
   components. Native projects stay on the distribution root device; Windows

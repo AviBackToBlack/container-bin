@@ -207,6 +207,10 @@ func validateSymlink(link, target string, uid uint32, info fileInfo, kind string
 	if err != nil {
 		return fmt.Errorf("read native WSL %s %s: %w", kind, link, err)
 	}
+	if !path.IsAbs(actual) {
+		actual = path.Join(path.Dir(link), actual)
+	}
+	actual = path.Clean(actual)
 	if actual != target {
 		return fmt.Errorf("native WSL %s %s targets %q, expected %q", kind, link, actual, target)
 	}

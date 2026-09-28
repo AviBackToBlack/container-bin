@@ -49,6 +49,22 @@ func TestInspectReportsReadyAndMissingWithoutMutation(t *testing.T) {
 	}
 }
 
+func TestInspectAcceptsCanonicalRelativeSymlinkTargets(t *testing.T) {
+	layout := testLayout()
+	deps := validDependencies(layout)
+	deps.links[layout.ManagementShim] = "../lib/container-bin/cb"
+	toolPath := pathFor(layout, "node24")
+	deps.files[toolPath] = fileInfo{Mode: os.ModeSymlink | 0o777, UID: layout.UID}
+	deps.links[toolPath] = "../lib/container-bin/cb"
+	result, err := inspect(layout, []string{"node24"}, deps.dependencies())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Shims) != 1 || result.Shims[0].State != Ready {
+		t.Fatalf("Inspect() = %#v", result.Shims)
+	}
+}
+
 func TestPlanRejectsRedirectedLayoutAndInvalidNames(t *testing.T) {
 	layoutMutations := map[string]func(*hostenv.WSLLayout){
 		"relative home":       func(l *hostenv.WSLLayout) { l.Home = "home/alice" },
