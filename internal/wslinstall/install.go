@@ -109,7 +109,7 @@ func (c command) run(args []string, out io.Writer, version string) error {
 		return fmt.Errorf("locate native WSL bootstrap executable: %w", err)
 	}
 	if args[1] == "--check" {
-		plan, err := c.inspect(layout, source, true)
+		plan, err := c.inspect(layout, source)
 		if err != nil {
 			return err
 		}
@@ -186,7 +186,7 @@ func (c command) run(args []string, out io.Writer, version string) error {
 	return printPlan(out, applied, true)
 }
 
-func (c command) inspect(layout hostenv.WSLLayout, source string, readOnly bool) (Plan, error) {
+func (c command) inspect(layout hostenv.WSLLayout, source string) (Plan, error) {
 	if _, err := c.checkLayout(layout); err != nil {
 		return Plan{}, fmt.Errorf("validate native WSL layout before config inspection: %w", err)
 	}
@@ -197,11 +197,7 @@ func (c command) inspect(layout hostenv.WSLLayout, source string, readOnly bool)
 	if err != nil {
 		return Plan{}, fmt.Errorf("load native WSL machine policy: %w", err)
 	}
-	loader := c.loadRegistry
-	if readOnly {
-		loader = c.loadRegistryReadOnly
-	}
-	reg, path, err := loader(layout.RegistryPath, machinePolicy.AuthenticateRegistry)
+	reg, path, err := c.loadRegistryReadOnly(layout.RegistryPath, machinePolicy.AuthenticateRegistry)
 	if err != nil {
 		return Plan{}, fmt.Errorf("load native WSL registry: %w", err)
 	}
