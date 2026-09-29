@@ -85,12 +85,12 @@ func openDirectoryNoSymlinks(directory string) (*os.File, error) {
 	return current, nil
 }
 
-func (d *pinnedShimDirectory) ensure(shim Shim) error {
+func (d *pinnedShimDirectory) ensure(shim Shim, kind string) error {
 	if filepath.Base(shim.Path) != shim.Name || shim.Name == "." || shim.Name == ".." {
 		return fmt.Errorf("shim identity %q is not a direct child", shim.Path)
 	}
 	destination := filepath.Join(procDirectoryPath(d.file), shim.Name)
-	if err := validatePinnedSymlink(destination, shim.Target, d.uid); err == nil {
+	if err := validatePinnedSymlink(destination, shim.Target, d.uid, kind); err == nil {
 		return nil
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return err
@@ -105,12 +105,12 @@ func (d *pinnedShimDirectory) ensure(shim Shim) error {
 		if !errors.Is(err, fs.ErrExist) {
 			return fmt.Errorf("publish shim without replacing an existing object: %w", err)
 		}
-		if err := validatePinnedSymlink(destination, shim.Target, d.uid); err != nil {
+		if err := validatePinnedSymlink(destination, shim.Target, d.uid, kind); err != nil {
 			return fmt.Errorf("shim appeared concurrently with an invalid identity: %w", err)
 		}
 		return nil
 	}
-	if err := validatePinnedSymlink(destination, shim.Target, d.uid); err != nil {
+	if err := validatePinnedSymlink(destination, shim.Target, d.uid, kind); err != nil {
 		return fmt.Errorf("validate newly published shim: %w", err)
 	}
 	return nil
@@ -140,10 +140,10 @@ func procDirectoryPath(file *os.File) string {
 	return filepath.Join("/proc/self/fd", strconv.FormatUint(uint64(file.Fd()), 10))
 }
 
-func validatePinnedSymlink(link, target string, uid uint32) error {
+func validatePinnedSymlink(link, target string, uid uint32, kind string) error {
 	info, err := lstat(link)
 	if err != nil {
 		return err
 	}
-	return validateSymlink(link, target, uid, info, "tool shim", dependencies{readlink: os.Readlink})
+	return validateSymlink(link, target, uid, info, kind, dependencies{readlink: os.Readlink})
 }

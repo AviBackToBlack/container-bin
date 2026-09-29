@@ -833,6 +833,26 @@ func (reg Registry) ToolNames() []string {
 	return names
 }
 
+// NeedsDefaultUpgrade reports whether the normal install lifecycle would add
+// or migrate built-in registry sections. Signed registries are deliberately
+// handled by their policy owner instead of this helper's caller.
+func (reg Registry) NeedsDefaultUpgrade() bool {
+	if reg.SchemaVersion < MaxSchemaVersion {
+		return true
+	}
+	for name := range DefaultToolSections() {
+		if _, ok := reg.Tools[name]; !ok {
+			return true
+		}
+	}
+	for family := range DefaultFamilySections() {
+		if _, ok := reg.Defaults[family]; !ok {
+			return true
+		}
+	}
+	return false
+}
+
 type DefaultInfo struct {
 	Family   string
 	Selected string

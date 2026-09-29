@@ -49,6 +49,27 @@ func TestInspectReportsReadyAndMissingWithoutMutation(t *testing.T) {
 	}
 }
 
+func TestInspectNamesPreflightsBeforeBinaryAndManagementExist(t *testing.T) {
+	layout := testLayout()
+	deps := validDependencies(layout)
+	delete(deps.files, layout.BinaryPath)
+	delete(deps.files, layout.ManagementShim)
+	toolPath := pathFor(layout, "node24")
+	deps.files[toolPath] = fileInfo{Mode: os.ModeSymlink | 0o777, UID: layout.UID}
+	deps.links[toolPath] = layout.BinaryPath
+	result, err := inspectNames(layout, []string{"python313", "node24"}, deps.dependencies())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Shim{
+		{Name: "node24", Path: toolPath, Target: layout.BinaryPath, State: Ready},
+		{Name: "python313", Path: pathFor(layout, "python313"), Target: layout.BinaryPath, State: Missing},
+	}
+	if !reflect.DeepEqual(result.Shims, want) {
+		t.Fatalf("inspectNames() = %#v, want %#v", result.Shims, want)
+	}
+}
+
 func TestInspectAcceptsCanonicalRelativeSymlinkTargets(t *testing.T) {
 	layout := testLayout()
 	deps := validDependencies(layout)
@@ -231,6 +252,44 @@ func TestReconcileClosesDirectoryAfterMutationFailure(t *testing.T) {
 	}
 }
 
+func TestReconcileManagementCreatesOnlyMissingFixedShim(t *testing.T) {
+	layout := testLayout()
+	deps := validDependencies(layout)
+	delete(deps.files, layout.ManagementShim)
+	delete(deps.links, layout.ManagementShim)
+	directory := &fakeShimDirectory{dependencies: &deps}
+	shim, err := reconcileManagement(layout, mutationDependencies{
+		dependencies:      deps.dependencies(),
+		openShimDirectory: func(hostenv.WSLLayout) (shimDirectory, error) { return directory, nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if shim.Name != "cb" || shim.Path != layout.ManagementShim || shim.State != Ready {
+		t.Fatalf("management shim = %#v", shim)
+	}
+	if !reflect.DeepEqual(directory.installed, []string{"cb"}) || !directory.closed {
+		t.Fatalf("installed = %q, closed = %t", directory.installed, directory.closed)
+	}
+}
+
+func TestReconcileManagementRefusesForeignObject(t *testing.T) {
+	layout := testLayout()
+	deps := validDependencies(layout)
+	deps.files[layout.ManagementShim] = fileInfo{Mode: 0o755, ExactMode: 0o755, UID: layout.UID}
+	opened := false
+	_, err := reconcileManagement(layout, mutationDependencies{
+		dependencies: deps.dependencies(),
+		openShimDirectory: func(hostenv.WSLLayout) (shimDirectory, error) {
+			opened = true
+			return nil, errors.New("unexpected open")
+		},
+	})
+	if err == nil || opened {
+		t.Fatalf("reconcileManagement() error = %v, opened = %t", err, opened)
+	}
+}
+
 type fakeDependencies struct {
 	runtime  hostenv.Runtime
 	uid      uint32
@@ -246,7 +305,7 @@ type fakeShimDirectory struct {
 	closed       bool
 }
 
-func (d *fakeShimDirectory) ensure(shim Shim) error {
+func (d *fakeShimDirectory) ensure(shim Shim, _ string) error {
 	if d.fail != nil {
 		return d.fail
 	}

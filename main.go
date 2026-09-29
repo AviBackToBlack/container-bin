@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -20,6 +21,7 @@ import (
 	"github.com/AviBackToBlack/container-bin/internal/selfupdate"
 	"github.com/AviBackToBlack/container-bin/internal/state"
 	"github.com/AviBackToBlack/container-bin/internal/wslfs"
+	"github.com/AviBackToBlack/container-bin/internal/wslinstall"
 )
 
 // version is injected at release time via:
@@ -49,10 +51,12 @@ var runSelfUpdate = selfupdate.Run
 // the private request carries and revalidates every required identity.
 var runSelfUpdateHelper = selfupdate.RunHelper
 
-// runWSL is a test seam for the native-WSL filesystem preflight. This narrow
-// management command must remain available while the general WSL frontend is
-// still gated, and it must not load Windows policy or registry state.
-var runWSL = wslfs.Run
+// runWSL is a test seam for the native-WSL bootstrap and install lifecycle.
+// The dispatcher remains ahead of the Windows frontend gate; wslinstall loads
+// only the fixed native policy/registry paths for commands that require them.
+var runWSL = func(args []string, out io.Writer) error {
+	return wslinstall.Run(args, out, version, withMutationLock)
+}
 
 func main() {
 	invoked := invokedName(os.Args[0])
@@ -398,6 +402,13 @@ func handleBootstrapCommand(args []string) bool {
 }
 
 func bootstrapRegistryPath() string {
+	if current, err := hostenv.Current(); err == nil && current.Kind == hostenv.WSL2Native {
+		path, err := wslfs.CurrentRegistryPath()
+		if err != nil {
+			fatalf("native WSL registry path: %v", err)
+		}
+		return path
+	}
 	cfgPath, err := registry.Path()
 	if err != nil {
 		fatalf("registry path: %v", err)
@@ -422,6 +433,8 @@ Commands:
                 report a plan, or verify and transactionally apply it
   cb wsl prepare (--check | --apply)
                  validate or create the fixed native-WSL filesystem layout
+  cb wsl install (--check | --apply)
+                 inspect or reconcile the fixed native-WSL installation
   cb list      list configured tool profiles
   cb default   list defaults; "cb default set FAMILY VERSION" switches a family
   cb trace     show raw/normalized/mapped argv for a tool without running it

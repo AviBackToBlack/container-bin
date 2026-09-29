@@ -21,6 +21,13 @@ type command struct {
 	prepare       func(hostenv.WSLLayout) error
 }
 
+// CurrentLayout derives the fixed native-WSL layout for the current process.
+// Callers must still validate the returned paths with Check or Prepare before
+// using them.
+func CurrentLayout() (hostenv.WSLLayout, error) {
+	return currentLayout()
+}
+
 // Run exposes only the fixed native-WSL filesystem preflight. It deliberately
 // does not enable tool execution, install a binary, create shims or contact
 // Docker; those remain separate qualification-gated slices.

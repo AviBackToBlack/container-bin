@@ -71,7 +71,7 @@ real Linux CLI/runtime in an ephemeral container
 |---|---|
 | Windows 10/11 x64 + Docker Desktop (Linux containers) + PowerShell | **Supported** — this is the validated configuration |
 | cmd.exe invocation of shims | Works for the common cases; less battle-tested than PowerShell |
-| WSL2 | **Not yet supported.** The selected native-Linux frontend has an explicit fail-closed runtime boundary and fixed-layout preparation command; installer/runtime wiring and real Docker Desktop WSL qualification remain. See [docs/wsl.md](docs/wsl.md) |
+| WSL2 | **Not yet supported.** The selected native-Linux frontend has an explicit fail-closed runtime boundary plus fixed-layout and install/config lifecycle commands; runtime/Docker wiring and real Docker Desktop WSL qualification remain. See [docs/wsl.md](docs/wsl.md) |
 | Windows 11 ARM64 | **CI/release-artifact/update-path qualified only, not supported yet.** Native tests/build/dispatch run on GitHub-hosted ARM64 hardware, the release workflow produces a reproducible ARM64 archive, and self-update selects and verifies that archive by `GOARCH`; real Docker Desktop ARM64 E2E qualification remains |
 | Linux / macOS hosts | **Not supported.** The program is Go and cross-compiles, but shim installation, path mapping and doctor checks are Windows-specific |
 | Windows containers | Not supported; images are Linux images |
@@ -890,6 +890,8 @@ cb self-update --check             # read-only stable-release selection; no down
 cb self-update --apply --gh-executable C:\Path\To\Signed\gh.exe
 cb wsl prepare --check             # native WSL2 only; read-only fixed-layout validation
 cb wsl prepare --apply             # create missing fixed-layout directories, then revalidate
+cb wsl install --check             # read-only native install/config/shim plan
+cb wsl install --apply             # install this native binary, registry and fixed symlinks
 ```
 
 `cb bugreport` assembles `cb version`, the Windows and PowerShell versions
@@ -908,7 +910,7 @@ failure. The Node 22 checks run when the `node22` profile is registered. An
 older registry without that newer default gets an actionable skip rather than
 a false failure; run `cb setup` to append the current default profiles.
 
-### Native WSL layout preflight
+### Native WSL layout and installation
 
 `cb wsl prepare --check` is a read-only exception to the still-gated native
 WSL frontend. It derives the fixed distribution-local layout from the current
@@ -917,6 +919,26 @@ ownership, permissions, symlink boundaries and filesystem locality, and lists
 missing directories. `--apply` explicitly creates only those directories and
 revalidates the result. It does not install `cb`, create shims or config, access
 Docker, or enable ordinary commands. See [docs/wsl.md](docs/wsl.md).
+
+`cb wsl install --check` adds a read-only plan over the same fixed layout. It
+loads only the root-owned `/etc/container-bin/policy.toml` policy path and the
+distribution-local registry path, authenticates the registry when policy
+requires it, and reports required registry, managed-binary, management-shim
+and registry-derived tool-shim actions. It does not recover a `.bak`, create a
+lock or change the filesystem. When the primary registry is missing but a
+validated backup is present, the plan reports `recover` rather than `create`.
+
+`cb wsl install --apply` first prepares the layout, then serializes the complete
+install transaction on the fixed registry lock. For an unmanaged registry it
+recovers an interrupted valid backup, creates/upgrades the registry at mode
+`0600`, atomically installs the exact running native executable at
+`~/.local/lib/container-bin/cb`, and creates only missing fixed symlinks without
+replacing foreign objects. A signed-registry policy disables automatic registry
+creation/upgrades and requires an already provisioned authenticated registry.
+The bootstrap executable must itself be a bounded, current-user-owned regular
+non-symlink file with safe executable permissions. This command still does not
+contact Docker or enable ordinary WSL tool execution; the runtime and real E2E
+gates remain. See [docs/wsl.md](docs/wsl.md).
 
 ### Self-update release selection
 
@@ -1076,10 +1098,10 @@ benchmark methodology and the disposable-container tradeoff are in
 
 ## Current limitations
 
-- Windows x64 + Docker Desktop (Linux containers) only. WSL2 runtime detection
-  and explicit fixed-layout preparation are present, but native WSL execution
-  remains gated until installer/runtime, state and Docker Desktop qualification
-  slices land. Windows ARM64 has
+- Windows x64 + Docker Desktop (Linux containers) only. WSL2 runtime detection,
+  fixed-layout preparation and the native install/config/shim lifecycle are
+  present, but native WSL execution remains gated until runtime, state, Docker
+  Desktop and real WSL qualification slices land. Windows ARM64 has
   native non-Docker CI coverage, but no published artifact or support claim.
 - First invocation of a tool after `cb lock` may still need images present
   locally (`cb lock` pulls them; `cb self-test` never pulls).

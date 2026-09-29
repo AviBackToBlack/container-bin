@@ -20,6 +20,14 @@ func Check(hostenv.WSLLayout) (Plan, error) {
 	return Plan{}, errors.New("native WSL filesystem validation requires Linux")
 }
 
+func CheckRegistryRecovery(hostenv.WSLLayout) error {
+	return errors.New("native WSL registry recovery validation requires Linux")
+}
+
 func currentLayout() (hostenv.WSLLayout, error) {
 	return hostenv.WSLLayout{}, errors.New("native WSL layout discovery requires Linux")
+}
+
+func CurrentRegistryPath() (string, error) {
+	return "", errors.New("native WSL registry path discovery requires Linux")
 }

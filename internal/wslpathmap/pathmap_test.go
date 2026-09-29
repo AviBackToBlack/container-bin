@@ -53,7 +53,7 @@ func TestMapToolArgsPreservesNonPathsAndPackagePatterns(t *testing.T) {
 	project := wslproject.Project{Root: "/home/alice/project", Storage: wslproject.Distribution}
 	deps := testDependencies(project.Root)
 	tool := registry.Tool{Name: "go", PathNext: []string{"-i"}}
-	args := []string{"install", "test", "./...", "pkg/...", "-i", "./...", "value"}
+	args := []string{"install", "test", "./...", "pkg/...", "http://host/a/../b", "-i", "./...", "value"}
 	got, _, err := mapToolArgs(tool, project, project.Root, "/workspace/demo", args, deps)
 	if err != nil {
 		t.Fatal(err)

@@ -20,6 +20,29 @@ func Inspect(layout hostenv.WSLLayout, names []string) (Result, error) {
 	return inspect(layout, names, inspectionDependencies())
 }
 
+// InspectNames validates registry-derived tool-shim leaves without requiring
+// the managed binary or management shim to exist yet. The native installer
+// uses it to reject collisions before publishing any managed leaf object.
+func InspectNames(layout hostenv.WSLLayout, names []string) (Result, error) {
+	plan, err := wslfs.Check(layout)
+	if err != nil {
+		return Result{}, fmt.Errorf("validate native WSL layout before tool-shim preflight: %w", err)
+	}
+	for _, missing := range plan.MissingDirectories {
+		if missing == layout.ShimDir {
+			planned, err := Plan(layout, names)
+			if err != nil {
+				return Result{}, err
+			}
+			for index := range planned {
+				planned[index].State = Missing
+			}
+			return Result{Shims: planned}, nil
+		}
+	}
+	return inspectNames(layout, names, inspectionDependencies())
+}
+
 // Reconcile creates only missing registry-derived tool shims after validating
 // the complete fixed layout. Existing objects are never replaced. The native
 // frontend does not expose this primitive until installer qualification lands.
@@ -32,6 +55,22 @@ func Reconcile(layout hostenv.WSLLayout, names []string) (Result, error) {
 		return Result{}, errors.New("native WSL layout requires preparation before shim mutation")
 	}
 	return reconcile(layout, names, mutationDependencies{
+		dependencies:      inspectionDependencies(),
+		openShimDirectory: openPinnedShimDirectory,
+	})
+}
+
+// ReconcileManagement creates the fixed management symlink only when it is
+// missing. Foreign objects or targets are never replaced.
+func ReconcileManagement(layout hostenv.WSLLayout) (Shim, error) {
+	plan, err := wslfs.Check(layout)
+	if err != nil {
+		return Shim{}, fmt.Errorf("validate native WSL layout before management-shim mutation: %w", err)
+	}
+	if len(plan.MissingDirectories) != 0 {
+		return Shim{}, errors.New("native WSL layout requires preparation before management-shim mutation")
+	}
+	return reconcileManagement(layout, mutationDependencies{
 		dependencies:      inspectionDependencies(),
 		openShimDirectory: openPinnedShimDirectory,
 	})

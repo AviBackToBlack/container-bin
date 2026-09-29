@@ -344,6 +344,7 @@ internal/mutationlock  the registry mutation lock primitive          (leaf)
 internal/hostenv       host classification and gated WSL layout       (leaf)
 internal/wslfs         native WSL filesystem ownership/mode preflight
 internal/wslshim       native WSL registry-derived shim preflight/mutation
+internal/wslinstall    native WSL install/config lifecycle orchestrator
 internal/wslproject    native WSL project storage boundary
 internal/wslpathmap    native WSL project argument mapping
 internal/wsldocker     native WSL Docker Desktop integration proof
@@ -355,7 +356,7 @@ The exact import edges, from `go list -f '{{.ImportPath}} {{.Imports}}' ./...`,
 project-internal imports only:
 
 ```
-main         -> cli, diag, dockerrun, hostenv, mutationlock, policy, projectconfig, registry, selfupdate, state
+main         -> cli, diag, dockerrun, hostenv, mutationlock, policy, projectconfig, registry, selfupdate, state, wslfs, wslinstall
 cli          -> atomicio, diag, dockerrun, dockervol, lockfile, pathmap, policy, registry, statearchive, toml
 projectconfig -> atomicio, pathmap, policy, registry, toml
 diag         -> dockerrun, dockervol, lockfile, pathmap, policy, registry
@@ -367,7 +368,8 @@ pathmap      -> registry
 registry     -> atomicio, toml
 policy       -> toml
 wslfs       -> hostenv
-wslshim     -> hostenv, registry
+wslshim     -> hostenv, registry, wslfs
+wslinstall  -> hostenv, policy, registry, wslfs, wslshim
 wslproject  -> hostenv
 wslpathmap  -> registry, wslproject
 wsldocker   -> hostenv
@@ -407,8 +409,7 @@ directories without repairing existing objects and then revalidates them. Both
 modes validate strict modes for managed registry, lock, binary and
 management-shim endpoints. The non-Linux build-tagged implementation always
 rejects the operation. This exact management dispatch precedes the general host
-gate but performs no policy, registry or Docker I/O. Frontend wiring,
-registry-derived tool shims and Docker integration remain later WSL slices.
+gate but performs no policy, registry or Docker I/O.
 
 `internal/wslshim` is the registry-derived tool-shim identity, preflight and
 race-safe mutation boundary. It derives only direct children of the fixed native
@@ -421,6 +422,17 @@ inode-pinned directory handle and are fully revalidated afterward. It must be
 composed after `internal/wslfs` validates the same layout's home, intermediate
 path and filesystem-device boundary. It never replaces or removes foreign
 objects and never discovers unrelated directory entries.
+
+`internal/wslinstall` composes those two boundaries into the explicitly gated
+`cb wsl install --check|--apply` lifecycle. Check mode validates the layout
+before read-only fixed-path policy/registry access and reports the exact
+registry, binary and shim work without recovering backups. Apply mode prepares
+the layout, revalidates it under `main`'s signal-aware mutation lock, recovers
+or upgrades an unsigned registry at mode `0600` (or requires an authenticated
+pre-provisioned signed registry), atomically publishes the validated running
+binary at the fixed path, then reconciles the management and registry-derived
+tool symlinks through `internal/wslshim`. It performs no Docker I/O and leaves
+ordinary WSL dispatch gated.
 
 `internal/wslproject` is an unexposed classifier for already-selected native
 WSL project roots. It requires a canonical existing directory with no symlink
