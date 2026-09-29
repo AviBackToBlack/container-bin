@@ -604,11 +604,12 @@ separation. The fixed native Linux config/shim/state layout can now be checked
 or prepared explicitly, and `cb wsl install --check|--apply` composes it with
 fixed-path policy/registry loading, managed-binary installation and
 registry-derived management/tool-shim reconciliation without enabling tool
-execution. Canonical project storage classification, fail-closed Docker Desktop
-WSL integration proof and a proof-bound bounded Engine API control-request
-primitive are implemented but not yet wired into an enabled frontend.
-Streaming/attach remains a separate process/IO contract. Runtime wiring,
-argument/process behavior and real WSL qualification remain.
+execution. Canonical project storage classification with its proof-consuming
+argument mapper, fail-closed Docker Desktop WSL integration proof and a
+proof-bound bounded Engine API control-request primitive are implemented but not
+yet wired into an enabled frontend. Streaming/attach remains a separate
+process/IO contract. Runtime wiring, argument/process behavior and real WSL
+qualification remain.
 
 Implementation must define native config/shim location, Docker endpoint,
 project identity, named-volume behavior, file permissions, case sensitivity,
@@ -623,8 +624,9 @@ entire-drive roots, custom DrvFs roots, lookalike `/mnt` paths and unqualified
 separate filesystems. Its descendant classifier revalidates the exact project
 mount, rejects symlink and nested-mount escape, and permits missing output paths
 only through a proven same-mount directory ancestor. Later argument mapping
-must consume this boundary without turning it into a Windows-path equivalence
-rule.
+now consumes this boundary without turning it into a Windows-path equivalence
+rule or inventing external mounts; enabled execution must use the same proven
+mapping.
 
 The implemented volume contract prefixes names and labels with the opaque
 distribution/machine/user namespace, length-delimits group/logical segments,

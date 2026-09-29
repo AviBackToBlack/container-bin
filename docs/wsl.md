@@ -171,7 +171,14 @@ Its descendant classifier revalidates that project identity for each candidate
 path, rejects lexical escape, symlinks and nested mount crossings, and returns
 the exact case-sensitive project-relative path. A not-yet-created output is
 accepted only through its nearest existing non-symlink directory ancestor on
-the same exact mount. This classifier is not yet wired into argument mapping.
+the same exact mount. The unexposed argument mapper consumes that proof for
+absolute Linux paths, explicit relative paths and registry-forced path
+positions. It maps only project descendants into the container workspace,
+preserves relative package patterns such as `./...`, maps absolute package
+patterns, and rejects external, symlinked or cross-mount paths instead of
+creating implicit mounts or translating Windows spellings. Ambiguous bare
+arguments remain unchanged so a project entry cannot replace a tool subcommand.
+Runtime execution is still gated.
 
 A WSL-filesystem project root must be on the same filesystem device as the
 distribution root. A Windows-filesystem project root must be below a proven default
@@ -257,8 +264,8 @@ following:
 1. wire the proof-bound volume primitives into tool-time shared/project
    creation plus `cb state`, `cb gc`, backup and restore; each consumer must
    construct and match the complete distribution/machine/user identity;
-2. wire the implemented project and descendant storage boundary into native
-   Linux argument mapping, then complete stdin/TTY and signal semantics;
+2. wire the implemented project boundary and argument mapper into native tool
+   execution, then complete stdin/TTY and signal semantics;
 3. wire the implemented bounded Docker Desktop control-operation primitive into
    volume/container lifecycle calls, and add a separately reviewed streaming
    execution path without accepting ambient endpoint overrides;

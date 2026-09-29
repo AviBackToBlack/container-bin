@@ -346,6 +346,7 @@ internal/wslfs         native WSL filesystem ownership/mode preflight
 internal/wslshim       native WSL registry-derived shim preflight/mutation
 internal/wslinstall    native WSL install/config lifecycle orchestrator
 internal/wslproject    native WSL project storage boundary
+internal/wslpathmap    native WSL project argument mapping
 internal/wsldocker     native WSL Docker Desktop integration proof
 internal/wslvolume     native WSL namespaced volume identity/lifecycle
 internal/selfupdate    release selection, staging, verification and replacement
@@ -370,6 +371,7 @@ wslfs       -> hostenv
 wslshim     -> hostenv, registry, wslfs
 wslinstall  -> hostenv, policy, registry, wslfs, wslshim
 wslproject  -> hostenv
+wslpathmap  -> registry, wslproject
 wsldocker   -> hostenv
 wslvolume   -> hostenv, registry, wsldocker
 selfupdate  -> mutationlock, registry
