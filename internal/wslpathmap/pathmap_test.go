@@ -97,6 +97,43 @@ func TestMapToolArgsHonorsDoubleDashAndReportsDanglingOption(t *testing.T) {
 	}
 }
 
+func TestMapToolArgsOptionStateEdges(t *testing.T) {
+	project := wslproject.Project{Root: "/home/alice/project", Storage: wslproject.Distribution}
+	tool := registry.Tool{Name: "example", PathNext: []string{"-i"}, PathEquals: []string{"-chdir"}}
+	tests := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{
+			name: "double dash suppresses forced option",
+			args: []string{"--", "-i", "./x"},
+			want: []string{"--", "-i", "/workspace/demo/x"},
+		},
+		{
+			name: "relative path equals",
+			args: []string{"-chdir=./sub"},
+			want: []string{"-chdir=/workspace/demo/sub"},
+		},
+		{
+			name: "project root",
+			args: []string{project.Root},
+			want: []string{"/workspace/demo"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, _, err := mapToolArgs(tool, project, project.Root, "/workspace/demo", test.args, testDependencies(project.Root))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("mapped args = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestMapToolArgsPathLastIfAnyAndMissingOutput(t *testing.T) {
 	project := wslproject.Project{Root: "/home/alice/project", Storage: wslproject.Distribution}
 	tool := registry.Tool{Name: "example", PathLast: true, PathLastIfAny: []string{"--write"}}
