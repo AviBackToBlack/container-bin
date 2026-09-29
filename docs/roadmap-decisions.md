@@ -349,8 +349,8 @@ is not completion.
    - namespace-prefixed/labeled WSL volume identity is implemented, but Docker
      creation and lifecycle commands are not yet wired to it;
    - canonical project and descendant storage classification, including
-     symlink/nested-mount rejection, is implemented but not yet wired into
-     argument mapping or an enabled frontend;
+     symlink/nested-mount rejection, and proof-consuming argument mapping are
+     implemented but not yet wired into an enabled frontend;
    - project identity and cross-boundary rejection integration tests;
    - real WSL Docker E2E.
 
