@@ -158,6 +158,45 @@ func TestEnsureExistingExactVolumeIsNoOp(t *testing.T) {
 	}
 }
 
+func TestProjectVolumeEnsureRemoveRoundTrip(t *testing.T) {
+	volume, err := testScope(t).Project("node24", "node-modules", "/home/alice/project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	execute := scriptedLifecycle(t,
+		lifecycleStep{
+			check: checkVolumeRequest(t, http.MethodGet, volumePath(volume.Name())),
+			err:   &wsldocker.APIError{Method: http.MethodGet, Path: volumePath(volume.Name()), StatusCode: http.StatusNotFound},
+		},
+		lifecycleStep{
+			check:    checkVolumeRequest(t, http.MethodPost, "/volumes/create"),
+			response: wsldocker.Response{StatusCode: http.StatusCreated, Body: volumeResponse(t, volume)},
+		},
+		lifecycleStep{
+			check:    checkVolumeRequest(t, http.MethodGet, volumePath(volume.Name())),
+			response: wsldocker.Response{StatusCode: http.StatusOK, Body: volumeResponse(t, volume)},
+		},
+		lifecycleStep{
+			check:    checkVolumeRequest(t, http.MethodGet, volumePath(volume.Name())),
+			response: wsldocker.Response{StatusCode: http.StatusOK, Body: volumeResponse(t, volume)},
+		},
+		lifecycleStep{
+			check:    checkVolumeRequest(t, http.MethodDelete, volumePath(volume.Name())),
+			response: wsldocker.Response{StatusCode: http.StatusNoContent},
+		},
+		lifecycleStep{
+			check: checkVolumeRequest(t, http.MethodGet, volumePath(volume.Name())),
+			err:   &wsldocker.APIError{Method: http.MethodGet, Path: volumePath(volume.Name()), StatusCode: http.StatusNotFound},
+		},
+	)
+	if err := ensure(context.Background(), volume, execute); err != nil {
+		t.Fatal(err)
+	}
+	if err := remove(context.Background(), volume, execute); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRemoveRequiresExactIdentityAndVerifiesAbsence(t *testing.T) {
 	volume := testSharedVolume(t)
 	execute := scriptedLifecycle(t,

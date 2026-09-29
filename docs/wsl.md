@@ -199,7 +199,10 @@ silently adopt a same-name foreign object. Remove first proves the complete
 identity, never requests force, and verifies that the name is absent afterward.
 Discovery retains complete untrusted labels for later exact matching and fails
 on partial-result warnings, duplicates or results outside both namespace
-filters. Tool execution plus `cb state`/`cb gc` are not wired to these
+filters. Because the Engine applies those label and name filters together,
+discovery deliberately does not report a same-name foreign volume that omits
+the namespace label; exact-name inspect or ensure still finds and rejects that
+collision. Tool execution plus `cb state`/`cb gc` are not wired to these
 primitives yet.
 
 ## Required before WSL execution can be enabled
