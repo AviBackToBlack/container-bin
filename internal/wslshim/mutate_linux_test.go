@@ -26,13 +26,13 @@ func TestPinnedShimDirectoryPublishesWithoutReplacing(t *testing.T) {
 	defer directory.close()
 	target := filepath.Join(home, ".local", "lib", "container-bin", "cb")
 	shim := Shim{Name: "node24", Path: filepath.Join(shimDir, "node24"), Target: target}
-	if err := directory.ensure(shim); err != nil {
+	if err := directory.ensure(shim, "tool shim"); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := os.Readlink(shim.Path); err != nil || got != target {
 		t.Fatalf("Readlink() = %q, %v; want %q", got, err, target)
 	}
-	if err := directory.ensure(shim); err != nil {
+	if err := directory.ensure(shim, "tool shim"); err != nil {
 		t.Fatalf("second ensure failed: %v", err)
 	}
 
@@ -40,7 +40,7 @@ func TestPinnedShimDirectoryPublishesWithoutReplacing(t *testing.T) {
 	if err := os.WriteFile(collision, []byte("unrelated"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := directory.ensure(Shim{Name: "python", Path: collision, Target: target}); err == nil {
+	if err := directory.ensure(Shim{Name: "python", Path: collision, Target: target}, "tool shim"); err == nil {
 		t.Fatal("ensure replaced an unrelated regular file")
 	}
 	if got, err := os.ReadFile(collision); err != nil || string(got) != "unrelated" {
@@ -49,7 +49,7 @@ func TestPinnedShimDirectoryPublishesWithoutReplacing(t *testing.T) {
 
 	longName := strings.Repeat("a", 215)
 	longShim := Shim{Name: longName, Path: filepath.Join(shimDir, longName), Target: target}
-	if err := directory.ensure(longShim); err != nil {
+	if err := directory.ensure(longShim, "tool shim"); err != nil {
 		t.Fatalf("ensure long valid name: %v", err)
 	}
 	if got, err := os.Readlink(longShim.Path); err != nil || got != target {
@@ -79,7 +79,7 @@ func TestPinnedShimDirectorySurvivesPathSwapWithoutRedirectingMutation(t *testin
 	}
 	target := filepath.Join(home, ".local", "lib", "container-bin", "cb")
 	shim := Shim{Name: "node24", Path: filepath.Join(shimDir, "node24"), Target: target}
-	if err := directory.ensure(shim); err != nil {
+	if err := directory.ensure(shim, "tool shim"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Lstat(filepath.Join(shimDir, "node24")); !os.IsNotExist(err) {

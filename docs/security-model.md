@@ -95,9 +95,27 @@ readable, and dangerous to let others edit.
   standalone Linux and other hosts refuse before registry or Docker work.
   WSL2 classification requires Microsoft WSL2 kernel markers; environment
   variables alone cannot turn ordinary Linux into a supported host. The sole
-  native-WSL exception is `cb wsl prepare --check|--apply`: it validates or
-  creates only the fixed current-user layout, loads no registry or machine
-  policy, performs no Docker work, and does not enable tool execution.
+  native-WSL exceptions are the explicit `cb wsl prepare --check|--apply` and
+  `cb wsl install --check|--apply` lifecycles. Preparation validates or creates
+  only the fixed current-user layout and loads no registry or machine policy.
+  Installation validates that layout before fixed-path policy/registry access,
+  authenticates signed registries when required, and reconciles only the fixed
+  managed binary and provenance-checked symlinks. Neither path performs Docker
+  work or enables tool execution.
+- **Native WSL installation does not adopt ambient files.** The bootstrap
+  executable is the exact OS-reported running image and must be a bounded,
+  current-user-owned regular non-symlink file with safe executable permissions.
+  Copying and hashing share one byte stream, and its digest must match the
+  preflight digest before the destination is atomically published in the fixed
+  private directory at mode `0755`; an existing foreign or unsafe target fails
+  closed. Unsigned registries are recovered/created/upgraded only at the fixed
+  mode-`0600` path. Before a missing primary can recover from `.bak`, that
+  candidate must independently prove current-user ownership, regular-file and
+  non-symlink identity, distribution-root device, and exact mode `0600`;
+  signed-registry policy disables automatic registry mutation. The whole apply
+  transaction uses the fixed registry mutation lock and revalidates the layout
+  beneath it. Randomly named staging residue from a killed process is never
+  adopted or pattern-swept as proof of ownership.
 - **Native WSL tool shims have explicit provenance.** Preflight and mutation
   derive direct-child paths only from valid registry names and the fixed
   layout. Existing tool shims must be current-user-owned symlinks whose

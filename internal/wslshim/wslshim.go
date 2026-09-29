@@ -50,7 +50,7 @@ type dependencies struct {
 }
 
 type shimDirectory interface {
-	ensure(Shim) error
+	ensure(Shim, string) error
 	close() error
 }
 
@@ -90,25 +90,47 @@ func inspect(layout hostenv.WSLLayout, names []string, d dependencies) (Result, 
 	if err != nil {
 		return Result{}, err
 	}
-	runtime, err := d.currentRuntime()
-	if err != nil {
-		return Result{}, fmt.Errorf("classify native WSL runtime: %w", err)
-	}
-	if runtime.Kind != hostenv.WSL2Native || runtime.Distro != layout.Distro {
-		return Result{}, fmt.Errorf("native WSL tool-shim layout belongs to distro %q, current runtime is %q kind %q", layout.Distro, runtime.Distro, runtime.Kind)
-	}
-	if uid := d.currentUID(); uid != layout.UID {
-		return Result{}, fmt.Errorf("native WSL tool-shim layout belongs to UID %d, current UID is %d", layout.UID, uid)
-	}
-	if err := inspectBinary(layout, d); err != nil {
+	if err := inspectContext(layout, d); err != nil {
 		return Result{}, err
 	}
-	if err := inspectShimDir(layout, d); err != nil {
+	if err := inspectBinary(layout, d); err != nil {
 		return Result{}, err
 	}
 	if err := inspectSymlink(layout.ManagementShim, layout.BinaryPath, layout.UID, "management shim", d); err != nil {
 		return Result{}, err
 	}
+	return inspectPlanned(planned, layout.UID, d)
+}
+
+func inspectNames(layout hostenv.WSLLayout, names []string, d dependencies) (Result, error) {
+	planned, err := Plan(layout, names)
+	if err != nil {
+		return Result{}, err
+	}
+	if err := inspectContext(layout, d); err != nil {
+		return Result{}, err
+	}
+	return inspectPlanned(planned, layout.UID, d)
+}
+
+func inspectContext(layout hostenv.WSLLayout, d dependencies) error {
+	runtime, err := d.currentRuntime()
+	if err != nil {
+		return fmt.Errorf("classify native WSL runtime: %w", err)
+	}
+	if runtime.Kind != hostenv.WSL2Native || runtime.Distro != layout.Distro {
+		return fmt.Errorf("native WSL tool-shim layout belongs to distro %q, current runtime is %q kind %q", layout.Distro, runtime.Distro, runtime.Kind)
+	}
+	if uid := d.currentUID(); uid != layout.UID {
+		return fmt.Errorf("native WSL tool-shim layout belongs to UID %d, current UID is %d", layout.UID, uid)
+	}
+	if err := inspectShimDir(layout, d); err != nil {
+		return err
+	}
+	return nil
+}
+
+func inspectPlanned(planned []Shim, uid uint32, d dependencies) (Result, error) {
 	for index := range planned {
 		info, err := d.lstat(planned[index].Path)
 		if errors.Is(err, fs.ErrNotExist) {
@@ -118,7 +140,7 @@ func inspect(layout hostenv.WSLLayout, names []string, d dependencies) (Result, 
 		if err != nil {
 			return Result{}, fmt.Errorf("inspect native WSL tool shim %s: %w", planned[index].Path, err)
 		}
-		if err := validateSymlink(planned[index].Path, planned[index].Target, layout.UID, info, "tool shim", d); err != nil {
+		if err := validateSymlink(planned[index].Path, planned[index].Target, uid, info, "tool shim", d); err != nil {
 			return Result{}, err
 		}
 		planned[index].State = Ready
@@ -148,7 +170,7 @@ func reconcile(layout hostenv.WSLLayout, names []string, d mutationDependencies)
 		return Result{}, fmt.Errorf("open native WSL shim directory for mutation: %w", err)
 	}
 	for _, shim := range missing {
-		if err := directory.ensure(shim); err != nil {
+		if err := directory.ensure(shim, "tool shim"); err != nil {
 			closeErr := directory.close()
 			return Result{}, errors.Join(fmt.Errorf("install native WSL tool shim %s: %w", shim.Path, err), closeErr)
 		}
@@ -166,6 +188,44 @@ func reconcile(layout hostenv.WSLLayout, names []string, d mutationDependencies)
 		}
 	}
 	return after, nil
+}
+
+func reconcileManagement(layout hostenv.WSLLayout, d mutationDependencies) (Shim, error) {
+	management := Shim{Name: "cb", Path: layout.ManagementShim, Target: layout.BinaryPath}
+	if err := validateLayout(layout); err != nil {
+		return Shim{}, err
+	}
+	if err := inspectContext(layout, d.dependencies); err != nil {
+		return Shim{}, err
+	}
+	if err := inspectBinary(layout, d.dependencies); err != nil {
+		return Shim{}, err
+	}
+	if err := inspectSymlink(management.Path, management.Target, layout.UID, "management shim", d.dependencies); err == nil {
+		management.State = Ready
+		return management, nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return Shim{}, err
+	}
+	if d.openShimDirectory == nil {
+		return Shim{}, errors.New("native WSL management-shim mutation is unavailable")
+	}
+	directory, err := d.openShimDirectory(layout)
+	if err != nil {
+		return Shim{}, fmt.Errorf("open native WSL shim directory for management-shim mutation: %w", err)
+	}
+	if err := directory.ensure(management, "management shim"); err != nil {
+		closeErr := directory.close()
+		return Shim{}, errors.Join(fmt.Errorf("install native WSL management shim %s: %w", management.Path, err), closeErr)
+	}
+	if err := directory.close(); err != nil {
+		return Shim{}, fmt.Errorf("close native WSL shim directory after management-shim mutation: %w", err)
+	}
+	if err := inspectSymlink(management.Path, management.Target, layout.UID, "management shim", d.dependencies); err != nil {
+		return Shim{}, fmt.Errorf("revalidate native WSL management shim after mutation: %w", err)
+	}
+	management.State = Ready
+	return management, nil
 }
 
 func inspectBinary(layout hostenv.WSLLayout, d dependencies) error {

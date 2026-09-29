@@ -99,6 +99,30 @@ func TestCheckReportsMissingDirectoriesWithoutMutation(t *testing.T) {
 	}
 }
 
+func TestRegistryRecoveryRequiresPrivateBackupIdentity(t *testing.T) {
+	layout := testLayout(t)
+	if err := prepareTest(layout); err != nil {
+		t.Fatal(err)
+	}
+	backup := layout.RegistryPath + ".bak"
+	if err := os.WriteFile(backup, []byte("registry"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(backup, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runtime := hostenv.Runtime{Kind: hostenv.WSL2Native, Distro: layout.Distro}
+	if err := checkRegistryRecovery(layout, runtime, testMachineID); err != nil {
+		t.Fatalf("private registry backup rejected: %v", err)
+	}
+	if err := os.Chmod(backup, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkRegistryRecovery(layout, runtime, testMachineID); err == nil || !strings.Contains(err.Error(), "mode 0600") {
+		t.Fatalf("permissive registry backup error = %v", err)
+	}
+}
+
 func TestCheckAcceptsPreparedLayout(t *testing.T) {
 	layout := testLayout(t)
 	if err := prepareTest(layout); err != nil {

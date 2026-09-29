@@ -6,10 +6,10 @@ integration. A Windows `cb.exe` launched through WSL interoperability is not the
 WSL frontend, and standalone Linux remains a separate, demand-gated product.
 
 The implemented foundation establishes the runtime boundary, fixed native-WSL
-layout contract and an explicit filesystem-preparation command. It does not
-publish a Linux artifact or enable WSL execution yet. Until the remaining
-frontend wiring, Docker and qualification slices land, ordinary non-bootstrap
-commands fail closed on every host except native Windows.
+layout contract, explicit filesystem preparation and the native install/config
+lifecycle. It does not publish a Linux artifact or enable WSL execution yet.
+Until the remaining frontend wiring, Docker and qualification slices land,
+ordinary commands fail closed on every host except native Windows.
 
 ## Runtime classification
 
@@ -28,10 +28,10 @@ commands fail closed on every host except native Windows.
   became consistent. Other Linux kernels are standalone Linux and rejected.
 - `cb version`, `cb help` and `cb config` remain bootstrap-safe for diagnosis;
   they perform no Docker or registry mutation and return before host enforcement.
-- `cb wsl prepare --check` and `cb wsl prepare --apply` are the only native-WSL
-  management exception. They classify the live host themselves and touch only
-  the fixed layout described below; all normal tool and management execution
-  remains gated.
+- `cb wsl prepare --check|--apply` and `cb wsl install --check|--apply` are the
+  only native-WSL management exceptions. They classify the live host themselves
+  and use only the fixed paths described below; all normal tool and management
+  execution remains gated.
 
 Environment variables alone never promote an ordinary Linux kernel to WSL2.
 Custom kernels that remove the Microsoft WSL2 identity markers fail closed;
@@ -65,9 +65,9 @@ location remains the separate
 administrator-owned `/etc/container-bin/policy.toml` contract.
 
 The filesystem checks are a point-in-time preflight, not a durable path handle.
-The later wiring slice must revalidate managed paths at each mutation boundary
-or use descriptor-relative, no-follow traversal so a path swap after preflight
-cannot redirect a registry, lockfile, binary, or shim operation.
+The installer revalidates the layout under the mutation lock, and shim writes
+use descriptor-relative, no-follow traversal. Later runtime and Docker wiring
+must preserve the same rule at every mutation boundary.
 
 `cb wsl prepare --check` validates this contract without changing the
 filesystem and reports every missing required directory. Explicit
@@ -76,6 +76,46 @@ then revalidates the complete layout. Neither mode installs a binary, creates
 management or tool shims, writes config, contacts Docker, or enables the WSL
 frontend. The account home and numeric UID come from the native Linux account
 database rather than redirectable environment variables.
+
+`cb wsl install --check` is read-only. It validates the same layout before any
+config read, loads machine policy only from `/etc/container-bin/policy.toml`,
+loads the registry only from the fixed path above without backup-recovery
+mutation, validates the running bootstrap executable, and reports whether the
+registry, managed binary, management shim and registry-derived tool shims are
+ready or require an explicit apply. For an unsigned registry that needs its
+built-in defaults upgraded, the plan also preflights and reports the tool shims
+that apply would add. A missing primary with a validated backup is reported as
+`recover`, not `create`; check mode still leaves both paths unchanged. The
+`cb config` output and help text report this fixed registry path whenever the
+Microsoft WSL2 kernel is recognized, even if
+`WSL_DISTRO_NAME` is missing or malformed. That bootstrap diagnostic derives
+only the per-user config location; it does not certify distribution/state
+identity, and install or execution still fail closed until that identity is
+canonical and complete.
+
+`cb wsl install --apply` first performs layout preparation, then acquires the
+fixed registry mutation lock and revalidates the layout. An unmanaged registry
+is recovered from a valid interrupted `.bak` when present, otherwise created,
+and non-destructively upgraded at mode `0600`. A recovery candidate must itself
+be a current-user-owned regular non-symlink file on the distribution-root
+device with exact mode `0600`; parse-valid but permissive or foreign backups
+are rejected before promotion. When policy requires a signed registry,
+automatic creation and upgrade are disabled: the administrator must provision
+an authenticated registry before apply can proceed. The source is the exact
+running executable returned by the OS; it must be a canonical absolute,
+bounded, current-user-owned regular non-symlink file that is owner-executable,
+has no special bits and is not writable by group or other. Its bytes are copied
+and hashed together through private same-directory staging; the copied digest
+must still equal the preflight digest before an atomic publish at the fixed
+managed-binary path with mode `0755`. An already byte-identical target is a
+no-op. The management shim and every registry-derived tool shim are then
+created only when missing and fully revalidated. Foreign files, owners, targets
+or unsafe modes stop the transaction instead of being repaired or replaced.
+The command performs no Docker request and does not enable tool execution.
+An interruption before the final binary rename can leave a current-user-owned
+`.cb-install-<random>.tmp` regular file in the private binary directory.
+ContainerBin does not sweep filename lookalikes without stronger provenance;
+they are never adopted as the managed binary.
 
 Config, state and managed-binary directories must be
 private and current-user-owned; existing registry and lock files must be
@@ -86,7 +126,7 @@ permissions and ownership are never repaired by guessing intent. The management
 shim, when present, must be a current-user-owned symlink to the fixed managed
 binary; unrelated files or links fail closed.
 
-The unexposed `internal/wslshim` lifecycle extends that identity contract to
+The `internal/wslshim` lifecycle extends that identity contract to
 registry-derived tool names. It plans only sorted direct children of the fixed
 shim directory, requires every existing tool shim to be a current-user-owned
 symlink to the fixed managed binary, and reports missing shims separately.
@@ -96,8 +136,11 @@ It then reopens every shim-directory component without following symlinks, pins
 the validated directory, and publishes only missing symlinks with an atomic
 no-clobber operation. Concurrent correct creation is accepted; a regular file,
 foreign link, wrong target or path redirection fails closed and is never
-replaced. Installer/config wiring and removal remain later work, and unrelated
-directory entries are never adopted or enumerated as managed shims.
+replaced. The installer also uses a prerequisite-independent name preflight so
+collisions are rejected before publishing the managed binary, then uses the
+same pinned mutation boundary for the management shim and tool shims. Removal
+remains separate work, and unrelated directory entries are never adopted or
+enumerated as managed shims.
 An interrupted publish can leave a current-user-owned `.cb-<random>.tmp`
 symlink to the managed binary. ContainerBin does not delete such entries based
 on a filename pattern alone because that would not prove provenance.
@@ -207,22 +250,21 @@ primitives yet.
 
 ## Required before WSL execution can be enabled
 
-Later reviewable slices must still implement and qualify all of the following:
+The native installer/config lifecycle is now implemented, but execution stays
+gated. Later reviewable slices must still implement and qualify all of the
+following:
 
-1. integrate the prepared layout and registry-derived tool-shim reconciliation
-   into the native installer/config lifecycle; the unexposed mutation primitive
-   is race-safe and revalidates the fixed layout at its mutation boundary;
-2. wire the proof-bound volume primitives into tool-time shared/project
+1. wire the proof-bound volume primitives into tool-time shared/project
    creation plus `cb state`, `cb gc`, backup and restore; each consumer must
    construct and match the complete distribution/machine/user identity;
-3. wire the implemented project and descendant storage boundary into native
+2. wire the implemented project and descendant storage boundary into native
    Linux argument mapping, then complete stdin/TTY and signal semantics;
-4. wire the implemented bounded Docker Desktop control-operation primitive into
+3. wire the implemented bounded Docker Desktop control-operation primitive into
    volume/container lifecycle calls, and add a separately reviewed streaming
    execution path without accepting ambient endpoint overrides;
-5. Windows-filesystem and WSL-filesystem project tests plus mixed-invocation
+4. Windows-filesystem and WSL-filesystem project tests plus mixed-invocation
    rejection; and
-6. real WSL2 + Docker Desktop end-to-end qualification before any support claim.
+5. real WSL2 + Docker Desktop end-to-end qualification before any support claim.
 
 Docker's setup contract is documented in its
 [WSL2 backend guide](https://docs.docker.com/desktop/features/wsl/): WSL2
