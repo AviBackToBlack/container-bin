@@ -349,8 +349,9 @@ is not completion.
    - namespace-prefixed/labeled WSL volume identity plus proof-bound exact
      inspect/create/remove and namespace discovery are implemented; tool-time
      creation and state/GC/backup/restore command integration remain;
-   - canonical project and descendant storage classification, including
-     symlink/nested-mount rejection, and proof-consuming argument mapping are
+   - profile-aware nearest/outermost/trusted project-root selection, canonical
+     project and descendant storage classification (including symlink and
+     nested-mount rejection), and proof-consuming argument mapping are
      implemented but not yet wired into an enabled frontend;
    - project identity and cross-boundary rejection integration tests;
    - real WSL Docker E2E.

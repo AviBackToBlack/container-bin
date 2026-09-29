@@ -54,6 +54,19 @@ type Registry struct {
 	Defaults      map[string]string // runtime family -> selected version
 }
 
+// ProjectMarkersFor returns the profile's project markers, including the
+// compatibility defaults used by registries created before project_markers
+// was added to the schema.
+func ProjectMarkersFor(t Tool) []string {
+	if len(t.ProjectMarkers) > 0 {
+		return t.ProjectMarkers
+	}
+	if t.Provider == "python" {
+		return []string{"pyproject.toml", "requirements.txt", "setup.py", "setup.cfg", ".git"}
+	}
+	return []string{".git"}
+}
+
 // MaxSchemaVersion is the newest registry schema this build can parse.
 // Diagnostics and parsing must share this value so a registry accepted at
 // startup is not subsequently reported as unsupported by cb doctor.

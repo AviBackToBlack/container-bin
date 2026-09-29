@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/AviBackToBlack/container-bin/internal/hostenv"
+	"github.com/AviBackToBlack/container-bin/internal/registry"
 )
 
 const maxMountInfoBytes = 1 << 20
@@ -36,6 +37,17 @@ func ClassifyDescendant(project Project, candidate string) (Descendant, error) {
 		lstat:          statPath,
 		evalSymlinks:   filepath.EvalSymlinks,
 		readMountInfo:  readMountInfo,
+	})
+}
+
+// SelectForTool applies a profile's marker policy and classifies the selected
+// native-WSL project root. The boolean reports whether a marker or trusted
+// overlay root was found; otherwise the proven working directory is the root.
+func SelectForTool(start string, tool registry.Tool) (Project, bool, error) {
+	return selectForTool(start, tool, selectionDependencies{
+		classify:           Classify,
+		classifyDescendant: ClassifyDescendant,
+		lstat:              statPath,
 	})
 }
 
