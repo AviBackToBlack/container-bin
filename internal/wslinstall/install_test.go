@@ -61,6 +61,59 @@ func TestCheckIsReadOnlyAndReportsRequiredActions(t *testing.T) {
 	}
 }
 
+func TestCheckReportsRegistryRecoveryWithoutMutation(t *testing.T) {
+	layout := installTestLayout()
+	reg := registry.Default()
+	mutatingLoadCalled := false
+	c := command{
+		currentLayout: func() (hostenv.WSLLayout, error) { return layout, nil },
+		checkLayout: func(hostenv.WSLLayout) (wslfs.Plan, error) {
+			return wslfs.Plan{Layout: layout}, nil
+		},
+		checkRegistryRecovery: func(hostenv.WSLLayout) error { return nil },
+		loadPolicy:            func() (policy.Policy, error) { return policy.Policy{}, nil },
+		loadRegistry: func(string, registry.Authenticator) (registry.Registry, string, error) {
+			mutatingLoadCalled = true
+			return registry.Registry{}, "", errors.New("unexpected mutating load")
+		},
+		loadRegistryReadOnly: func(path string, _ registry.Authenticator) (registry.Registry, string, error) {
+			return reg, path, nil
+		},
+		executable: func() (string, error) { return "/home/alice/cb-bootstrap", nil },
+		lstat: func(path string) (os.FileInfo, error) {
+			switch path {
+			case layout.RegistryPath:
+				return nil, fs.ErrNotExist
+			case layout.RegistryPath + ".bak":
+				return fakeFileInfo{}, nil
+			case layout.ManagementShim:
+				return nil, fs.ErrNotExist
+			default:
+				t.Fatalf("unexpected lstat path %q", path)
+				return nil, fs.ErrInvalid
+			}
+		},
+		binaryState: func(hostenv.WSLLayout, string) (State, error) { return Create, nil },
+		inspectNames: func(_ hostenv.WSLLayout, names []string) (wslshim.Result, error) {
+			planned, err := wslshim.Plan(layout, names)
+			for index := range planned {
+				planned[index].State = wslshim.Missing
+			}
+			return wslshim.Result{Shims: planned}, err
+		},
+	}
+	var out bytes.Buffer
+	if err := c.run([]string{"install", "--check"}, &out, "v-test"); err != nil {
+		t.Fatal(err)
+	}
+	if mutatingLoadCalled {
+		t.Fatal("read-only recovery check used mutating registry load")
+	}
+	if !strings.Contains(out.String(), "registry:      recover") {
+		t.Fatalf("output did not report recovery:\n%s", out.String())
+	}
+}
+
 func TestCheckRejectsUnsafeRecoveryStateBeforeRegistryLoad(t *testing.T) {
 	layout := installTestLayout()
 	want := errors.New("registry backup has mode 0644")

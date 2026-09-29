@@ -925,7 +925,8 @@ loads only the root-owned `/etc/container-bin/policy.toml` policy path and the
 distribution-local registry path, authenticates the registry when policy
 requires it, and reports required registry, managed-binary, management-shim
 and registry-derived tool-shim actions. It does not recover a `.bak`, create a
-lock or change the filesystem.
+lock or change the filesystem. When the primary registry is missing but a
+validated backup is present, the plan reports `recover` rather than `create`.
 
 `cb wsl install --apply` first prepares the layout, then serializes the complete
 install transaction on the fixed registry lock. For an unmanaged registry it

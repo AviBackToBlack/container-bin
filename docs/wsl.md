@@ -84,8 +84,10 @@ mutation, validates the running bootstrap executable, and reports whether the
 registry, managed binary, management shim and registry-derived tool shims are
 ready or require an explicit apply. For an unsigned registry that needs its
 built-in defaults upgraded, the plan also preflights and reports the tool shims
-that apply would add. `cb config` and the help output report this fixed registry
-path whenever the Microsoft WSL2 kernel is recognized, even if
+that apply would add. A missing primary with a validated backup is reported as
+`recover`, not `create`; check mode still leaves both paths unchanged. The
+`cb config` output and help text report this fixed registry path whenever the
+Microsoft WSL2 kernel is recognized, even if
 `WSL_DISTRO_NAME` is missing or malformed. That bootstrap diagnostic derives
 only the per-user config location; it does not certify distribution/state
 identity, and install or execution still fail closed until that identity is

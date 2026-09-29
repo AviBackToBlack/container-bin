@@ -22,9 +22,10 @@ import (
 type State string
 
 const (
-	Ready  State = "ready"
-	Create State = "create"
-	Update State = "update"
+	Ready   State = "ready"
+	Create  State = "create"
+	Recover State = "recover"
+	Update  State = "update"
 )
 
 type Plan struct {
@@ -217,7 +218,13 @@ func (c command) inspectWith(layout hostenv.WSLLayout, source string, reg regist
 	}
 	result := Plan{Layout: layout, MissingDirectories: layoutPlan.MissingDirectories, SourceBinary: source, Registry: Ready}
 	if _, err := c.lstat(layout.RegistryPath); errors.Is(err, fs.ErrNotExist) {
-		result.Registry = Create
+		if _, backupErr := c.lstat(layout.RegistryPath + ".bak"); backupErr == nil {
+			result.Registry = Recover
+		} else if errors.Is(backupErr, fs.ErrNotExist) {
+			result.Registry = Create
+		} else {
+			return Plan{}, fmt.Errorf("inspect native WSL registry backup %s: %w", layout.RegistryPath+".bak", backupErr)
+		}
 	} else if err != nil {
 		return Plan{}, fmt.Errorf("inspect native WSL registry %s: %w", layout.RegistryPath, err)
 	} else if !machinePolicy.RequireRegistrySignature && reg.NeedsDefaultUpgrade() {
