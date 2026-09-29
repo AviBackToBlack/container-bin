@@ -346,8 +346,9 @@ is not completion.
    - Docker Desktop WSL integration proof and the proof-bound, bounded control
      request primitive are implemented but not yet wired into an enabled
      frontend; streaming/attach needs a separate contract;
-   - namespace-prefixed/labeled WSL volume identity is implemented, but Docker
-     creation and lifecycle commands are not yet wired to it;
+   - namespace-prefixed/labeled WSL volume identity plus proof-bound exact
+     inspect/create/remove and namespace discovery are implemented; tool-time
+     creation and state/GC/backup/restore command integration remain;
    - canonical project and descendant storage classification, including
      symlink/nested-mount rejection, and proof-consuming argument mapping are
      implemented but not yet wired into an enabled frontend;

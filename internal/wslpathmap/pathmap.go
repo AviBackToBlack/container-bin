@@ -123,7 +123,7 @@ func resolvePathArg(cwd, arg string, force bool) (string, bool) {
 		return path.Clean(arg), true
 	}
 	explicit := strings.HasPrefix(arg, "./") || strings.HasPrefix(arg, "../") || hasParentSegment(arg)
-	if explicit || (force && arg != "" && arg != "-" && !strings.HasPrefix(arg, "-")) {
+	if explicit || (force && arg != "" && !strings.HasPrefix(arg, "-")) {
 		return path.Clean(path.Join(cwd, arg)), true
 	}
 	return "", false

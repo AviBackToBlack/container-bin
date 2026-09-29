@@ -97,6 +97,42 @@ func TestMapToolArgsHonorsDoubleDashAndReportsDanglingOption(t *testing.T) {
 	}
 }
 
+func TestMapToolArgsPathLastIfAnyAndMissingOutput(t *testing.T) {
+	project := wslproject.Project{Root: "/home/alice/project", Storage: wslproject.Distribution}
+	tool := registry.Tool{Name: "example", PathLast: true, PathLastIfAny: []string{"--write"}}
+	deps := testDependencies(project.Root)
+
+	got, _, err := mapToolArgs(tool, project, project.Root, "/workspace/demo", []string{"output"}, deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"output"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("inactive path_last_if_any args = %q, want %q", got, want)
+	}
+
+	missingClassified := false
+	deps.classify = func(_ wslproject.Project, candidate string) (wslproject.Descendant, error) {
+		if candidate == project.Root {
+			return wslproject.Descendant{Path: candidate, Relative: ".", Exists: true, NearestExisting: candidate}, nil
+		}
+		if candidate == project.Root+"/new-output" {
+			missingClassified = true
+			return wslproject.Descendant{Path: candidate, Relative: "new-output", Exists: false, NearestExisting: project.Root}, nil
+		}
+		return wslproject.Descendant{}, errors.New("unexpected candidate")
+	}
+	got, _, err = mapToolArgs(tool, project, project.Root, "/workspace/demo", []string{"--write", "new-output"}, deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !missingClassified {
+		t.Fatal("missing output did not pass through descendant proof")
+	}
+	if want := []string{"--write", "/workspace/demo/new-output"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("active path_last_if_any args = %q, want %q", got, want)
+	}
+}
+
 func TestMapToolArgsValidatesBoundaryInputs(t *testing.T) {
 	project := wslproject.Project{Root: "/home/alice/project", Storage: wslproject.Distribution}
 	deps := testDependencies(project.Root)

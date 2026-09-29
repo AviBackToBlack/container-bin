@@ -119,12 +119,16 @@ readable, and dangerous to let others edit.
   device/inode identity, then requires Docker Desktop name, OS, Microsoft WSL2
   kernel and address-label evidence. The proof must be repeated per operation;
   merely reaching an in-distribution or remote Docker Engine is not accepted.
-- **Native WSL volumes are namespace-bound.** The unexposed volume contract
+- **Native WSL volumes are namespace-bound.** The unexposed volume lifecycle
   places the opaque distribution/machine/user namespace in both every managed
   name and `cb.wsl_namespace` label, and length-delimits owner components so
   hyphenated names cannot collide. Project hashes preserve exact canonical
-  Linux path case. Prefix/label filters are discovery-only; later lifecycle
-  wiring must match the exact constructed name and complete labels before
+  Linux path case. Inspect/create/remove requests repeat the proof-bound Docker
+  Desktop control boundary instead of invoking an ambient CLI. Creation is
+  accepted only after the response and a fresh inspect match the exact name,
+  complete labels, local driver and local scope. Removal is never forced: it
+  requires that same proof immediately before deletion and verifies absence
+  afterward. Prefix/label filters are discovery-only and cannot authorize
   adoption or mutation. Windows and other WSL scopes remain foreign state.
 - **Machine policy cannot be redirected or weakened.** A present enterprise
   policy is loaded only from the fixed OS path, requires administrator/root
