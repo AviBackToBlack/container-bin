@@ -205,8 +205,8 @@ Later reviewable slices must still implement and qualify all of the following:
    is race-safe and revalidates the fixed layout at its mutation boundary;
 2. wire the implemented distribution/machine/user volume identity contract
    into shared/project creation and every lifecycle command;
-3. wire the implemented project and descendant storage boundary into native
-   Linux argument mapping, then complete stdin/TTY and signal semantics;
+3. wire the implemented project boundary and argument mapper into native tool
+   execution, then complete stdin/TTY and signal semantics;
 4. wire the implemented bounded Docker Desktop control-operation primitive into
    volume/container lifecycle calls, and add a separately reviewed streaming
    execution path without accepting ambient endpoint overrides;

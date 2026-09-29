@@ -2,7 +2,6 @@ package wslpathmap
 
 import (
 	"errors"
-	"io/fs"
 	"reflect"
 	"strings"
 	"testing"
@@ -13,11 +12,7 @@ import (
 
 func TestMapToolArgsUsesRegistryPathSemantics(t *testing.T) {
 	project := wslproject.Project{Root: "/home/alice/project", Storage: wslproject.Distribution}
-	deps := testDependencies(project.Root, map[string]bool{
-		"/home/alice/project/src/input.txt": true,
-		"/home/alice/project/module":        true,
-		"/home/alice/project/src/result":    true,
-	})
+	deps := testDependencies(project.Root)
 	tool := registry.Tool{Name: "example", PathNext: []string{"-i"}, PathEquals: []string{"-chdir"}, PathLast: true}
 	args := []string{"-i", "./input.txt", "-chdir=/home/alice/project/module", "result"}
 	want := []string{"-i", "/workspace/demo/src/input.txt", "-chdir=/workspace/demo/module", "/workspace/demo/src/result"}
@@ -38,7 +33,7 @@ func TestMapToolArgsUsesRegistryPathSemantics(t *testing.T) {
 
 func TestMapToolArgsRejectsPathsOutsideOrAcrossProjectBoundary(t *testing.T) {
 	project := wslproject.Project{Root: "/home/alice/project", Storage: wslproject.Distribution}
-	deps := testDependencies(project.Root, nil)
+	deps := testDependencies(project.Root)
 	tool := registry.Tool{Name: "example", PathNext: []string{"-i"}}
 	for name, arg := range map[string]string{
 		"absolute outside": "/etc/passwd",
@@ -56,9 +51,9 @@ func TestMapToolArgsRejectsPathsOutsideOrAcrossProjectBoundary(t *testing.T) {
 
 func TestMapToolArgsPreservesNonPathsAndPackagePatterns(t *testing.T) {
 	project := wslproject.Project{Root: "/home/alice/project", Storage: wslproject.Distribution}
-	deps := testDependencies(project.Root, nil)
+	deps := testDependencies(project.Root)
 	tool := registry.Tool{Name: "go", PathNext: []string{"-i"}}
-	args := []string{"test", "./...", "pkg/...", "-i", "./...", "value"}
+	args := []string{"install", "test", "./...", "pkg/...", "-i", "./...", "value"}
 	got, _, err := mapToolArgs(tool, project, project.Root, "/workspace/demo", args, deps)
 	if err != nil {
 		t.Fatal(err)
@@ -68,15 +63,33 @@ func TestMapToolArgsPreservesNonPathsAndPackagePatterns(t *testing.T) {
 	}
 }
 
+func TestMapToolArgsMapsAbsolutePackagePattern(t *testing.T) {
+	project := wslproject.Project{Root: "/home/alice/project", Storage: wslproject.Distribution}
+	got, _, err := mapToolArgs(
+		registry.Tool{Name: "go"},
+		project,
+		project.Root,
+		"/workspace/demo",
+		[]string{"test", "/home/alice/project/pkg/..."},
+		testDependencies(project.Root),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"test", "/workspace/demo/pkg/..."}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("mapped args = %q, want %q", got, want)
+	}
+}
+
 func TestMapToolArgsHonorsDoubleDashAndReportsDanglingOption(t *testing.T) {
 	project := wslproject.Project{Root: "/home/alice/project", Storage: wslproject.Distribution}
-	deps := testDependencies(project.Root, map[string]bool{"/home/alice/project/file.txt": true})
+	deps := testDependencies(project.Root)
 	tool := registry.Tool{Name: "example", PathNext: []string{"-i"}, PathLast: true}
 	got, _, err := mapToolArgs(tool, project, project.Root, "/workspace/demo", []string{"--", "file.txt"}, deps)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"--", "/workspace/demo/file.txt"}; !reflect.DeepEqual(got, want) {
+	if want := []string{"--", "file.txt"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("mapped args = %q, want %q", got, want)
 	}
 	if _, _, err := mapToolArgs(tool, project, project.Root, "/workspace/demo", []string{"-i"}, deps); err == nil || !strings.Contains(err.Error(), "requires a path argument") {
@@ -86,7 +99,7 @@ func TestMapToolArgsHonorsDoubleDashAndReportsDanglingOption(t *testing.T) {
 
 func TestMapToolArgsValidatesBoundaryInputs(t *testing.T) {
 	project := wslproject.Project{Root: "/home/alice/project", Storage: wslproject.Distribution}
-	deps := testDependencies(project.Root, nil)
+	deps := testDependencies(project.Root)
 	if _, _, err := mapToolArgs(registry.Tool{}, project, project.Root, "/workspace/demo", nil, deps); err == nil {
 		t.Fatal("unnamed tool was accepted")
 	}
@@ -98,7 +111,7 @@ func TestMapToolArgsValidatesBoundaryInputs(t *testing.T) {
 	}
 }
 
-func testDependencies(root string, existing map[string]bool) dependencies {
+func testDependencies(root string) dependencies {
 	return dependencies{
 		classify: func(_ wslproject.Project, candidate string) (wslproject.Descendant, error) {
 			if candidate == root+"/mounted/file" {
@@ -112,12 +125,6 @@ func testDependencies(root string, existing map[string]bool) dependencies {
 				relative = "."
 			}
 			return wslproject.Descendant{Path: candidate, Relative: relative, Exists: true, NearestExisting: candidate}, nil
-		},
-		lstat: func(candidate string) error {
-			if existing[candidate] {
-				return nil
-			}
-			return fs.ErrNotExist
 		},
 	}
 }

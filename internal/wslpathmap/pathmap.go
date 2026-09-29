@@ -5,8 +5,6 @@ package wslpathmap
 import (
 	"errors"
 	"fmt"
-	"io/fs"
-	"os"
 	"path"
 	"strings"
 	"unicode"
@@ -18,7 +16,6 @@ import (
 
 type dependencies struct {
 	classify func(wslproject.Project, string) (wslproject.Descendant, error)
-	lstat    func(string) error
 }
 
 // MapToolArgs maps only paths proven to remain inside project and returns the
@@ -28,10 +25,6 @@ type dependencies struct {
 func MapToolArgs(tool registry.Tool, project wslproject.Project, cwd, workspaceRoot string, args []string) ([]string, string, error) {
 	return mapToolArgs(tool, project, cwd, workspaceRoot, args, dependencies{
 		classify: wslproject.ClassifyDescendant,
-		lstat: func(candidate string) error {
-			_, err := os.Lstat(candidate)
-			return err
-		},
 	})
 }
 
@@ -39,7 +32,7 @@ func mapToolArgs(tool registry.Tool, project wslproject.Project, cwd, workspaceR
 	if tool.Name == "" {
 		return nil, "", errors.New("native WSL argument mapping requires a named tool")
 	}
-	if deps.classify == nil || deps.lstat == nil {
+	if deps.classify == nil {
 		return nil, "", errors.New("native WSL argument mapping dependencies are incomplete")
 	}
 	if err := validateContainerPath(workspaceRoot); err != nil {
@@ -108,10 +101,7 @@ func mapToolArgs(tool registry.Tool, project wslproject.Project, cwd, workspaceR
 }
 
 func mapArg(project wslproject.Project, cwd, workspaceRoot, arg string, force bool, deps dependencies) (string, error) {
-	candidate, isPath, err := resolvePathArg(cwd, arg, force, deps.lstat)
-	if err != nil {
-		return "", fmt.Errorf("map native WSL argument path %q: %w", arg, err)
-	}
+	candidate, isPath := resolvePathArg(cwd, arg, force)
 	if !isPath {
 		return arg, nil
 	}
@@ -125,27 +115,18 @@ func mapArg(project wslproject.Project, cwd, workspaceRoot, arg string, force bo
 	return path.Join(workspaceRoot, descendant.Relative), nil
 }
 
-func resolvePathArg(cwd, arg string, force bool, lstat func(string) error) (string, bool, error) {
-	if hasPackagePatternSuffix(arg) {
-		return "", false, nil
+func resolvePathArg(cwd, arg string, force bool) (string, bool) {
+	if hasPackagePatternSuffix(arg) && !path.IsAbs(arg) {
+		return "", false
 	}
 	if path.IsAbs(arg) {
-		return path.Clean(arg), true, nil
+		return path.Clean(arg), true
 	}
 	explicit := strings.HasPrefix(arg, "./") || strings.HasPrefix(arg, "../") || hasParentSegment(arg)
 	if explicit || (force && arg != "" && arg != "-" && !strings.HasPrefix(arg, "-")) {
-		return path.Clean(path.Join(cwd, arg)), true, nil
+		return path.Clean(path.Join(cwd, arg)), true
 	}
-	if arg == "" || strings.HasPrefix(arg, "-") {
-		return "", false, nil
-	}
-	candidate := path.Clean(path.Join(cwd, arg))
-	if err := lstat(candidate); err == nil {
-		return candidate, true, nil
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		return "", false, fmt.Errorf("inspect candidate %s: %w", candidate, err)
-	}
-	return "", false, nil
+	return "", false
 }
 
 func hasParentSegment(value string) bool {
