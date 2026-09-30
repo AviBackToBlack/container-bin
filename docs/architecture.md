@@ -324,8 +324,7 @@ internal/statearchive  labeled-volume selection, manifest/checksum/tar
                        validation, Docker helper backup/restore
 internal/diag   doctor, self-test, bugreport, verdict functions, redaction
   ↓
-internal/dockerrun   docker run assembly, TTY decision, host-env selection,
-                     mount specs
+internal/dockerrun   docker run assembly, host-env selection, mount specs
 internal/state       cb state, cb gc
   ↓
 internal/dockervol   docker volume primitives                        (leaf)
@@ -342,6 +341,7 @@ internal/toml        the shared TOML subset lexer                    (leaf)
 internal/atomicio    crash-safe write + .bak recovery                (leaf)
 internal/mutationlock  the registry mutation lock primitive          (leaf)
 internal/hostenv       host classification and gated WSL layout       (leaf)
+internal/terminal      shared stdin/stdout character-device decision   (leaf)
 internal/wslfs         native WSL filesystem ownership/mode preflight
 internal/wslshim       native WSL registry-derived shim preflight/mutation
 internal/wslinstall    native WSL install/config lifecycle orchestrator
@@ -361,7 +361,7 @@ main         -> cli, diag, dockerrun, hostenv, mutationlock, policy, projectconf
 cli          -> atomicio, diag, dockerrun, dockervol, lockfile, pathmap, policy, registry, statearchive, toml
 projectconfig -> atomicio, pathmap, policy, registry, toml
 diag         -> dockerrun, dockervol, lockfile, pathmap, policy, registry
-dockerrun    -> dockervol, lockfile, pathmap, policy, registry
+dockerrun    -> dockervol, lockfile, pathmap, policy, registry, terminal
 state        -> dockervol, pathmap, registry
 statearchive -> dockervol, pathmap
 lockfile     -> atomicio, policy, registry, toml
@@ -376,7 +376,7 @@ wslpathmap  -> registry, wslproject
 wsldocker   -> hostenv
 wslvolume   -> hostenv, registry, wsldocker, wslproject
 selfupdate  -> mutationlock, registry
-atomicio, dockervol, hostenv, mutationlock, toml -> (leaves)
+atomicio, dockervol, hostenv, mutationlock, terminal, toml -> (leaves)
 ```
 
 Notably: `lockfile` and `pathmap` both depend on `registry` directly, not on
