@@ -348,7 +348,8 @@ internal/wslinstall    native WSL install/config lifecycle orchestrator
 internal/wslproject    native WSL project storage boundary
 internal/wslpathmap    native WSL project argument mapping
 internal/wsldocker     native WSL Docker Desktop integration proof
-internal/wslvolume     native WSL namespaced volume identity/lifecycle
+internal/wslvolume     native WSL namespaced volume identity/lifecycle and
+                       stateful-tool binding planning
 internal/selfupdate    release selection, staging, verification and replacement
 ```
 
@@ -373,7 +374,7 @@ wslinstall  -> hostenv, policy, registry, wslfs, wslshim
 wslproject  -> hostenv
 wslpathmap  -> registry, wslproject
 wsldocker   -> hostenv
-wslvolume   -> hostenv, registry, wsldocker
+wslvolume   -> hostenv, registry, wsldocker, wslproject
 selfupdate  -> mutationlock, registry
 atomicio, dockervol, hostenv, mutationlock, toml -> (leaves)
 ```
@@ -466,7 +467,10 @@ the response and re-inspects the volume; removal validates exact ownership
 before mutation and verifies absence afterward. Prefix/label filtering remains
 discovery-only: adoption, GC, backup, restore and deletion must match an exact
 identity constructed by this package and its complete labels plus local
-driver/scope.
+driver/scope. The package also preflights an entire stateful profile's
+project/shared binding set, re-proves the exact project root before deriving
+project identities, and ensures each distinct identity only after the complete
+plan validates. Container creation and state-command wiring remain gated.
 
 After the host runtime boundary is enforced, `cb self-update` is dispatched
 before machine policy and registry loading. Release selection therefore remains
