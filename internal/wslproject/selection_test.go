@@ -107,6 +107,14 @@ func TestSelectForToolRejectsUntrustedMarkerShapesAndObjects(t *testing.T) {
 			modes: map[string]os.FileMode{start + "/.git": os.ModeSymlink | 0o777},
 			want:  "is a symlink",
 		},
+		"valid marker before symlink": {
+			tool: registry.Tool{ProjectMarkers: []string{"Cargo.toml", ".git"}},
+			modes: map[string]os.FileMode{
+				start + "/Cargo.toml": 0o644,
+				start + "/.git":       os.ModeSymlink | 0o777,
+			},
+			want: "is a symlink",
+		},
 		"special marker": {
 			tool:  registry.Tool{ProjectMarkers: []string{"marker"}},
 			modes: map[string]os.FileMode{start + "/marker": os.ModeNamedPipe | 0o600},

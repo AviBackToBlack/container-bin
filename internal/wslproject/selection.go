@@ -103,7 +103,6 @@ func findProjectRoot(start string, markers []string, outermost bool, lstat func(
 				return "", false, fmt.Errorf("native WSL project marker %s is not a regular file or directory", markerPath)
 			}
 			matched = true
-			break
 		}
 		if matched {
 			selected = dir
