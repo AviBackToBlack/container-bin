@@ -81,7 +81,17 @@ func probeDockerInfoForPeer(ctx context.Context, socketPath string, expectedPeer
 }
 
 func performDockerRequest(ctx context.Context, socketPath string, request Request, timeout time.Duration, maxOutput int64, expectedPeerUID uint32) (operationResult, error) {
-	requestCtx, cancel := context.WithTimeout(ctx, timeout)
+	if ctx == nil {
+		return operationResult{}, errors.New("Docker Desktop Engine API request requires a context")
+	}
+	if timeout < 0 {
+		return operationResult{}, errors.New("Docker Desktop Engine API request timeout cannot be negative")
+	}
+	requestCtx := ctx
+	cancel := func() {}
+	if timeout > 0 {
+		requestCtx, cancel = context.WithTimeout(ctx, timeout)
+	}
 	defer cancel()
 
 	peerUID := ^uint32(0)

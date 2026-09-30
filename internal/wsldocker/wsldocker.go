@@ -1,7 +1,7 @@
 // Package wsldocker proves that a native WSL2 process is connected to Docker
 // Desktop's supported WSL integration rather than an in-distribution or remote
-// Docker Engine, and provides proof-bound bounded control requests plus one
-// separately constrained container-attach streaming transport. It does not
+// Docker Engine, and provides proof-bound bounded control requests plus
+// separately constrained container-attach and wait transports. It does not
 // enable the WSL frontend by itself.
 package wsldocker
 
@@ -48,8 +48,8 @@ type Result struct {
 	socket         socketInfo
 }
 
-// Request is one bounded Docker Engine control-plane request. OpenAttach owns
-// the separate, narrower hijacked-connection contract.
+// Request is one bounded Docker Engine control-plane request. OpenAttach and
+// WaitContainer own separate, narrower streaming and long-poll contracts.
 type Request struct {
 	Method          string
 	Path            string
@@ -224,15 +224,22 @@ func dockerErrorMessage(raw []byte) string {
 	var response struct {
 		Message string `json:"message"`
 	}
-	if err := json.Unmarshal(raw, &response); err != nil || response.Message == "" || len(response.Message) > 4096 || strings.TrimSpace(response.Message) != response.Message {
+	if err := json.Unmarshal(raw, &response); err != nil || !validDockerMessage(response.Message) {
 		return ""
 	}
-	for _, r := range response.Message {
+	return response.Message
+}
+
+func validDockerMessage(message string) bool {
+	if message == "" || len(message) > 4096 || strings.TrimSpace(message) != message {
+		return false
+	}
+	for _, r := range message {
 		if unicode.IsControl(r) {
-			return ""
+			return false
 		}
 	}
-	return response.Message
+	return true
 }
 
 func cloneRequest(request Request) Request {
