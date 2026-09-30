@@ -24,8 +24,8 @@ type engineVolume struct {
 	Scope  string            `json:"Scope"`
 }
 
-// Candidate is untrusted namespace-discovery output. Callers must match it
-// against a constructed Volume before adoption, mutation, backup or restore.
+// Candidate is untrusted namespace-discovery output. Callers must pass it to
+// ProveCandidate before adoption, mutation, backup, or restore.
 type Candidate struct {
 	name   string
 	driver string
