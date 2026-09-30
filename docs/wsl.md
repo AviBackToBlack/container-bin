@@ -226,7 +226,9 @@ failure blindly. A separate proof-bound attach transport now permits only a
 live-stream POST for an exact full container ID. It repeats the complete
 socket/peer proof, fixes the attach query and upgrade headers, bounds the
 pre-upgrade/error phase, and returns a context-bound duplex stream while
-reporting whether Docker multiplexed framing applies. It does not decode that
+reporting whether Docker multiplexed framing applies. Canceling the parent
+context closes the upgraded connection and unblocks I/O; callers can half-close
+stdin to deliver EOF while continuing to read output. It does not decode that
 framing or implement container creation/start/wait, terminal behavior, resize,
 signals, or exit-code propagation. Nothing is wired into tool execution yet;
 real WSL2 + Docker Desktop qualification remains mandatory before support.

@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPerformDockerAttachUsesExactUpgradeAndReturnsDuplexStream(t *testing.T) {
@@ -33,8 +34,8 @@ func TestPerformDockerAttachUsesExactUpgradeAndReturnsDuplexStream(t *testing.T)
 		defer connection.Close()
 		_, _ = fmt.Fprintf(readerWriter, "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: tcp\r\nContent-Type: %s\r\n\r\nhello", attachMediaType)
 		_ = readerWriter.Flush()
-		input := make([]byte, 4)
-		if _, err := io.ReadFull(readerWriter, input); err != nil || string(input) != "ping" {
+		input, err := io.ReadAll(readerWriter)
+		if err != nil || string(input) != "ping" {
 			t.Errorf("stdin = %q, %v", input, err)
 			return
 		}
@@ -58,9 +59,45 @@ func TestPerformDockerAttachUsesExactUpgradeAndReturnsDuplexStream(t *testing.T)
 	if _, err := result.Stream.Write([]byte("ping")); err != nil {
 		t.Fatal(err)
 	}
+	if err := result.Stream.CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
 	output = make([]byte, 4)
 	if _, err := io.ReadFull(result.Stream, output); err != nil || string(output) != "done" {
 		t.Fatalf("duplex output = %q, %v", output, err)
+	}
+}
+
+func TestPerformDockerAttachCancellationClosesBlockedStream(t *testing.T) {
+	socket := serveUnixHTTP(t, http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		connection, readerWriter, err := http.NewResponseController(response).Hijack()
+		if err != nil {
+			t.Errorf("hijack = %v", err)
+			return
+		}
+		defer connection.Close()
+		_, _ = fmt.Fprintf(readerWriter, "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: tcp\r\nContent-Type: %s\r\n\r\n", attachMediaType)
+		_ = readerWriter.Flush()
+		_, _ = io.Copy(io.Discard, readerWriter)
+	}))
+	ctx, cancel := context.WithCancel(context.Background())
+	result, err := performDockerAttach(ctx, socket, AttachRequest{ContainerID: testContainerID, Stdout: true}, uint32(os.Geteuid()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	readDone := make(chan error, 1)
+	go func() {
+		_, err := result.Stream.Read(make([]byte, 1))
+		readDone <- err
+	}()
+	cancel()
+	select {
+	case err := <-readDone:
+		if err == nil {
+			t.Fatal("blocked attach read succeeded after cancellation")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("context cancellation did not unblock attach read")
 	}
 }
 

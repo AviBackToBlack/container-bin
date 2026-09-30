@@ -14,10 +14,15 @@ const testContainerID = "0123456789abcdef0123456789abcdef0123456789abcdef0123456
 
 type testDuplex struct {
 	bytes.Buffer
-	closed bool
+	closed      bool
+	writeClosed bool
 }
 
 func (s *testDuplex) Close() error { s.closed = true; return nil }
+func (s *testDuplex) CloseWrite() error {
+	s.writeClosed = true
+	return nil
+}
 
 func TestOpenAttachBindsDuplexStreamToProvenSocket(t *testing.T) {
 	socket := validSocketInfo()
@@ -57,6 +62,12 @@ func TestOpenAttachBindsDuplexStreamToProvenSocket(t *testing.T) {
 	}
 	if _, err := stream.Write([]byte("stdin")); err != nil {
 		t.Fatal(err)
+	}
+	if err := stream.CloseWrite(); err != nil || !duplex.writeClosed {
+		t.Fatalf("CloseWrite() = %v, writeClosed=%v", err, duplex.writeClosed)
+	}
+	if _, err := stream.Write([]byte("late")); !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatalf("Write() after CloseWrite error = %v", err)
 	}
 	if err := stream.Close(); err != nil || !duplex.closed {
 		t.Fatalf("Close() = %v, closed=%v", err, duplex.closed)
@@ -136,6 +147,24 @@ func TestOpenAttachReturnsBoundedTypedAPIError(t *testing.T) {
 	}
 }
 
+func TestOpenAttachRejectsContextCanceledDuringUpgrade(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	duplex := &testDuplex{}
+	deps := validAttachDependencies(validSocketInfo(), duplex)
+	statCalls := 0
+	deps.statSocket = func(string) (socketInfo, error) {
+		statCalls++
+		if statCalls == 2 {
+			cancel()
+		}
+		return validSocketInfo(), nil
+	}
+	_, err := openAttach(ctx, AttachRequest{ContainerID: testContainerID, Stdout: true}, deps)
+	if err == nil || !strings.Contains(err.Error(), "context ended during upgrade") || !duplex.closed {
+		t.Fatalf("canceled upgrade = %v, closed=%v", err, duplex.closed)
+	}
+}
+
 func TestAttachStreamEnforcesInputAndFramingContract(t *testing.T) {
 	duplex := &testDuplex{}
 	stream := &AttachStream{stream: duplex, stdin: false, tty: true}
@@ -145,9 +174,12 @@ func TestAttachStreamEnforcesInputAndFramingContract(t *testing.T) {
 	if stream.Multiplexed() {
 		t.Fatal("TTY stream reported multiplexed framing")
 	}
+	if err := stream.CloseWrite(); !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatalf("CloseWrite() error = %v", err)
+	}
 }
 
-func successfulAttachResult(stream io.ReadWriteCloser) attachOperationResult {
+func successfulAttachResult(stream attachDuplex) attachOperationResult {
 	return attachOperationResult{
 		StatusCode: http.StatusSwitchingProtocols,
 		Header: http.Header{
@@ -160,7 +192,7 @@ func successfulAttachResult(stream io.ReadWriteCloser) attachOperationResult {
 	}
 }
 
-func validAttachDependencies(socket socketInfo, stream io.ReadWriteCloser) attachDependencies {
+func validAttachDependencies(socket socketInfo, stream attachDuplex) attachDependencies {
 	return attachDependencies{
 		check:      func(context.Context) (Result, error) { return Result{socket: socket}, nil },
 		statSocket: func(string) (socketInfo, error) { return socket, nil },

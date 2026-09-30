@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -32,6 +33,7 @@ func performDockerAttach(ctx context.Context, socketPath string, request AttachR
 	requestCtx, cancelRequest := context.WithCancel(ctx)
 	handshakeTimer := time.AfterFunc(attachHandshakeTimeout, cancelRequest)
 	peerUID := ^uint32(0)
+	var attachConn *net.UnixConn
 	transport := &http.Transport{
 		DisableCompression:     true,
 		DisableKeepAlives:      true,
@@ -51,6 +53,16 @@ func performDockerAttach(ctx context.Context, socketPath string, request AttachR
 				_ = conn.Close()
 				return nil, fmt.Errorf("Docker Desktop WSL socket peer is UID %d, expected %d", uid, expectedPeerUID)
 			}
+			unixConn, ok := conn.(*net.UnixConn)
+			if !ok {
+				_ = conn.Close()
+				return nil, errors.New("Docker Desktop endpoint did not create a Unix connection")
+			}
+			if attachConn != nil {
+				_ = conn.Close()
+				return nil, errors.New("Docker Desktop attach unexpectedly opened more than one connection")
+			}
+			attachConn = unixConn
 			peerUID = uid
 			return conn, nil
 		},
@@ -121,19 +133,57 @@ func performDockerAttach(ctx context.Context, socketPath string, request AttachR
 		transport.CloseIdleConnections()
 		return attachOperationResult{}, errors.New("Docker Desktop attach upgrade did not return a duplex stream")
 	}
-	result.Stream = &attachTransportStream{ReadWriteCloser: stream, transport: transport, cancel: cancelRequest}
+	if attachConn == nil {
+		cancelRequest()
+		_ = response.Body.Close()
+		transport.CloseIdleConnections()
+		return attachOperationResult{}, errors.New("Docker Desktop attach upgrade has no proven Unix connection")
+	}
+	attached := &attachTransportStream{
+		ReadWriteCloser: stream,
+		connection:      attachConn,
+		transport:       transport,
+		cancel:          cancelRequest,
+	}
+	attached.stopContext = context.AfterFunc(ctx, attached.closeForContext)
+	result.Stream = attached
 	return result, nil
 }
 
 type attachTransportStream struct {
 	io.ReadWriteCloser
-	transport *http.Transport
-	cancel    context.CancelFunc
+	connection  *net.UnixConn
+	transport   *http.Transport
+	cancel      context.CancelFunc
+	stopContext func() bool
+	writeOnce   sync.Once
+	writeErr    error
+	closeOnce   sync.Once
+	closeErr    error
+}
+
+func (s *attachTransportStream) CloseWrite() error {
+	s.writeOnce.Do(func() { s.writeErr = s.connection.CloseWrite() })
+	return s.writeErr
 }
 
 func (s *attachTransportStream) Close() error {
+	if s.stopContext != nil {
+		s.stopContext()
+	}
 	s.cancel()
-	err := s.ReadWriteCloser.Close()
-	s.transport.CloseIdleConnections()
-	return err
+	return s.closeTransport()
+}
+
+func (s *attachTransportStream) closeForContext() {
+	s.cancel()
+	_ = s.closeTransport()
+}
+
+func (s *attachTransportStream) closeTransport() error {
+	s.closeOnce.Do(func() {
+		s.closeErr = s.ReadWriteCloser.Close()
+		s.transport.CloseIdleConnections()
+	})
+	return s.closeErr
 }

@@ -8,6 +8,8 @@ import (
 	"mime"
 	"net/http"
 	"strings"
+	"sync"
+	"sync/atomic"
 )
 
 const attachMediaType = "application/vnd.docker.raw-stream"
@@ -26,9 +28,17 @@ type AttachRequest struct {
 // AttachStream is the context-bound upgraded Docker connection. Non-TTY output
 // is Docker's multiplexed raw-stream framing; TTY output is an unframed stream.
 type AttachStream struct {
-	stream io.ReadWriteCloser
-	stdin  bool
-	tty    bool
+	stream      attachDuplex
+	stdin       bool
+	tty         bool
+	stdinClosed atomic.Bool
+	closeOnce   sync.Once
+	closeErr    error
+}
+
+type attachDuplex interface {
+	io.ReadWriteCloser
+	CloseWrite() error
 }
 
 func (s *AttachStream) Read(p []byte) (int, error) {
@@ -39,17 +49,31 @@ func (s *AttachStream) Read(p []byte) (int, error) {
 }
 
 func (s *AttachStream) Write(p []byte) (int, error) {
-	if s == nil || s.stream == nil || !s.stdin {
+	if s == nil || s.stream == nil || !s.stdin || s.stdinClosed.Load() {
 		return 0, io.ErrClosedPipe
 	}
 	return s.stream.Write(p)
+}
+
+// CloseWrite sends EOF to container stdin while keeping stdout/stderr open.
+// It is idempotent and unavailable when stdin was not requested.
+func (s *AttachStream) CloseWrite() error {
+	if s == nil || s.stream == nil || !s.stdin {
+		return io.ErrClosedPipe
+	}
+	if !s.stdinClosed.CompareAndSwap(false, true) {
+		return nil
+	}
+	return s.stream.CloseWrite()
 }
 
 func (s *AttachStream) Close() error {
 	if s == nil || s.stream == nil {
 		return nil
 	}
-	return s.stream.Close()
+	s.stdinClosed.Store(true)
+	s.closeOnce.Do(func() { s.closeErr = s.stream.Close() })
+	return s.closeErr
 }
 
 func (s *AttachStream) Multiplexed() bool { return s != nil && !s.tty }
@@ -59,7 +83,7 @@ type attachOperationResult struct {
 	Header     http.Header
 	ErrorBody  []byte
 	PeerUID    uint32
-	Stream     io.ReadWriteCloser
+	Stream     attachDuplex
 }
 
 type attachDependencies struct {
@@ -114,6 +138,9 @@ func openAttach(ctx context.Context, request AttachRequest, deps attachDependenc
 	}
 	if !sameSocket(before, after) {
 		return fail(errors.New("Docker Desktop WSL socket changed during attach"))
+	}
+	if err := ctx.Err(); err != nil {
+		return fail(fmt.Errorf("Docker Desktop WSL attach context ended during upgrade: %w", err))
 	}
 	attachPath := "/containers/" + request.ContainerID + "/attach"
 	if operation.StatusCode != http.StatusSwitchingProtocols {
