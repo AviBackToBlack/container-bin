@@ -161,11 +161,15 @@ distribution therefore cannot silently adopt existing state.
 
 ## Project storage boundary
 
-The unexposed `internal/wslproject` classifier accepts an already-selected
-project root only when it is a canonical, existing Linux directory and no path
-component resolves through a symlink. It never accepts Windows drive/UNC
-spelling and never translates a Windows path into a WSL path. Exact Linux case
-and spelling remain the project identity.
+The unexposed `internal/wslproject` selector applies the profile's shared
+project-marker defaults and `nearest`/`outermost` policy, or an exact trusted
+overlay root. It rejects malformed marker names and symlink or special-file
+markers instead of following them. With no marker, the exact working directory
+remains the project-root fallback. It then accepts the selected root only when
+it is a canonical, existing Linux directory and proves that the starting
+working directory remains under the same project mount. It never accepts
+Windows drive/UNC spelling and never translates a Windows path into a WSL path.
+Exact Linux case and spelling remain the project identity.
 
 Its descendant classifier revalidates that project identity for each candidate
 path, rejects lexical escape, symlinks and nested mount crossings, and returns
@@ -222,10 +226,16 @@ replacement detected after a mutating request causes failure but cannot undo an
 operation the proven peer already accepted. Likewise, a client-side timeout
 does not prove the engine abandoned the request. Callers must keep any
 engine-side grace period within the fixed ceiling and must not retry either
-failure blindly. Streaming, attach and hijacked connections require a separate
-process/IO contract and are deliberately not supported by this primitive. It is
-not wired into tool execution yet; real WSL2 + Docker Desktop qualification
-remains mandatory before support.
+failure blindly. A separate proof-bound attach transport now permits only a
+live-stream POST for an exact full container ID. It repeats the complete
+socket/peer proof, fixes the attach query and upgrade headers, bounds the
+pre-upgrade/error phase, and returns a context-bound duplex stream while
+reporting whether Docker multiplexed framing applies. Canceling the parent
+context closes the upgraded connection and unblocks I/O; callers can half-close
+stdin to deliver EOF while continuing to read output. It does not decode that
+framing or implement container creation/start/wait, terminal behavior, resize,
+signals, or exit-code propagation. Nothing is wired into tool execution yet;
+real WSL2 + Docker Desktop qualification remains mandatory before support.
 
 ## Native WSL volume identity and control lifecycle
 
@@ -264,11 +274,13 @@ following:
 1. wire the proof-bound volume primitives into tool-time shared/project
    creation plus `cb state`, `cb gc`, backup and restore; each consumer must
    construct and match the complete distribution/machine/user identity;
-2. wire the implemented project boundary and argument mapper into native tool
-   execution, then complete stdin/TTY and signal semantics;
-3. wire the implemented bounded Docker Desktop control-operation primitive into
-   volume/container lifecycle calls, and add a separately reviewed streaming
-   execution path without accepting ambient endpoint overrides;
+2. wire the implemented project-root selector, project boundary and argument
+   mapper into native tool execution, then complete stdin/TTY and signal
+   semantics;
+3. wire the implemented bounded Docker Desktop control-operation and attach
+   primitives into container lifecycle, then implement multiplexed output,
+   terminal/resize, signal and exit-code semantics without accepting ambient
+   endpoint overrides;
 4. Windows-filesystem and WSL-filesystem project tests plus mixed-invocation
    rejection; and
 5. real WSL2 + Docker Desktop end-to-end qualification before any support claim.

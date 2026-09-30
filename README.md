@@ -160,6 +160,8 @@ Semantics include `command`, `args_prefix`, `path_next`, `path_equals`,
 `default_family` / `default_version` / `default_alias` relationship. Unknown
 keys **fail validation** instead of being silently ignored, and a
 `schema_version` newer than the binary supports fails closed.
+Each `project_markers` entry must be one non-empty path element: separators,
+`.` / `..`, invalid UTF-8, and control characters are rejected at load time.
 Edit the file, then run `cb install` to reconcile shims.
 
 Tool names use lowercase letters, digits, `-`, and `_`. Names that collide

@@ -343,14 +343,16 @@ is not completion.
    - explicit read-only/apply Linux ownership, permission and symlink layout
      preparation plus the fixed-path native install/config lifecycle are
      implemented; ordinary runtime integration remains gated;
-   - Docker Desktop WSL integration proof and the proof-bound, bounded control
-     request primitive are implemented but not yet wired into an enabled
-     frontend; streaming/attach needs a separate contract;
+   - Docker Desktop WSL integration proof, proof-bound bounded control requests,
+     and the separately constrained proof-bound attach transport are implemented
+     but not yet wired into an enabled frontend; multiplexed output, terminal,
+     resize, signal and exit-code semantics remain;
    - namespace-prefixed/labeled WSL volume identity plus proof-bound exact
      inspect/create/remove and namespace discovery are implemented; tool-time
      creation and state/GC/backup/restore command integration remain;
-   - canonical project and descendant storage classification, including
-     symlink/nested-mount rejection, and proof-consuming argument mapping are
+   - profile-aware nearest/outermost/trusted project-root selection, canonical
+     project and descendant storage classification (including symlink and
+     nested-mount rejection), and proof-consuming argument mapping are
      implemented but not yet wired into an enabled frontend;
    - project identity and cross-boundary rejection integration tests;
    - real WSL Docker E2E.

@@ -1,7 +1,8 @@
 // Package wslvolume defines deterministic Docker volume identity for one
 // native WSL2 distribution, machine and user namespace and binds exact
 // inspect/create/remove/discovery operations to the proven Docker Desktop WSL
-// control transport. Tool execution and state-command wiring remain separate.
+// control transport. It can preflight and ensure a stateful profile's complete
+// binding set; container creation and state-command wiring remain separate.
 package wslvolume
 
 import (

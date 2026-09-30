@@ -79,7 +79,7 @@ The minimum delivery gate for a code change is:
 | Enterprise policy | **Foundation and signed registry shipped / image trust remains** | PRs #75 and #84 shipped the machine-owned constraint layer and authenticated registry; image trust remains |
 | Image trust | **Online production and runtime authorization implemented / offline and private-registry work remains** | Add fully pinned offline inputs and an explicit private-registry credential bridge |
 | Plugin/provider architecture | **Intentionally deferred** | Reopen only after at least two real integrations cannot fit the declarative model |
-| WSL2 | **Installer foundation implemented / runtime qualification remaining** | PRs #77 and #83 shipped the fail-closed host boundary and fixed native layout/state identity; explicit read-only/apply filesystem preparation and the fixed-path native install/config/shim lifecycle are available alongside namespace-prefixed/labeled volume identity with proof-bound exact inspect/create/remove/discovery, Docker Desktop integration proof and a bounded control-request primitive, while command/frontend wiring, streaming execution and real WSL qualification remain |
+| WSL2 | **Installer foundation implemented / runtime qualification remaining** | PRs #77 and #83 shipped the fail-closed host boundary and fixed native layout/state identity; explicit read-only/apply filesystem preparation and the fixed-path native install/config/shim lifecycle are available alongside namespace-prefixed/labeled volume identity with proof-bound exact inspect/create/remove/discovery, Docker Desktop integration proof, bounded control requests and a constrained attach transport, while command/frontend wiring, stream/terminal/signal semantics and real WSL qualification remain |
 | Per-project overlays | **Completed in PR #80** | Add-only digest-bound trust model shipped on the merged enterprise-policy foundation |
 | Release SBOM | **Conditionally deferred** | Trigger on shipped third-party/runtime dependencies or concrete compliance/consumer demand |
 | Snyk | **Conditionally deferred** | Trigger only for a real coverage gap plus owner/account/token and triage/outage policy |
@@ -606,10 +606,11 @@ fixed-path policy/registry loading, managed-binary installation and
 registry-derived management/tool-shim reconciliation without enabling tool
 execution. Canonical project storage classification with its proof-consuming
 argument mapper, fail-closed Docker Desktop WSL integration proof and a
-proof-bound bounded Engine API control-request primitive are implemented but not
-yet wired into an enabled frontend. Streaming/attach remains a separate
-process/IO contract. Runtime wiring, argument/process behavior and real WSL
-qualification remain.
+proof-bound bounded Engine API control-request primitive and separate constrained
+attach transport are implemented but not yet wired into an enabled frontend.
+Multiplexed-output decoding, terminal/resize, signal and exit-code semantics
+remain. Runtime wiring, argument/process behavior and real WSL qualification
+remain.
 
 Implementation must define native config/shim location, Docker endpoint,
 project identity, named-volume behavior, file permissions, case sensitivity,
@@ -617,9 +618,12 @@ symlinks, stdin/TTY/signals and mixed-invocation rejection. Windows and WSL do
 not share registry/lock/state identity implicitly, and ContainerBin never guesses
 equivalence between Windows paths and `/mnt/<drive>` paths.
 
-The project classifier preserves exact canonical Linux spelling, rejects every
-symlink component, and accepts only distribution-root-device projects or paths
-below a proven default `/mnt/<drive>` 9p DrvFs/WSL virtiofs mount. It rejects
+The project selector applies the shared profile marker defaults and
+nearest/outermost/trusted-root policy, rejects malformed or symlinked marker
+objects, and preserves the current-directory fallback. The classifier then
+preserves exact canonical Linux spelling, rejects every symlink component, and
+accepts only distribution-root-device projects or paths below a proven default
+`/mnt/<drive>` 9p DrvFs/WSL virtiofs mount. It rejects
 entire-drive roots, custom DrvFs roots, lookalike `/mnt` paths and unqualified
 separate filesystems. Its descendant classifier revalidates the exact project
 mount, rejects symlink and nested-mount escape, and permits missing output paths

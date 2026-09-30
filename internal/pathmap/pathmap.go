@@ -312,15 +312,7 @@ func StatefulWorkspaceDestination(dst, workspaceRoot string) string {
 }
 
 func ProjectMarkersFor(t registry.Tool) []string {
-	if len(t.ProjectMarkers) > 0 {
-		return t.ProjectMarkers
-	}
-	// Backward compatibility for registries created before v0.6, whose
-	// Python sections did not yet declare project_markers explicitly.
-	if t.Provider == "python" {
-		return []string{"pyproject.toml", "requirements.txt", "setup.py", "setup.cfg", ".git"}
-	}
-	return []string{".git"}
+	return registry.ProjectMarkersFor(t)
 }
 
 func FindProjectRoot(start string, markers []string) (string, bool) {

@@ -345,10 +345,11 @@ internal/hostenv       host classification and gated WSL layout       (leaf)
 internal/wslfs         native WSL filesystem ownership/mode preflight
 internal/wslshim       native WSL registry-derived shim preflight/mutation
 internal/wslinstall    native WSL install/config lifecycle orchestrator
-internal/wslproject    native WSL project storage boundary
+internal/wslproject    native WSL project-root selection and storage boundary
 internal/wslpathmap    native WSL project argument mapping
 internal/wsldocker     native WSL Docker Desktop integration proof
-internal/wslvolume     native WSL namespaced volume identity/lifecycle
+internal/wslvolume     native WSL namespaced volume identity/lifecycle and
+                       stateful-tool binding planning
 internal/selfupdate    release selection, staging, verification and replacement
 ```
 
@@ -370,10 +371,10 @@ policy       -> toml
 wslfs       -> hostenv
 wslshim     -> hostenv, registry, wslfs
 wslinstall  -> hostenv, policy, registry, wslfs, wslshim
-wslproject  -> hostenv
+wslproject  -> hostenv, registry
 wslpathmap  -> registry, wslproject
 wsldocker   -> hostenv
-wslvolume   -> hostenv, registry, wsldocker
+wslvolume   -> hostenv, registry, wsldocker, wslproject
 selfupdate  -> mutationlock, registry
 atomicio, dockervol, hostenv, mutationlock, toml -> (leaves)
 ```
@@ -434,9 +435,14 @@ binary at the fixed path, then reconciles the management and registry-derived
 tool symlinks through `internal/wslshim`. It performs no Docker I/O and leaves
 ordinary WSL dispatch gated.
 
-`internal/wslproject` is an unexposed classifier for already-selected native
-WSL project roots. It requires a canonical existing directory with no symlink
-components. Distribution projects must stay on the distribution root device;
+`internal/wslproject` is an unexposed profile-aware selector and classifier for
+native WSL project roots. It applies the registry's nearest/outermost marker
+policy or an exact trusted overlay root, then proves both the selected root and
+the starting working directory. Marker names must be single Linux path elements,
+and symlink or special-file markers fail closed. With no marker it preserves the
+existing working-directory fallback. Every selected root must be a canonical
+existing directory with no symlink components. Distribution projects must stay
+on the distribution root device;
 Windows-filesystem projects must be below a proven default `/mnt/<drive>` 9p
 DrvFs or WSL virtiofs mount. Custom DrvFs roots, entire-drive roots, ambiguous
 `/mnt` paths and Windows spellings fail closed. The package preserves the exact
@@ -451,7 +457,14 @@ stable across the request. The engine must report the exact Linux Docker
 Desktop name/OS, a Microsoft WSL2 kernel and Docker Desktop's address label.
 The probe has fixed time and output bounds. A reachable local or remote Docker
 Engine is deliberately insufficient; later frontend wiring must repeat this
-proof and retain the explicit Unix endpoint for every Docker operation.
+proof and retain the explicit Unix endpoint for every Docker operation. Its
+separate attach transport admits only a live-stream POST for an exact full
+container ID, repeats the complete socket/peer proof, bounds the upgrade and
+error response, and returns a context-bound duplex stream with explicit TTY
+framing metadata and independent stdin half-close. Parent cancellation closes
+the upgraded connection and unblocks I/O. Container lifecycle,
+multiplexed-output decoding, terminal behavior, and signal forwarding remain
+outside that primitive.
 
 `internal/wslvolume` defines the WSL Docker-volume identity and bounded control
 lifecycle. A volume name starts with `cb-<wsl-namespace>-`;
@@ -466,7 +479,10 @@ the response and re-inspects the volume; removal validates exact ownership
 before mutation and verifies absence afterward. Prefix/label filtering remains
 discovery-only: adoption, GC, backup, restore and deletion must match an exact
 identity constructed by this package and its complete labels plus local
-driver/scope.
+driver/scope. The package also preflights an entire stateful profile's
+project/shared binding set, re-proves the exact project root before deriving
+project identities, and ensures each distinct identity only after the complete
+plan validates. Container creation and state-command wiring remain gated.
 
 After the host runtime boundary is enforced, `cb self-update` is dispatched
 before machine policy and registry loading. Release selection therefore remains
