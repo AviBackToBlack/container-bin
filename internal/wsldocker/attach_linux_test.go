@@ -4,6 +4,7 @@ package wsldocker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -109,5 +110,30 @@ func TestPerformDockerAttachBoundsErrorResponse(t *testing.T) {
 	_, err := performDockerAttach(context.Background(), socket, AttachRequest{ContainerID: testContainerID, Stdout: true}, uint32(os.Geteuid()))
 	if err == nil || !strings.Contains(err.Error(), "exceeds") {
 		t.Fatalf("oversized attach error = %v", err)
+	}
+}
+
+func TestPerformDockerAttachRejectsUntrustedPeerBeforeRequest(t *testing.T) {
+	socket := serveUnixHTTP(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("attach request reached an untrusted peer")
+	}))
+	unexpectedUID := uint32(os.Geteuid()) + 1
+	_, err := performDockerAttach(context.Background(), socket, AttachRequest{ContainerID: testContainerID, Stdout: true}, unexpectedUID)
+	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("expected %d", unexpectedUID)) {
+		t.Fatalf("untrusted-peer error = %v", err)
+	}
+}
+
+func TestPerformDockerAttachReportsHandshakeTimeout(t *testing.T) {
+	socket := serveUnixHTTP(t, http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+		<-request.Context().Done()
+	}))
+	_, err := performDockerAttachWithTimeout(
+		context.Background(), socket,
+		AttachRequest{ContainerID: testContainerID, Stdout: true},
+		uint32(os.Geteuid()), 50*time.Millisecond,
+	)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("handshake-timeout error = %v", err)
 	}
 }

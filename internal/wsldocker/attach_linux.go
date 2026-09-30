@@ -30,17 +30,24 @@ func OpenAttach(ctx context.Context, request AttachRequest) (*AttachStream, erro
 }
 
 func performDockerAttach(ctx context.Context, socketPath string, request AttachRequest, expectedPeerUID uint32) (attachOperationResult, error) {
+	return performDockerAttachWithTimeout(ctx, socketPath, request, expectedPeerUID, attachHandshakeTimeout)
+}
+
+func performDockerAttachWithTimeout(ctx context.Context, socketPath string, request AttachRequest, expectedPeerUID uint32, handshakeTimeout time.Duration) (attachOperationResult, error) {
+	if handshakeTimeout <= 0 {
+		return attachOperationResult{}, errors.New("Docker Desktop attach handshake timeout must be positive")
+	}
 	requestCtx, cancelRequest := context.WithCancel(ctx)
-	handshakeTimer := time.AfterFunc(attachHandshakeTimeout, cancelRequest)
+	handshakeTimer := time.AfterFunc(handshakeTimeout, cancelRequest)
 	peerUID := ^uint32(0)
 	var attachConn *net.UnixConn
 	transport := &http.Transport{
 		DisableCompression:     true,
 		DisableKeepAlives:      true,
 		MaxResponseHeaderBytes: 16 << 10,
-		ResponseHeaderTimeout:  attachHandshakeTimeout,
+		ResponseHeaderTimeout:  handshakeTimeout,
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			conn, err := (&net.Dialer{Timeout: attachHandshakeTimeout}).DialContext(ctx, "unix", socketPath)
+			conn, err := (&net.Dialer{Timeout: handshakeTimeout}).DialContext(ctx, "unix", socketPath)
 			if err != nil {
 				return nil, err
 			}
@@ -93,14 +100,18 @@ func performDockerAttach(ctx context.Context, socketPath string, request AttachR
 	httpRequest.Header.Set("Upgrade", "tcp")
 	response, err := client.Do(httpRequest)
 	if err != nil {
-		handshakeTimer.Stop()
+		timerStopped := handshakeTimer.Stop()
+		requestErr := requestCtx.Err()
 		cancelRequest()
 		transport.CloseIdleConnections()
 		if ctx.Err() != nil {
 			return attachOperationResult{}, fmt.Errorf("attach Docker Desktop container through %s: %w", DockerHost, ctx.Err())
 		}
-		if requestCtx.Err() != nil {
-			return attachOperationResult{}, fmt.Errorf("attach Docker Desktop container through %s: %w", DockerHost, requestCtx.Err())
+		if !timerStopped || errors.Is(err, context.DeadlineExceeded) {
+			return attachOperationResult{}, fmt.Errorf("attach Docker Desktop container through %s: %w", DockerHost, context.DeadlineExceeded)
+		}
+		if requestErr != nil {
+			return attachOperationResult{}, fmt.Errorf("attach Docker Desktop container through %s: %w", DockerHost, requestErr)
 		}
 		return attachOperationResult{}, fmt.Errorf("attach Docker Desktop container through %s: %w", DockerHost, err)
 	}
@@ -112,6 +123,12 @@ func performDockerAttach(ctx context.Context, socketPath string, request AttachR
 		defer response.Body.Close()
 		raw, err := io.ReadAll(io.LimitReader(response.Body, maxOperationOutput+1))
 		if err != nil {
+			if ctx.Err() != nil {
+				return attachOperationResult{}, fmt.Errorf("read Docker Desktop attach error response: %w", ctx.Err())
+			}
+			if requestCtx.Err() != nil {
+				return attachOperationResult{}, fmt.Errorf("read Docker Desktop attach error response: %w", context.DeadlineExceeded)
+			}
 			return attachOperationResult{}, fmt.Errorf("read Docker Desktop attach error response: %w", err)
 		}
 		if len(raw) > maxOperationOutput {
