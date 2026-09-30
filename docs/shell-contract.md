@@ -120,18 +120,17 @@ and must not be confused with the passthrough above.
 
 ## 5. TTY detection
 
-`interactiveTerminal()` (`internal/dockerrun/dockerrun.go`) is the only TTY-decision function in
-cb:
+`terminal.Interactive()` (`internal/terminal/terminal.go`) is the only Docker
+TTY-allocation decision in cb:
 
 ```go
-// interactiveTerminal is intentionally conservative: Docker gets a TTY only
-// when both stdin and stdout are character devices. Pipes/redirection and
-// process-captured output remain plain -i, preserving automation semantics.
-func interactiveTerminal() bool {
-	return interactiveTerminalFor(os.Stdin, os.Stdout)
+// Interactive reports whether both stdin and stdout are character devices.
+// Any stat failure or redirected stream returns false.
+func Interactive() bool {
+	return interactiveFor(os.Stdin, os.Stdout)
 }
 
-func interactiveTerminalFor(stdin, stdout fileStatter) bool {
+func interactiveFor(stdin, stdout fileStatter) bool {
 	in, err := stdin.Stat()
 	if err != nil || in.Mode()&os.ModeCharDevice == 0 {
 		return false
@@ -141,11 +140,12 @@ func interactiveTerminalFor(stdin, stdout fileStatter) bool {
 }
 ```
 
-A search of the repository for any other TTY, terminal, or console capability
-decision finds only `interactiveTerminal`; no color-forcing, terminal capability
-negotiation, or alternate buffer control exists. `runTool` adds `docker run -t`
-only when this function returns true (`internal/dockerrun/dockerrun.go`, `RunTool`) and uses plain `-i`
-otherwise.
+For Docker container TTY allocation, no color-forcing, terminal capability
+negotiation, or alternate buffer control exists. `RunTool` adds `docker run -t`
+only when `terminal.Interactive()` returns true
+(`internal/dockerrun/dockerrun.go`) and uses plain `-i` otherwise.
+`stdinInteractive()` in `main.go` is separate: it gates an interactive trust
+prompt and does not influence Docker stream or TTY behavior.
 
 ## 6. Current working directory
 
@@ -262,9 +262,10 @@ checked in the current codebase.
   group already does.** cb does not translate `SIGTERM`/`SIGKILL` semantics or
   forward any signal to `docker run`; the only `signal.Notify` call is the
   `os.Interrupt` handler in `withMutationLock`.
-- **No TTY color-forcing or terminal capability negotiation.** `interactiveTerminal`
-  is the sole TTY decision; there is no `SetConsoleMode`, `ENABLE_VIRTUAL_TERMINAL_PROCESSING`,
-  or capability negotiation code in the repository.
+- **No TTY color-forcing or terminal capability negotiation.**
+  `terminal.Interactive()` is the sole Docker TTY-allocation decision; there is
+  no `SetConsoleMode`, `ENABLE_VIRTUAL_TERMINAL_PROCESSING`, or capability
+  negotiation code in the repository.
 - **No locale or codepage translation** between the Windows console and the
   Linux container. Streams are passed byte-for-byte.
 - **No Win32 console or process-control API calls.** A search for `SetConsoleMode`,
