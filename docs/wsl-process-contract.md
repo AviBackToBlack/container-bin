@@ -52,6 +52,13 @@ unknown stream identifiers, truncated frames, malformed reserved bytes, and
 unsafe daemon-error payloads fail closed. This primitive does not enable the
 frontend or change the existing Docker CLI path.
 
+The same proof-bound path has an explicit container-TTY resize operation. It
+accepts only an exact full container ID and positive unsigned 16-bit height and
+width values, sends them to Docker's fixed resize endpoint, and accepts only an
+HTTP 200 response. It does not inspect the caller's terminal or subscribe to
+resize events; later frontend wiring must supply dimensions from a proven TTY
+and invoke the operation for each accepted resize event.
+
 `docker run` always receives `-i`. It additionally receives `-t` only when both
 stdin and stdout report character-device mode; either redirection, either stat
 failure, or a non-character stream keeps the invocation non-TTY. Stderr does
