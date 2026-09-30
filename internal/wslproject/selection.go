@@ -7,8 +7,6 @@ import (
 	"os"
 	"path"
 	"strings"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/AviBackToBlack/container-bin/internal/registry"
 )
@@ -59,7 +57,7 @@ func selectForTool(start string, tool registry.Tool, d selectionDependencies) (P
 	} else {
 		markers := registry.ProjectMarkersFor(tool)
 		for _, marker := range markers {
-			if err := validateMarker(marker); err != nil {
+			if err := registry.ValidateProjectMarker(marker); err != nil {
 				return Project{}, false, fmt.Errorf("invalid native WSL project marker %q: %w", marker, err)
 			}
 		}
@@ -112,18 +110,6 @@ func findProjectRoot(start string, markers []string, outermost bool, lstat func(
 		}
 	}
 	return selected, selected != "", nil
-}
-
-func validateMarker(marker string) error {
-	if marker == "" || !utf8.ValidString(marker) || marker == "." || marker == ".." || strings.ContainsAny(marker, `/\`) {
-		return errors.New("marker must be one non-empty Linux path element")
-	}
-	for _, char := range marker {
-		if unicode.IsControl(char) {
-			return errors.New("marker contains a control character")
-		}
-	}
-	return nil
 }
 
 func pathWithin(root, candidate string) bool {

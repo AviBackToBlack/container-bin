@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/AviBackToBlack/container-bin/internal/toml"
 )
@@ -67,6 +69,21 @@ func ProjectMarkersFor(t Tool) []string {
 	return []string{".git"}
 }
 
+// ValidateProjectMarker requires one literal path element so every project-root
+// consumer interprets registry markers identically and cannot traverse outside
+// the directory it is inspecting.
+func ValidateProjectMarker(marker string) error {
+	if marker == "" || !utf8.ValidString(marker) || marker == "." || marker == ".." || strings.ContainsAny(marker, `/\`) {
+		return errors.New("marker must be one non-empty path element")
+	}
+	for _, char := range marker {
+		if unicode.IsControl(char) {
+			return errors.New("marker contains a control character")
+		}
+	}
+	return nil
+}
+
 // MaxSchemaVersion is the newest registry schema this build can parse.
 // Diagnostics and parsing must share this value so a registry accepted at
 // startup is not subsequently reported as unsupported by cb doctor.
@@ -90,7 +107,7 @@ schema_version = 2
 # path_last_if_any = ["-i"]  => path_last only applies if one of these argv exists
 # env_prefixes / env_names   => explicitly pass selected host environment variables
 # env_set                    => literal NAME=VALUE entries injected into the container
-# project_markers            => files/dirs used to find this tool's project root
+# project_markers            => single path-element files/dirs used to find this tool's project root
 # project_root_mode          => "nearest" (default) or "outermost" matching marker
 # state_group                => namespace shared by related stateful shims
 # project_volumes            => ["name:/container/path"] scoped by project root
@@ -611,6 +628,11 @@ func ParseTOML(s string) (Registry, error) {
 			v, err := toml.ParseStringArray(value)
 			if err != nil {
 				return reg, fmt.Errorf("line %d project_markers: %w", lineNo, err)
+			}
+			for _, marker := range v {
+				if err := ValidateProjectMarker(marker); err != nil {
+					return reg, fmt.Errorf("line %d project_markers entry %q: %w", lineNo, marker, err)
+				}
 			}
 			t.ProjectMarkers = v
 		case "project_root_mode":

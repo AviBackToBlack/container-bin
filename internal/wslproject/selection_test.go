@@ -90,6 +90,23 @@ func TestSelectForToolRequiresWorkingDirectoryBoundaryProof(t *testing.T) {
 	}
 }
 
+func TestSelectForToolRejectsIncompleteDependenciesAndClassificationFailure(t *testing.T) {
+	start := "/home/alice/project"
+	deps := selectionTestDependencies(start, nil)
+	deps.classify = nil
+	if _, _, err := selectForTool(start, registry.Tool{}, deps); err == nil || !strings.Contains(err.Error(), "dependencies are incomplete") {
+		t.Fatalf("incomplete-dependencies error = %v", err)
+	}
+
+	deps = selectionTestDependencies(start, nil)
+	deps.classify = func(string) (Project, error) {
+		return Project{}, errors.New("canonical root proof failed")
+	}
+	if _, _, err := selectForTool(start, registry.Tool{}, deps); err == nil || !strings.Contains(err.Error(), "classify selected native WSL project root") || !strings.Contains(err.Error(), "canonical root proof failed") {
+		t.Fatalf("classification error = %v", err)
+	}
+}
+
 func TestSelectForToolRejectsUntrustedMarkerShapesAndObjects(t *testing.T) {
 	start := "/home/alice/project"
 	tests := map[string]struct {
@@ -100,7 +117,7 @@ func TestSelectForToolRejectsUntrustedMarkerShapesAndObjects(t *testing.T) {
 	}{
 		"parent marker": {
 			tool: registry.Tool{ProjectMarkers: []string{"../.git"}},
-			want: "one non-empty Linux path element",
+			want: "one non-empty path element",
 		},
 		"symlink marker": {
 			tool:  registry.Tool{ProjectMarkers: []string{".git"}},
