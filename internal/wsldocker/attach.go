@@ -159,13 +159,8 @@ func openAttach(ctx context.Context, request AttachRequest, deps attachDependenc
 }
 
 func validateAttachRequest(request AttachRequest) error {
-	if len(request.ContainerID) != 64 {
-		return errors.New("Docker Desktop WSL attach requires a full 64-hex container ID")
-	}
-	for _, char := range request.ContainerID {
-		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
-			return errors.New("Docker Desktop WSL attach requires a lowercase 64-hex container ID")
-		}
+	if err := validateContainerID(request.ContainerID); err != nil {
+		return fmt.Errorf("Docker Desktop WSL attach: %w", err)
 	}
 	if !request.Stdin && !request.Stdout && !request.Stderr {
 		return errors.New("Docker Desktop WSL attach requires at least one stdio stream")
