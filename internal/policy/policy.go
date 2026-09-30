@@ -26,13 +26,14 @@ import (
 )
 
 const (
-	MaxSchemaVersion             = 3
+	MaxSchemaVersion             = 4
 	ImageTrustVerifierCosign     = "cosign"
 	registrySignatureVersion     = 1
 	registrySignatureAlgorithm   = "ed25519"
 	maxRegistrySignatureFileSize = 16 << 10
 	maxCosignVerifierSize        = 256 << 20
 	maxImageTrustPublicKeySize   = 1 << 20
+	maxImageTrustTrustedRootSize = 4 << 20
 )
 
 type ImageTrustMechanism string
@@ -120,6 +121,7 @@ type Policy struct {
 	registrySigningKeys      map[string]registrySigningKey
 	revokedRegistryKeyIDs    map[string]bool
 	cosignVerifier           FilePin
+	cosignTrustedRoot        FilePin
 	imageTrustRules          []ImageTrustRule
 }
 
@@ -146,8 +148,8 @@ func (p Policy) Summary() string {
 	if p.ExpiresAt != nil {
 		expires = p.ExpiresAt.UTC().Format(time.RFC3339)
 	}
-	return fmt.Sprintf("managed schema=%d require_lock=%t allow_local_images=%t allowed_repositories=%d require_registry_signature=%t registry_trusted_keys=%d registry_revoked_keys=%d image_trust_rules=%d cosign_pinned=%t expires=%s fingerprint=sha256:%s source=%s",
-		p.SchemaVersion, p.RequireLock, p.AllowLocalImages, len(p.AllowedRepositories), p.RequireRegistrySignature, len(p.registrySigningKeys), len(p.revokedRegistryKeyIDs), len(p.imageTrustRules), p.cosignVerifier.Path != "", expires, p.Fingerprint, p.Path)
+	return fmt.Sprintf("managed schema=%d require_lock=%t allow_local_images=%t allowed_repositories=%d require_registry_signature=%t registry_trusted_keys=%d registry_revoked_keys=%d image_trust_rules=%d cosign_pinned=%t cosign_trusted_root_pinned=%t expires=%s fingerprint=sha256:%s source=%s",
+		p.SchemaVersion, p.RequireLock, p.AllowLocalImages, len(p.AllowedRepositories), p.RequireRegistrySignature, len(p.registrySigningKeys), len(p.revokedRegistryKeyIDs), len(p.imageTrustRules), p.cosignVerifier.Path != "", p.cosignTrustedRoot.Path != "", expires, p.Fingerprint, p.Path)
 }
 
 // CosignVerifier returns the administrator-pinned verifier configuration.
@@ -186,6 +188,17 @@ func (p Policy) AuthenticateImageTrustPublicKey(ref string) (FileSnapshot, error
 		return FileSnapshot{}, policyError("image_trust_verifier_invalid", "image %q uses %s trust and has no public key", ref, rule.Mechanism)
 	}
 	return authenticatePinnedFile(rule.PublicKey, "image trust public key", maxImageTrustPublicKeySize)
+}
+
+// AuthenticateImageTrustTrustedRoot proves that the administrator-selected
+// Sigstore TrustedRoot is the exact bounded regular non-symlink file pinned by
+// policy. Offline verification must stage only this immutable snapshot and
+// must never allow cosign to discover mutable or ambient trusted material.
+func (p Policy) AuthenticateImageTrustTrustedRoot() (FileSnapshot, error) {
+	if p.cosignTrustedRoot.Path == "" {
+		return FileSnapshot{}, policyError("image_trust_verifier_invalid", "cosign trusted root is not configured by machine policy")
+	}
+	return authenticatePinnedFile(p.cosignTrustedRoot, "cosign trusted root", maxImageTrustTrustedRootSize)
 }
 
 func authenticatePinnedFile(pin FilePin, label string, maxSize int64) (FileSnapshot, error) {
@@ -294,9 +307,10 @@ func loadAt(path string, ownership func(string) error, now time.Time) (Policy, e
 func parse(path string, b []byte, now time.Time) (Policy, error) {
 	p := Policy{Path: path}
 	var registrySigningKeySpecs, revokedRegistryKeyIDs, imageTrustRuleSpecs []string
-	var cosignPath, cosignSHA256 string
+	var cosignPath, cosignSHA256, cosignTrustedRootPath, cosignTrustedRootSHA256 string
 	usedRegistrySignatureFields := false
 	usedImageTrustFields := false
+	usedOfflineImageTrustFields := false
 	seen := map[string]bool{}
 	sc := bufio.NewScanner(strings.NewReader(string(b)))
 	lineNo := 0
@@ -396,6 +410,18 @@ func parse(path string, b []byte, now time.Time) (Policy, error) {
 				cosignSHA256 = value
 			}
 			usedImageTrustFields = true
+		case "cosign_trusted_root_path", "cosign_trusted_root_sha256":
+			value, err := toml.ParseQuoted(raw)
+			if err != nil {
+				return Policy{}, policyError("syntax", "line %d %s: %v", lineNo, key, err)
+			}
+			if key == "cosign_trusted_root_path" {
+				cosignTrustedRootPath = value
+			} else {
+				cosignTrustedRootSHA256 = value
+			}
+			usedImageTrustFields = true
+			usedOfflineImageTrustFields = true
 		case "image_trust_rules":
 			startLine := lineNo
 			for strings.HasPrefix(strings.TrimSpace(raw), "[") && !arrayValueComplete(raw) {
@@ -439,6 +465,9 @@ func parse(path string, b []byte, now time.Time) (Policy, error) {
 	}
 	if usedImageTrustFields && p.SchemaVersion < 3 {
 		return Policy{}, policyError("version", "image trust controls require policy_version 3")
+	}
+	if usedOfflineImageTrustFields && p.SchemaVersion < 4 {
+		return Policy{}, policyError("version", "offline image trust controls require policy_version 4")
 	}
 	if !p.RequireLock && len(p.AllowedRepositories) == 0 && !p.RequireRegistrySignature && len(imageTrustRuleSpecs) == 0 {
 		return Policy{}, policyError("syntax", "policy has no authorization controls")
@@ -492,6 +521,23 @@ func parse(path string, b []byte, now time.Time) (Policy, error) {
 			return Policy{}, err
 		}
 		p.cosignVerifier = pin
+	}
+	offlineRules := 0
+	for _, rule := range rules {
+		if rule.NetworkMode == ImageTrustOfflineBundle {
+			offlineRules++
+		}
+	}
+	if offlineRules == 0 {
+		if cosignTrustedRootPath != "" || cosignTrustedRootSHA256 != "" {
+			return Policy{}, policyError("syntax", "cosign_trusted_root_path and cosign_trusted_root_sha256 require at least one offline-bundle image trust rule")
+		}
+	} else if p.SchemaVersion >= 4 {
+		pin, err := parseFilePin("cosign trusted root", cosignTrustedRootPath, cosignTrustedRootSHA256)
+		if err != nil {
+			return Policy{}, err
+		}
+		p.cosignTrustedRoot = pin
 	}
 	p.imageTrustRules = rules
 	sum := sha256.Sum256(b)
@@ -979,8 +1025,11 @@ func (p Policy) authorizeRuntimeImageTrust(configured, resolved string, rule Ima
 	if evidence.Mechanism != rule.Mechanism {
 		return fail("signature mechanism changed")
 	}
-	if rule.NetworkMode != ImageTrustOnline {
+	if rule.NetworkMode != ImageTrustOnline && rule.NetworkMode != ImageTrustOfflineBundle {
 		return fail("current network mode %q has no supported runtime evidence producer", rule.NetworkMode)
+	}
+	if rule.NetworkMode == ImageTrustOfflineBundle && !validSHA256Hex(p.cosignTrustedRoot.SHA256) {
+		return fail("offline trusted-root identity is unavailable")
 	}
 	if evidence.Verifier != ImageTrustVerifierCosign || evidence.VerifierSHA256 != p.cosignVerifier.SHA256 {
 		return fail("verifier identity changed")

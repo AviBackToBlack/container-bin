@@ -231,6 +231,7 @@ lockfile-only operations remain separate.
 
 Policy schema 3 adds a canonical repository-bound image-trust rule set plus
 absolute SHA-256 pins for an external cosign verifier and any public-key files.
+Schema 4 additionally pins the exact Sigstore TrustedRoot used by offline rules.
 Rule lookup reuses Docker Hub normalization and selects the most-specific
 repository boundary. The policy layer can authenticate the exact configured
 cosign file as a bounded regular non-symlink file with the pinned digest, but
@@ -238,18 +239,18 @@ does not invoke external code. Authentication yields an immutable byte snapshot,
 not a path that could be replaced between checking and execution.
 
 `internal/imagetrust` owns the invocation boundary. It authenticates and stages
-only immutable verifier/key snapshots in a protected current-user directory,
+only immutable verifier/key/trusted-root snapshots in a protected current-user directory,
 uses bounded two-minute child processes with a minimal environment, and asks
 the staged verifier to download signature bundles for one exact canonical
 `repository@sha256` value. Each bounded bundle is privately staged and passed
 back to the same verifier for local verification against the exact digest,
 `https://sigstore.dev/cosign/sign/v1` predicate, and configured identity/key;
 only those authenticated bundle bytes can become evidence. Staged material is
-re-hashed after every use. Only online rules are accepted in this slice.
-`offline-bundle` fails before process execution until
-policy can pin the complete trusted-root material needed to guarantee a truly
-network-independent verification; inherited registry credentials are also not
-passed to the verifier yet.
+re-hashed after every use. Offline rules additionally require both cosign
+offline mode and the exact privately staged TrustedRoot, preventing missing
+bundle proof from falling back to transparency-log or TUF access.
+Inherited registry credentials are not passed to the verifier; private
+registries still require a separate explicit credential bridge.
 
 `cb lock` and `cb update` now invoke this boundary after exact digest resolution
 for every policy-covered repository. Evidence production requires exactly one

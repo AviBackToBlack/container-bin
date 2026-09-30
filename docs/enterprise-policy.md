@@ -206,7 +206,7 @@ Policy summaries report whether registry signatures are required plus trusted
 and revoked key counts. They never print public-key material or signature
 contents.
 
-## Schema 3 — repository-bound image trust policy
+## Schema 3/4 — repository-bound image trust policy
 
 Schema 3 retains every earlier control and adds the fail-closed policy contract
 for Sigstore/cosign image verification. ContainerBin can authenticate the exact
@@ -221,6 +221,10 @@ digest must still match the lock, and its policy fingerprint, mechanism,
 signer/key identity, issuer and verifier hash must exactly match current machine
 policy. Missing or stale evidence is rejected with
 `policy.image_trust_unverified` before Docker execution.
+
+Schema 4 adds the complete pinned trusted-root input required by
+`offline-bundle` rules. Existing schema-3 offline rules remain parseable but
+fail closed before verifier execution, preserving their prior behavior.
 
 The repository includes an opt-in Windows qualification test for this producer
 path. Build it with the `image_trust_e2e` tag and set the five
@@ -252,12 +256,14 @@ $env:CONTAINERBIN_IMAGE_TRUST_E2E_SUBJECT = "exact-certificate-identity"
 ```
 
 ```toml
-policy_version = 3
+policy_version = 4
 require_lock = true
 allowed_repositories = ["ghcr.io/acme", "registry.example.com/platform"]
 
 cosign_path = "C:\\Program Files\\ContainerBin\\cosign.exe"
 cosign_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+cosign_trusted_root_path = "C:\\ProgramData\\ContainerBin\\sigstore\\trusted-root.json"
+cosign_trusted_root_sha256 = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
 image_trust_rules = [
   "ghcr.io/acme|keyless|https://token.actions.githubusercontent.com|https://github.com/acme/tools/.github/workflows/release.yml@refs/tags/v1.2.3|online",
   "registry.example.com/platform|key|C:\\ProgramData\\ContainerBin\\keys\\platform.pub|abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789|offline-bundle",
@@ -272,7 +278,8 @@ immutable byte snapshot rather than an executable path. The invocation layer
 materializes only that snapshot inside its own protected current-user
 staging directory and executes the staged copy; validating and then executing
 the mutable configured pathname would leave a replacement race. It re-hashes
-the staged verifier and key after execution and treats mutation as failure.
+the staged verifier, key and trusted root after execution and treats mutation
+as failure.
 
 Each rule has five pipe-delimited fields:
 
@@ -289,10 +296,14 @@ Each rule has five pipe-delimited fields:
   just as strictly as the cosign executable.
 - `NETWORK_MODE` is `online` or `offline-bundle`. `online` permits the verifier
   to obtain required Sigstore material from the network. `offline-bundle`
-  requires complete bundled evidence and forbids network fallback. The current
-  internal invocation boundary supports `online` only. It rejects
-  `offline-bundle` before executing cosign because the schema cannot yet pin the
-  complete Sigstore trusted-root material needed to guarantee no network use.
+  requires complete bundled evidence and forbids transparency-log or TUF
+  fallback. To enable an `offline-bundle` rule, use schema 4 and provide both
+  `cosign_trusted_root_path` and
+  `cosign_trusted_root_sha256`. The root is authenticated, privately staged and
+  supplied with `--offline=true`, `--new-bundle-format=true` and
+  `--trusted-root`; an incomplete bundle fails locally. Trusted-root fields
+  without an offline rule are
+  rejected rather than silently ignored.
 
 Online execution receives a deliberately minimal environment and does not
 inherit registry credential/configuration variables. Public-registry
@@ -314,11 +325,13 @@ The complete policy-byte fingerprint already covers verifier pins and every
 trust rule. Lock schema 2 records that fingerprint beside the exact repository,
 digest, verifier hash, signer/key identity, issuer, bundle hash and verification
 time, so any policy change will make later lock evidence stale. Policy
-summaries report only the rule count and whether cosign is pinned; they do not
-print paths, hashes, issuer/subject identities or key material.
+summaries report only the rule count and whether cosign and an offline trusted
+root are pinned; they do not print paths, hashes, issuer/subject identities or
+key material.
 
-Schema 1 and schema 2 remain supported unchanged. Image-trust fields in an
-older schema are rejected, and versions newer than 3 fail closed.
+Schemas 1-3 remain supported unchanged. Image-trust fields in an older schema
+are rejected, offline trusted-root controls require schema 4, and versions
+newer than 4 fail closed.
 
 The additional stable foundation errors are:
 

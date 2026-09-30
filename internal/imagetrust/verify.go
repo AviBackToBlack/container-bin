@@ -27,6 +27,7 @@ const (
 	stagingPrefix       = ".container-bin-image-trust-"
 	verifierName        = "cosign.exe"
 	publicKeyName       = "policy-key.pub"
+	trustedRootName     = "trusted-root.json"
 	verificationTimeout = 2 * time.Minute
 	maxVerifierOutput   = 1 << 20
 	maxSignatureBundles = 32
@@ -92,15 +93,16 @@ type verificationRequest struct {
 	rule              policy.ImageTrustRule
 	verifier          authenticatedSnapshot
 	key               authenticatedSnapshot
+	trustedRoot       authenticatedSnapshot
 	policyFingerprint string
 }
 
 // Verify authenticates and snapshots the administrator-selected verifier and
 // key material, executes only protected staged copies, and independently
 // validates cosign's bounded JSON result against the exact resolved digest.
-// It currently supports online rules only. Offline rules fail before staging
-// or process execution until policy can pin the complete trusted-root material
-// required to make cosign's offline claim real rather than cosmetic.
+// Offline rules additionally authenticate and stage the administrator-pinned
+// Sigstore TrustedRoot, then require cosign's offline mode for every local
+// bundle verification so missing proof cannot fall back to network lookup.
 func Verify(ctx context.Context, machinePolicy policy.Policy, configured, resolved string) (Result, error) {
 	return (verifier{
 		runner:      commandRunner{},
@@ -128,6 +130,13 @@ func (v verifier) Verify(ctx context.Context, machinePolicy policy.Policy, confi
 			return Result{}, err
 		}
 	}
+	var trustedRootSnapshot policy.FileSnapshot
+	if rule.NetworkMode == policy.ImageTrustOfflineBundle {
+		trustedRootSnapshot, err = machinePolicy.AuthenticateImageTrustTrustedRoot()
+		if err != nil {
+			return Result{}, err
+		}
+	}
 	return v.verifyAuthenticated(ctx, verificationRequest{
 		resolved:          verificationTarget,
 		repository:        repository,
@@ -135,6 +144,7 @@ func (v verifier) Verify(ctx context.Context, machinePolicy policy.Policy, confi
 		rule:              rule,
 		verifier:          snapshotFromPolicy(verifierSnapshot),
 		key:               snapshotFromPolicy(keySnapshot),
+		trustedRoot:       snapshotFromPolicy(trustedRootSnapshot),
 		policyFingerprint: machinePolicy.Fingerprint,
 	})
 }
@@ -144,8 +154,11 @@ func snapshotFromPolicy(snapshot policy.FileSnapshot) authenticatedSnapshot {
 }
 
 func (v verifier) verifyAuthenticated(ctx context.Context, request verificationRequest) (result Result, err error) {
-	if request.rule.NetworkMode != policy.ImageTrustOnline {
-		return Result{}, fmt.Errorf("image trust rule for %q requires %s verification, which is not available until machine policy can pin complete offline trusted-root material", request.rule.Repository, request.rule.NetworkMode)
+	if request.rule.NetworkMode != policy.ImageTrustOnline && request.rule.NetworkMode != policy.ImageTrustOfflineBundle {
+		return Result{}, fmt.Errorf("image trust rule for %q has unsupported network mode %q", request.rule.Repository, request.rule.NetworkMode)
+	}
+	if request.rule.NetworkMode == policy.ImageTrustOfflineBundle && request.trustedRoot.Size() == 0 {
+		return Result{}, fmt.Errorf("image trust rule for %q requires an authenticated offline trusted root", request.rule.Repository)
 	}
 
 	stageDir, err := v.createStage()
@@ -164,6 +177,7 @@ func (v verifier) verifyAuthenticated(ctx context.Context, request verificationR
 	}
 	signer, issuer := request.rule.Subject, request.rule.Issuer
 	var keyPath string
+	var trustedRootPath string
 	switch request.rule.Mechanism {
 	case policy.ImageTrustKeyless:
 	case policy.ImageTrustKey:
@@ -175,6 +189,12 @@ func (v verifier) verifyAuthenticated(ctx context.Context, request verificationR
 	default:
 		return Result{}, fmt.Errorf("image trust rule for %q has unsupported mechanism %q", request.rule.Repository, request.rule.Mechanism)
 	}
+	if request.rule.NetworkMode == policy.ImageTrustOfflineBundle {
+		trustedRootPath, err = stageSnapshot(stageDir, trustedRootName, request.trustedRoot, 0o600)
+		if err != nil {
+			return Result{}, err
+		}
+	}
 
 	verifyCtx, cancel := context.WithTimeout(ctx, verificationTimeout)
 	defer cancel()
@@ -182,6 +202,9 @@ func (v verifier) verifyAuthenticated(ctx context.Context, request verificationR
 	stageErr := verifyStagedSnapshot(verifierPath, request.verifier)
 	if keyPath != "" {
 		stageErr = errors.Join(stageErr, verifyStagedSnapshot(keyPath, request.key))
+	}
+	if trustedRootPath != "" {
+		stageErr = errors.Join(stageErr, verifyStagedSnapshot(trustedRootPath, request.trustedRoot))
 	}
 	if stageErr != nil {
 		return Result{}, fmt.Errorf("authenticated image trust material changed during verification: %w", stageErr)
@@ -221,6 +244,9 @@ func (v verifier) verifyAuthenticated(ctx context.Context, request verificationR
 		} else {
 			args = append(args, "--key="+keyPath)
 		}
+		if request.rule.NetworkMode == policy.ImageTrustOfflineBundle {
+			args = append(args, "--offline=true", "--new-bundle-format=true", "--trusted-root="+trustedRootPath)
+		}
 		verifyStdout, verifyStderr, verifyErr := v.runner.Run(verifyCtx, verifierPath, args, stageDir)
 		stageErr = errors.Join(stageErr, verifyStagedSnapshot(bundlePath, authenticatedSnapshot{contents: bundle, digest: bundleDigest}))
 		if len(verifyStdout) > maxVerifierOutput || len(verifyStderr) > maxVerifierOutput {
@@ -239,6 +265,9 @@ func (v verifier) verifyAuthenticated(ctx context.Context, request verificationR
 	stageErr = errors.Join(stageErr, verifyStagedSnapshot(verifierPath, request.verifier))
 	if keyPath != "" {
 		stageErr = errors.Join(stageErr, verifyStagedSnapshot(keyPath, request.key))
+	}
+	if trustedRootPath != "" {
+		stageErr = errors.Join(stageErr, verifyStagedSnapshot(trustedRootPath, request.trustedRoot))
 	}
 	if stageErr != nil {
 		return Result{}, fmt.Errorf("authenticated image trust material changed during verification: %w", stageErr)

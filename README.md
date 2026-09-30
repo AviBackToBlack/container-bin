@@ -727,14 +727,20 @@ signer/administrator-key SHA-256, keyless issuer where applicable, the
 authenticated bundle SHA-256, canonical UTC verification time, verifier
 identity/hash and the complete effective machine-policy fingerprint. Partial,
 duplicate, malformed, cross-repository or local-image evidence is rejected.
-For an online policy-covered repository, `cb lock` and `cb update` resolve the
+For a policy-covered repository, `cb lock` and `cb update` resolve the
 exact digest first, execute only the authenticated staged cosign snapshot,
 download bounded signature bundles for that immutable reference, and locally
 reverify each bundle against the exact digest, cosign predicate, and configured
 identity/key. The lockfile is promoted to schema 2 only when exactly one bundle
 passes. Zero or multiple matching bundles, verifier failure, malformed output,
 or unavailable policy material aborts the refresh without a digest-only
-fallback. Project-scoped refresh preserves unrelated schema-2 evidence. Runtime
+fallback. Project-scoped refresh preserves unrelated schema-2 evidence.
+Schema-4 `offline-bundle` rules additionally require a pinned Sigstore
+TrustedRoot. ContainerBin authenticates and privately stages those exact bytes,
+then invokes cosign with offline/new-bundle mode and `--trusted-root`, so missing
+transparency proof cannot fall back to Rekor or TUF. Registry access is still
+required to download the image signature bundle; private-registry credentials
+are not inherited and require the separate explicit credential bridge. Runtime
 executes a policy-covered digest only while its schema-2 evidence matches the
 current canonical repository, exact digest, signature mechanism/network mode,
 verifier, signer/key identity, issuer and complete machine-policy fingerprint.
@@ -783,11 +789,12 @@ and overlap rotation. Signed registries are read-only to `cb`; updates must be
 provisioned with a matching signature by the administrator. Policy schema 3 can
 add repository-bound image-signature requirements. `cb lock` and `cb update`
 now authenticate and privately stage the pinned verifier and key bytes, run
-online verification against the resolved exact repository digest, independently
+verification against the resolved exact repository digest, independently
 validate bounded JSON results, record the result as schema-2 evidence, and
 authorize runtime use only while that evidence remains fresh against the exact
-digest and current effective policy. Offline rules and private-registry
-credential bridging remain fail closed.
+digest and current effective policy. Policy schema 4 adds pinned Sigstore
+TrustedRoot bytes for fail-closed offline-bundle verification. Private-registry
+credential bridging remains fail closed.
 Lower-precedence registry or command-line choices cannot weaken policy. See
 [enterprise machine policy](docs/enterprise-policy.md) for the schema,
 ownership rules, normalization behavior and stable diagnostic codes.
