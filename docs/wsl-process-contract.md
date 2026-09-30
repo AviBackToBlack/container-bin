@@ -44,6 +44,14 @@ The Docker CLI receives stdin, stdout and stderr directly. ContainerBin adds no
 buffering, encoding conversion or line editing. The child also receives the
 current process environment unchanged.
 
+The unexposed native Engine API path has a separate strict decoder for Docker's
+non-TTY raw-stream framing. It accepts complete stdout and stderr frames with
+zeroed reserved header bytes, routes their payloads without frame-sized
+allocation, and treats a clean EOF as valid only between frames. Stdin or
+unknown stream identifiers, truncated frames, malformed reserved bytes, and
+unsafe daemon-error payloads fail closed. This primitive does not enable the
+frontend or change the existing Docker CLI path.
+
 `docker run` always receives `-i`. It additionally receives `-t` only when both
 stdin and stdout report character-device mode; either redirection, either stat
 failure, or a non-character stream keeps the invocation non-TTY. Stderr does
