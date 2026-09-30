@@ -4,6 +4,7 @@ package wsldocker
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -103,6 +104,47 @@ func TestPerformDockerRequestAllowsCallerBoundLongPoll(t *testing.T) {
 	}
 	if result.StatusCode != http.StatusOK || string(result.Raw) != `{"StatusCode":0}` {
 		t.Fatalf("performDockerRequest() = %+v", result)
+	}
+}
+
+func TestPerformDockerRequestCancelsBlockedLongPollWithCaller(t *testing.T) {
+	started := make(chan struct{})
+	canceled := make(chan struct{})
+	socket := serveUnixHTTP(t, http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+		close(started)
+		<-request.Context().Done()
+		close(canceled)
+	}))
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	result := make(chan error, 1)
+	go func() {
+		_, err := performDockerRequest(ctx, socket, Request{
+			Method: http.MethodPost,
+			Path:   "/containers/" + testContainerID + "/wait",
+			Query:  url.Values{"condition": {"not-running"}},
+		}, 0, maxContainerWaitOutput, uint32(os.Geteuid()))
+		result <- err
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("long-poll request did not reach the server")
+	}
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("performDockerRequest() error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("blocked long poll ignored caller cancellation")
+	}
+	select {
+	case <-canceled:
+	case <-time.After(time.Second):
+		t.Fatal("server request context was not canceled")
 	}
 }
 
