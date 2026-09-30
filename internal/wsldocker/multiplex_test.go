@@ -121,6 +121,13 @@ func TestCopyMultiplexedOutputHandlesSystemErrors(t *testing.T) {
 			t.Fatalf("error = %v, want io.ErrUnexpectedEOF", err)
 		}
 	})
+
+	t.Run("truncated before payload", func(t *testing.T) {
+		_, err := CopyMultiplexedOutput(io.Discard, io.Discard, bytes.NewReader(rawStreamHeader(rawStreamSystem, 5)))
+		if !errors.Is(err, io.ErrUnexpectedEOF) {
+			t.Fatalf("error = %v, want io.ErrUnexpectedEOF", err)
+		}
+	})
 }
 
 func TestCopyMultiplexedOutputRejectsMissingInputs(t *testing.T) {

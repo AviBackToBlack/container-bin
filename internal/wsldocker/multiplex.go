@@ -101,6 +101,9 @@ func readRawStreamSystemError(source io.Reader, size int64) error {
 	}
 	payload := make([]byte, int(size))
 	if _, err := io.ReadFull(source, payload); err != nil {
+		if errors.Is(err, io.EOF) {
+			err = io.ErrUnexpectedEOF
+		}
 		return fmt.Errorf("read Docker raw-stream system error: %w", err)
 	}
 	message := string(payload)
