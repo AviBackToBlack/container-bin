@@ -227,12 +227,13 @@ Schema 4 adds the complete pinned trusted-root input required by
 fail closed before verifier execution, preserving their prior behavior.
 
 The repository includes an opt-in Windows qualification test for this producer
-path. Build it with the `image_trust_e2e` tag and set the five
+path. Build it with the `image_trust_e2e` tag and set the six
 `CONTAINERBIN_IMAGE_TRUST_E2E*` variables documented by the test. It calls the
 real `Lock` and `Update` entry points against a Linux-container Docker Desktop
 engine, authenticates and privately stages the selected native cosign binary,
-verifies the selected public image, and reloads the resulting schema-2 lockfile
-after each operation. The test synthesizes an isolated policy and registry in
+verifies the selected public image in both online and pinned-root offline mode,
+and reloads the resulting schema-2 lockfile after each operation. The test
+synthesizes isolated policies and registries in
 its temporary directory; the build-tagged policy loader skips only the
 administrator-ownership check and is not compiled into production binaries.
 Normal CI does not claim this qualification because GitHub-hosted Windows
@@ -251,6 +252,7 @@ $env:CONTAINERBIN_IMAGE_TRUST_E2E_COSIGN = "C:\absolute\path\to\cosign.exe"
 $env:CONTAINERBIN_IMAGE_TRUST_E2E_IMAGE = "registry.example.com/team/signed-image:immutable-tag"
 $env:CONTAINERBIN_IMAGE_TRUST_E2E_ISSUER = "https://issuer.example"
 $env:CONTAINERBIN_IMAGE_TRUST_E2E_SUBJECT = "exact-certificate-identity"
+$env:CONTAINERBIN_IMAGE_TRUST_E2E_TRUSTED_ROOT = "C:\absolute\path\to\trusted-root.json"
 & "$env:TEMP\container-bin-image-trust-e2e.test.exe" `
   '-test.v' '-test.run=^TestImageTrustLockAndUpdateWindowsDockerDesktop$'
 ```
