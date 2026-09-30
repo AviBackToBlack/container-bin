@@ -1,0 +1,76 @@
+//go:build linux
+
+package wsldocker
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"strings"
+	"testing"
+)
+
+func TestPerformDockerAttachUsesExactUpgradeAndReturnsDuplexStream(t *testing.T) {
+	socket := serveUnixHTTP(t, http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost || request.URL.Path != "/containers/"+testContainerID+"/attach" {
+			t.Errorf("request = %s %s", request.Method, request.URL.Path)
+			return
+		}
+		query := request.URL.Query()
+		if query.Get("logs") != "0" || query.Get("stream") != "1" || query.Get("stdin") != "true" || query.Get("stdout") != "true" || query.Get("stderr") != "false" {
+			t.Errorf("query = %v", query)
+		}
+		if !headerHasToken(request.Header, "Connection", "upgrade") || request.Header.Get("Upgrade") != "tcp" || request.Header.Get("Accept") != attachMediaType {
+			t.Errorf("headers = %v", request.Header)
+		}
+		connection, readerWriter, err := http.NewResponseController(response).Hijack()
+		if err != nil {
+			t.Errorf("hijack = %v", err)
+			return
+		}
+		defer connection.Close()
+		_, _ = fmt.Fprintf(readerWriter, "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: tcp\r\nContent-Type: %s\r\n\r\nhello", attachMediaType)
+		_ = readerWriter.Flush()
+		input := make([]byte, 4)
+		if _, err := io.ReadFull(readerWriter, input); err != nil || string(input) != "ping" {
+			t.Errorf("stdin = %q, %v", input, err)
+			return
+		}
+		_, _ = readerWriter.WriteString("done")
+		_ = readerWriter.Flush()
+	}))
+	result, err := performDockerAttach(context.Background(), socket, AttachRequest{
+		ContainerID: testContainerID, Stdin: true, Stdout: true,
+	}, uint32(os.Geteuid()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer result.Stream.Close()
+	if result.StatusCode != http.StatusSwitchingProtocols || result.PeerUID != uint32(os.Geteuid()) {
+		t.Fatalf("attach result = %+v", result)
+	}
+	output := make([]byte, 5)
+	if _, err := io.ReadFull(result.Stream, output); err != nil || string(output) != "hello" {
+		t.Fatalf("initial output = %q, %v", output, err)
+	}
+	if _, err := result.Stream.Write([]byte("ping")); err != nil {
+		t.Fatal(err)
+	}
+	output = make([]byte, 4)
+	if _, err := io.ReadFull(result.Stream, output); err != nil || string(output) != "done" {
+		t.Fatalf("duplex output = %q, %v", output, err)
+	}
+}
+
+func TestPerformDockerAttachBoundsErrorResponse(t *testing.T) {
+	socket := serveUnixHTTP(t, http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.WriteHeader(http.StatusInternalServerError)
+		_, _ = response.Write([]byte(strings.Repeat("x", maxOperationOutput+1)))
+	}))
+	_, err := performDockerAttach(context.Background(), socket, AttachRequest{ContainerID: testContainerID, Stdout: true}, uint32(os.Geteuid()))
+	if err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("oversized attach error = %v", err)
+	}
+}

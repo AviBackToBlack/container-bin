@@ -222,10 +222,14 @@ replacement detected after a mutating request causes failure but cannot undo an
 operation the proven peer already accepted. Likewise, a client-side timeout
 does not prove the engine abandoned the request. Callers must keep any
 engine-side grace period within the fixed ceiling and must not retry either
-failure blindly. Streaming, attach and hijacked connections require a separate
-process/IO contract and are deliberately not supported by this primitive. It is
-not wired into tool execution yet; real WSL2 + Docker Desktop qualification
-remains mandatory before support.
+failure blindly. A separate proof-bound attach transport now permits only a
+live-stream POST for an exact full container ID. It repeats the complete
+socket/peer proof, fixes the attach query and upgrade headers, bounds the
+pre-upgrade/error phase, and returns a context-bound duplex stream while
+reporting whether Docker multiplexed framing applies. It does not decode that
+framing or implement container creation/start/wait, terminal behavior, resize,
+signals, or exit-code propagation. Nothing is wired into tool execution yet;
+real WSL2 + Docker Desktop qualification remains mandatory before support.
 
 ## Native WSL volume identity and control lifecycle
 
@@ -266,9 +270,10 @@ following:
    construct and match the complete distribution/machine/user identity;
 2. wire the implemented project boundary and argument mapper into native tool
    execution, then complete stdin/TTY and signal semantics;
-3. wire the implemented bounded Docker Desktop control-operation primitive into
-   volume/container lifecycle calls, and add a separately reviewed streaming
-   execution path without accepting ambient endpoint overrides;
+3. wire the implemented bounded Docker Desktop control-operation and attach
+   primitives into container lifecycle, then implement multiplexed output,
+   terminal/resize, signal and exit-code semantics without accepting ambient
+   endpoint overrides;
 4. Windows-filesystem and WSL-filesystem project tests plus mixed-invocation
    rejection; and
 5. real WSL2 + Docker Desktop end-to-end qualification before any support claim.
