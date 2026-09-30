@@ -75,6 +75,15 @@ child process; they do not require Docker.
 
 ## Signals
 
+The unexposed native Engine API path has a proof-bound container-signal
+operation. It accepts one exact full container ID and one explicit numeric Linux
+signal in the `1..64` domain, always supplies Docker's `signal` query parameter
+and accepts only HTTP 204. It never relies on the endpoint's default `SIGKILL`.
+
+This primitive does not choose which host signals to intercept, install signal
+handlers or define cleanup ordering. The enabled frontend must make those
+policies explicit and qualify them end to end before invoking the operation.
+
 The tool-run path installs no signal handler and creates no new process group.
 On native Linux/WSL, the `cb` process and its `docker` child therefore retain
 the operating system's default process-group relationship. ContainerBin does
