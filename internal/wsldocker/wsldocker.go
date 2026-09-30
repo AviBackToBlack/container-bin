@@ -1,7 +1,8 @@
 // Package wsldocker proves that a native WSL2 process is connected to Docker
 // Desktop's supported WSL integration rather than an in-distribution or remote
-// Docker Engine, and provides a proof-bound bounded control-request primitive.
-// It does not enable the WSL frontend by itself.
+// Docker Engine, and provides proof-bound bounded control requests plus one
+// separately constrained container-attach streaming transport. It does not
+// enable the WSL frontend by itself.
 package wsldocker
 
 import (
@@ -47,8 +48,8 @@ type Result struct {
 	socket         socketInfo
 }
 
-// Request is one bounded Docker Engine control-plane request. Streaming,
-// attach and hijacked-connection operations require a separate contract.
+// Request is one bounded Docker Engine control-plane request. OpenAttach owns
+// the separate, narrower hijacked-connection contract.
 type Request struct {
 	Method          string
 	Path            string
