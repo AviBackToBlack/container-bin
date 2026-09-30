@@ -452,7 +452,14 @@ stable across the request. The engine must report the exact Linux Docker
 Desktop name/OS, a Microsoft WSL2 kernel and Docker Desktop's address label.
 The probe has fixed time and output bounds. A reachable local or remote Docker
 Engine is deliberately insufficient; later frontend wiring must repeat this
-proof and retain the explicit Unix endpoint for every Docker operation.
+proof and retain the explicit Unix endpoint for every Docker operation. Its
+separate attach transport admits only a live-stream POST for an exact full
+container ID, repeats the complete socket/peer proof, bounds the upgrade and
+error response, and returns a context-bound duplex stream with explicit TTY
+framing metadata and independent stdin half-close. Parent cancellation closes
+the upgraded connection and unblocks I/O. Container lifecycle,
+multiplexed-output decoding, terminal behavior, and signal forwarding remain
+outside that primitive.
 
 `internal/wslvolume` defines the WSL Docker-volume identity and bounded control
 lifecycle. A volume name starts with `cb-<wsl-namespace>-`;
