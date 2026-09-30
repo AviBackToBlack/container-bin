@@ -1170,6 +1170,33 @@ provider = "stateless"
 	}
 }
 
+func TestProjectMarkersRequireSinglePathElements(t *testing.T) {
+	base := `[tools.x]
+image = "x:1"
+provider = "stateless"
+project_markers = `
+	tests := map[string]string{
+		"empty":             "",
+		"dot":               ".",
+		"parent":            "..",
+		"forward separator": "nested/marker",
+		"back separator":    `nested\marker`,
+		"control character": "marker\nname",
+	}
+	for name, marker := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := ParseTOML(base + toml.Array([]string{marker}) + "\n")
+			if err == nil || !strings.Contains(err.Error(), "project_markers entry") {
+				t.Fatalf("ParseTOML() error = %v", err)
+			}
+		})
+	}
+
+	if _, err := ParseTOML(base + toml.Array([]string{"Cargo.toml", ".git"}) + "\n"); err != nil {
+		t.Fatalf("valid project markers rejected: %v", err)
+	}
+}
+
 func TestCwdModeInvalidRejected(t *testing.T) {
 	_, err := ParseTOML(`[tools.x]
 image = "x:1"

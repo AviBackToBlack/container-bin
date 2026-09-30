@@ -345,7 +345,7 @@ internal/hostenv       host classification and gated WSL layout       (leaf)
 internal/wslfs         native WSL filesystem ownership/mode preflight
 internal/wslshim       native WSL registry-derived shim preflight/mutation
 internal/wslinstall    native WSL install/config lifecycle orchestrator
-internal/wslproject    native WSL project storage boundary
+internal/wslproject    native WSL project-root selection and storage boundary
 internal/wslpathmap    native WSL project argument mapping
 internal/wsldocker     native WSL Docker Desktop integration proof
 internal/wslvolume     native WSL namespaced volume identity/lifecycle and
@@ -371,7 +371,7 @@ policy       -> toml
 wslfs       -> hostenv
 wslshim     -> hostenv, registry, wslfs
 wslinstall  -> hostenv, policy, registry, wslfs, wslshim
-wslproject  -> hostenv
+wslproject  -> hostenv, registry
 wslpathmap  -> registry, wslproject
 wsldocker   -> hostenv
 wslvolume   -> hostenv, registry, wsldocker, wslproject
@@ -435,9 +435,14 @@ binary at the fixed path, then reconciles the management and registry-derived
 tool symlinks through `internal/wslshim`. It performs no Docker I/O and leaves
 ordinary WSL dispatch gated.
 
-`internal/wslproject` is an unexposed classifier for already-selected native
-WSL project roots. It requires a canonical existing directory with no symlink
-components. Distribution projects must stay on the distribution root device;
+`internal/wslproject` is an unexposed profile-aware selector and classifier for
+native WSL project roots. It applies the registry's nearest/outermost marker
+policy or an exact trusted overlay root, then proves both the selected root and
+the starting working directory. Marker names must be single Linux path elements,
+and symlink or special-file markers fail closed. With no marker it preserves the
+existing working-directory fallback. Every selected root must be a canonical
+existing directory with no symlink components. Distribution projects must stay
+on the distribution root device;
 Windows-filesystem projects must be below a proven default `/mnt/<drive>` 9p
 DrvFs or WSL virtiofs mount. Custom DrvFs roots, entire-drive roots, ambiguous
 `/mnt` paths and Windows spellings fail closed. The package preserves the exact

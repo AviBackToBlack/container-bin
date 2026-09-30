@@ -618,9 +618,12 @@ symlinks, stdin/TTY/signals and mixed-invocation rejection. Windows and WSL do
 not share registry/lock/state identity implicitly, and ContainerBin never guesses
 equivalence between Windows paths and `/mnt/<drive>` paths.
 
-The project classifier preserves exact canonical Linux spelling, rejects every
-symlink component, and accepts only distribution-root-device projects or paths
-below a proven default `/mnt/<drive>` 9p DrvFs/WSL virtiofs mount. It rejects
+The project selector applies the shared profile marker defaults and
+nearest/outermost/trusted-root policy, rejects malformed or symlinked marker
+objects, and preserves the current-directory fallback. The classifier then
+preserves exact canonical Linux spelling, rejects every symlink component, and
+accepts only distribution-root-device projects or paths below a proven default
+`/mnt/<drive>` 9p DrvFs/WSL virtiofs mount. It rejects
 entire-drive roots, custom DrvFs roots, lookalike `/mnt` paths and unqualified
 separate filesystems. Its descendant classifier revalidates the exact project
 mount, rejects symlink and nested-mount escape, and permits missing output paths
