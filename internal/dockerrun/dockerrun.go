@@ -21,6 +21,7 @@ import (
 	"github.com/AviBackToBlack/container-bin/internal/pathmap"
 	"github.com/AviBackToBlack/container-bin/internal/policy"
 	"github.com/AviBackToBlack/container-bin/internal/registry"
+	"github.com/AviBackToBlack/container-bin/internal/terminal"
 )
 
 // isolatedRoot is a sentinel project root for cwd_mode = "isolated".
@@ -37,26 +38,6 @@ type runContext struct {
 	workspaceRoot string
 	containerWD   string
 	found         bool
-}
-
-type fileStatter interface {
-	Stat() (os.FileInfo, error)
-}
-
-// interactiveTerminal is intentionally conservative: Docker gets a TTY only
-// when both stdin and stdout are character devices. Pipes/redirection and
-// process-captured output remain plain -i, preserving automation semantics.
-func interactiveTerminal() bool {
-	return interactiveTerminalFor(os.Stdin, os.Stdout)
-}
-
-func interactiveTerminalFor(stdin, stdout fileStatter) bool {
-	in, err := stdin.Stat()
-	if err != nil || in.Mode()&os.ModeCharDevice == 0 {
-		return false
-	}
-	out, err := stdout.Stat()
-	return err == nil && out.Mode()&os.ModeCharDevice != 0
 }
 
 func RunTool(t registry.Tool, userArgs []string, machinePolicy policy.Policy) (int, error) {
@@ -79,7 +60,7 @@ func RunTool(t registry.Tool, userArgs []string, machinePolicy policy.Policy) (i
 		return 1, err
 	}
 
-	args, err := buildDockerArgs(t, userArgs, ctx, imageRef, interactiveTerminal())
+	args, err := buildDockerArgs(t, userArgs, ctx, imageRef, terminal.Interactive())
 	if err != nil {
 		return 1, err
 	}
