@@ -344,10 +344,10 @@ is not completion.
      preparation plus the fixed-path native install/config lifecycle are
      implemented; ordinary runtime integration remains gated;
    - Docker Desktop WSL integration proof, proof-bound bounded control requests,
-     the separately constrained proof-bound attach transport and exact
-     container-start operation are implemented but not yet wired into an
-     enabled frontend; multiplexed output, container creation, terminal,
-     resize, signal and exit-code semantics remain;
+     the separately constrained proof-bound attach transport, exact
+     context-bound wait and exact container-start operations are implemented
+     but not yet wired into an enabled frontend; multiplexed output, container
+     creation, terminal, resize, signal and exit-code semantics remain;
    - namespace-prefixed/labeled WSL volume identity plus proof-bound exact
      inspect/create/remove and namespace discovery are implemented; tool-time
      creation and state/GC/backup/restore command integration remain;
