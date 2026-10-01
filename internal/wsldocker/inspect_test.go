@@ -70,21 +70,27 @@ func TestInspectContainerRejectsInvalidInputsBeforeProof(t *testing.T) {
 }
 
 func TestDecodeContainerInspectResponseRejectsUnsafeShapes(t *testing.T) {
-	valid := `{"Id":"` + testContainerID + `","Config":{"Labels":null},"State":{"Running":false}}`
+	valid := `{"Id":"` + testContainerID + `","Config":{"Labels":null,"Tty":false,"OpenStdin":false},"State":{"Running":false}}`
 	otherID := strings.Repeat("a", 64)
 	tests := map[string]struct {
 		raw  []byte
 		want string
 	}{
-		"malformed":      {raw: []byte(`{`), want: "decode"},
-		"oversized":      {raw: make([]byte, maxContainerInspectOutput+1), want: "exceeds"},
-		"missing ID":     {raw: []byte(`{"Config":{},"State":{}}`), want: "invalid ID"},
-		"invalid ID":     {raw: []byte(`{"Id":"abc","Config":{},"State":{}}`), want: "invalid ID"},
-		"mismatched ID":  {raw: []byte(`{"Id":"` + otherID + `","Config":{},"State":{}}`), want: "expected exact"},
-		"missing Config": {raw: []byte(`{"Id":"` + testContainerID + `","State":{}}`), want: "missing Config"},
-		"null Config":    {raw: []byte(`{"Id":"` + testContainerID + `","Config":null,"State":{}}`), want: "missing Config"},
-		"missing State":  {raw: []byte(`{"Id":"` + testContainerID + `","Config":{}}`), want: "missing State"},
-		"null State":     {raw: []byte(`{"Id":"` + testContainerID + `","Config":{},"State":null}`), want: "missing State"},
+		"malformed":       {raw: []byte(`{`), want: "decode"},
+		"oversized":       {raw: make([]byte, maxContainerInspectOutput+1), want: "exceeds"},
+		"missing ID":      {raw: []byte(`{"Config":{},"State":{}}`), want: "invalid ID"},
+		"invalid ID":      {raw: []byte(`{"Id":"abc","Config":{},"State":{}}`), want: "invalid ID"},
+		"mismatched ID":   {raw: []byte(`{"Id":"` + otherID + `","Config":{},"State":{}}`), want: "expected exact"},
+		"missing Config":  {raw: []byte(`{"Id":"` + testContainerID + `","State":{}}`), want: "missing Config"},
+		"null Config":     {raw: []byte(`{"Id":"` + testContainerID + `","Config":null,"State":{}}`), want: "missing Config"},
+		"missing State":   {raw: []byte(`{"Id":"` + testContainerID + `","Config":{}}`), want: "missing State"},
+		"null State":      {raw: []byte(`{"Id":"` + testContainerID + `","Config":{},"State":null}`), want: "missing State"},
+		"missing Tty":     {raw: []byte(`{"Id":"` + testContainerID + `","Config":{"OpenStdin":false},"State":{"Running":false}}`), want: "missing Config.Tty"},
+		"null Tty":        {raw: []byte(`{"Id":"` + testContainerID + `","Config":{"Tty":null,"OpenStdin":false},"State":{"Running":false}}`), want: "missing Config.Tty"},
+		"missing stdin":   {raw: []byte(`{"Id":"` + testContainerID + `","Config":{"Tty":false},"State":{"Running":false}}`), want: "missing Config.OpenStdin"},
+		"null stdin":      {raw: []byte(`{"Id":"` + testContainerID + `","Config":{"Tty":false,"OpenStdin":null},"State":{"Running":false}}`), want: "missing Config.OpenStdin"},
+		"missing Running": {raw: []byte(`{"Id":"` + testContainerID + `","Config":{"Tty":false,"OpenStdin":false},"State":{}}`), want: "missing State.Running"},
+		"null Running":    {raw: []byte(`{"Id":"` + testContainerID + `","Config":{"Tty":false,"OpenStdin":false},"State":{"Running":null}}`), want: "missing State.Running"},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {

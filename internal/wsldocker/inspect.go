@@ -55,11 +55,11 @@ func decodeContainerInspectResponse(raw []byte, expectedID string) (ContainerSna
 		ID     string `json:"Id"`
 		Config *struct {
 			Labels    map[string]string `json:"Labels"`
-			TTY       bool              `json:"Tty"`
-			OpenStdin bool              `json:"OpenStdin"`
+			TTY       *bool             `json:"Tty"`
+			OpenStdin *bool             `json:"OpenStdin"`
 		} `json:"Config"`
 		State *struct {
-			Running bool `json:"Running"`
+			Running *bool `json:"Running"`
 		} `json:"State"`
 	}
 	if err := json.Unmarshal(raw, &response); err != nil {
@@ -77,12 +77,21 @@ func decodeContainerInspectResponse(raw []byte, expectedID string) (ContainerSna
 	if response.State == nil {
 		return ContainerSnapshot{}, errors.New("Docker container inspect response is missing State")
 	}
+	if response.Config.TTY == nil {
+		return ContainerSnapshot{}, errors.New("Docker container inspect response is missing Config.Tty")
+	}
+	if response.Config.OpenStdin == nil {
+		return ContainerSnapshot{}, errors.New("Docker container inspect response is missing Config.OpenStdin")
+	}
+	if response.State.Running == nil {
+		return ContainerSnapshot{}, errors.New("Docker container inspect response is missing State.Running")
+	}
 	return ContainerSnapshot{
 		id:        response.ID,
 		labels:    cloneContainerLabels(response.Config.Labels),
-		running:   response.State.Running,
-		tty:       response.Config.TTY,
-		openStdin: response.Config.OpenStdin,
+		running:   *response.State.Running,
+		tty:       *response.Config.TTY,
+		openStdin: *response.Config.OpenStdin,
 	}, nil
 }
 
