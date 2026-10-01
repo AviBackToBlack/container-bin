@@ -463,11 +463,11 @@ func parse(path string, b []byte, now time.Time) (Policy, error) {
 	if usedRegistrySignatureFields && p.SchemaVersion < 2 {
 		return Policy{}, policyError("version", "registry signature controls require policy_version 2")
 	}
-	if usedImageTrustFields && p.SchemaVersion < 3 {
-		return Policy{}, policyError("version", "image trust controls require policy_version 3")
-	}
 	if usedOfflineImageTrustFields && p.SchemaVersion < 4 {
 		return Policy{}, policyError("version", "offline image trust controls require policy_version 4")
+	}
+	if usedImageTrustFields && p.SchemaVersion < 3 {
+		return Policy{}, policyError("version", "image trust controls require policy_version 3")
 	}
 	if !p.RequireLock && len(p.AllowedRepositories) == 0 && !p.RequireRegistrySignature && len(imageTrustRuleSpecs) == 0 {
 		return Policy{}, policyError("syntax", "policy has no authorization controls")

@@ -299,7 +299,11 @@ Each rule has five pipe-delimited fields:
 - `NETWORK_MODE` is `online` or `offline-bundle`. `online` permits the verifier
   to obtain required Sigstore material from the network. `offline-bundle`
   requires complete bundled evidence and forbids transparency-log or TUF
-  fallback. To enable an `offline-bundle` rule, use schema 4 and provide both
+  fallback. It requires cosign 3.1.0 or newer, an image published with a
+  new-format Sigstore bundle, and a registry that exposes that bundle through
+  the OCI 1.1 referrers API. Legacy signature objects and bundles produced
+  without new-bundle support fail closed rather than falling back online. To
+  enable an `offline-bundle` rule, use schema 4 and provide both
   `cosign_trusted_root_path` and
   `cosign_trusted_root_sha256`. The root is authenticated, privately staged and
   supplied with `--offline=true`, `--new-bundle-format=true` and

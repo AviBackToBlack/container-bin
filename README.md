@@ -738,9 +738,12 @@ fallback. Project-scoped refresh preserves unrelated schema-2 evidence.
 Schema-4 `offline-bundle` rules additionally require a pinned Sigstore
 TrustedRoot. ContainerBin authenticates and privately stages those exact bytes,
 then invokes cosign with offline/new-bundle mode and `--trusted-root`, so missing
-transparency proof cannot fall back to Rekor or TUF. Registry access is still
-required to download the image signature bundle; private-registry credentials
-are not inherited and require the separate explicit credential bridge. Runtime
+transparency proof cannot fall back to Rekor or TUF. This mode requires cosign
+3.1.0 or newer, an image published with a new-format Sigstore bundle, and a
+registry that supports the OCI 1.1 referrers API; legacy signature objects fail
+closed. Registry access is still required to download the image signature
+bundle; private-registry credentials are not inherited and require the separate
+explicit credential bridge. Runtime
 executes a policy-covered digest only while its schema-2 evidence matches the
 current canonical repository, exact digest, signature mechanism/network mode,
 verifier, signer/key identity, issuer and complete machine-policy fingerprint.

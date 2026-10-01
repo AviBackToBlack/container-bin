@@ -407,6 +407,21 @@ func TestParseRejectsInvalidImageTrustPolicies(t *testing.T) {
 	}
 }
 
+func TestParseReportsSchemaFourForTrustedRootFields(t *testing.T) {
+	validHash := strings.Repeat("a", 64)
+	verifierPath := filepath.Join(t.TempDir(), "cosign")
+	trustedRootPath := filepath.Join(t.TempDir(), "trusted-root.json")
+	rule := "ghcr.io/acme|keyless|https://token.actions.githubusercontent.com|subject|offline-bundle"
+	for _, version := range []int{1, 2, 3} {
+		body := fmt.Sprintf("policy_version = %d\nrequire_lock = true\ncosign_path = %q\ncosign_sha256 = %q\ncosign_trusted_root_path = %q\ncosign_trusted_root_sha256 = %q\nimage_trust_rules = [%q]\n", version, verifierPath, validHash, trustedRootPath, validHash, rule)
+		_, err := parse("policy.toml", []byte(body), time.Now())
+		assertPolicyCode(t, err, "version")
+		if !strings.Contains(err.Error(), "offline image trust controls require policy_version 4") {
+			t.Fatalf("policy_version %d returned imprecise version error: %v", version, err)
+		}
+	}
+}
+
 func TestParseAcceptsPinnedOfflineImageTrustPolicy(t *testing.T) {
 	dir := t.TempDir()
 	verifierPath := filepath.Join(dir, "cosign.exe")
