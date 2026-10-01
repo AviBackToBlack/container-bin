@@ -77,9 +77,9 @@ The minimum delivery gate for a code change is:
 | RM-34 Cargo expose enhancement | **Intentionally deferred** | Existing expose-all/explicit selection are sufficient; reopen only for concrete unmet use case |
 | Linux/macOS hosts | **Demand-gated** | WSL may factor reusable Linux host code; standalone support needs its own demand and qualification |
 | Enterprise policy | **Foundation and signed registry shipped / image trust remains** | PRs #75 and #84 shipped the machine-owned constraint layer and authenticated registry; image trust remains |
-| Image trust | **Online production and runtime authorization implemented / offline and private-registry work remains** | Add fully pinned offline inputs and an explicit private-registry credential bridge |
+| Image trust | **Online/offline production and runtime authorization implemented / private-registry work remains** | Add an explicit private-registry credential bridge |
 | Plugin/provider architecture | **Intentionally deferred** | Reopen only after at least two real integrations cannot fit the declarative model |
-| WSL2 | **Installer foundation implemented / runtime qualification remaining** | PRs #77 and #83 shipped the fail-closed host boundary and fixed native layout/state identity; explicit read-only/apply filesystem preparation and the fixed-path native install/config/shim lifecycle are available alongside namespace-prefixed/labeled volume identity with proof-bound exact inspect/create/remove/discovery, Docker Desktop integration proof, bounded control requests, constrained attach, exact context-bound wait and exact container-start transports, while command/frontend wiring, stream/terminal/signal semantics and real WSL qualification remain |
+| WSL2 | **Installer foundation implemented / runtime qualification remaining** | PRs #77 and #83 shipped the fail-closed host boundary and fixed native layout/state identity; explicit read-only/apply filesystem preparation and the fixed-path native install/config/shim lifecycle are available alongside namespace-prefixed/labeled volume identity with proof-bound exact inspect/create/remove/discovery, Docker Desktop integration proof, bounded control requests, constrained attach, strict raw-stream decoding, exact container inspection, exact context-bound wait, proof-bound TTY-resize and exact container-start operations, while command/frontend wiring, container creation, terminal event collection, signal/exit semantics and real WSL qualification remain |
 | Per-project overlays | **Completed in PR #80** | Add-only digest-bound trust model shipped on the merged enterprise-policy foundation |
 | Release SBOM | **Conditionally deferred** | Trigger on shipped third-party/runtime dependencies or concrete compliance/consumer demand |
 | Snyk | **Conditionally deferred** | Trigger only for a real coverage gap plus owner/account/token and triage/outage policy |
@@ -555,7 +555,7 @@ old-binary/new-lock tests and security-model documentation.
 **Implementation status:** lock schema 2 now provides the structured storage,
 strict repository/digest/evidence validation, schema-1 compatibility,
 old-parser/new-lock rejection tests and security-model documentation. The
-internal online invocation slice authenticates pinned verifier/key snapshots,
+internal invocation slice authenticates pinned verifier/key snapshots,
 stages them under current-user-only permissions, downloads bounded signature
 bundles for the exact digest with a minimal environment, and locally re-verifies
 each bundle against the digest, cosign predicate and configured identity/key.
@@ -564,9 +564,11 @@ document to schema 2 only after one authenticated transparency bundle can be
 recorded; zero/multiple bundle results and verifier failures abort without a
 digest-only fallback. Runtime freshness authorization consumes that evidence
 only while its repository, digest, verifier, signer/key identity and complete
-policy fingerprint match current machine policy. Offline mode remains blocked
-until all trusted-root inputs can be pinned, and private-registry credentials
-require an explicit non-ambient bridge.
+policy fingerprint match current machine policy. Schema 4 pins the complete
+Sigstore TrustedRoot input for `offline-bundle` rules; the verifier stages that
+exact snapshot and requires both cosign offline mode and the pinned root so
+incomplete proof cannot fall back to transparency-log or TUF access.
+Private-registry credentials still require an explicit non-ambient bridge.
 
 ## Plugin/provider architecture
 
@@ -607,10 +609,11 @@ registry-derived management/tool-shim reconciliation without enabling tool
 execution. Canonical project storage classification with its proof-consuming
 argument mapper, fail-closed Docker Desktop WSL integration proof and a
 proof-bound bounded Engine API control-request primitive, constrained attach
-transport, exact context-bound container-wait operation and exact
-container-start operation are implemented but not yet wired into an enabled
-frontend. Multiplexed-output decoding, container creation, terminal/resize,
-signal and end-to-end exit-code propagation remain. Runtime wiring,
+transport, strict multiplexed-output decoder, exact context-bound
+container inspection, container-wait, container-TTY resize and container-start
+operations are implemented but not yet wired into an enabled frontend.
+Container creation, terminal event collection, signal and end-to-end exit-code
+propagation remain. Runtime wiring,
 argument/process behavior and real WSL qualification remain.
 
 Implementation must define native config/shim location, Docker endpoint,

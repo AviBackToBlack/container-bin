@@ -77,7 +77,7 @@ func lockEvidenceFromVerification(result verifiedImageTrust) (*lockfile.ImageTru
 	if result == nil {
 		return nil, errors.New("verifier returned no result")
 	}
-	if result.NetworkMode() != policy.ImageTrustOnline {
+	if result.NetworkMode() != policy.ImageTrustOnline && result.NetworkMode() != policy.ImageTrustOfflineBundle {
 		return nil, fmt.Errorf("verification used unsupported network mode %q", result.NetworkMode())
 	}
 	if result.SignatureCount() < 1 {

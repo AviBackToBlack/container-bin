@@ -237,14 +237,20 @@ accepts only an exact full container ID and fixes the request to
 `condition=not-running`. It repeats the socket/peer proof, uses the caller's
 context as the long-poll lifetime, bounds the response to 64 KiB, rejects an
 unsafe Engine error, and accepts only process exit codes from 0 through 255.
+A separate inspect operation accepts only an exact full container ID, bounds
+the response to 1 MiB, requires the returned ID to match exactly and rejects
+missing lifecycle/terminal fields. It exposes only the immutable ID, running,
+TTY, stdin and defensively copied label state needed by later lifecycle checks.
 A separate start operation accepts only an exact full container ID, repeats
 the socket/peer proof, fixes the request to `POST /containers/{id}/start`, and
 accepts only HTTP 204. Docker's HTTP 304 "already started" response fails
-closed instead of being treated as an idempotent success. These primitives do
-not decode multiplexed output or implement container creation, terminal
-behavior, resize, signals, or end-to-end exit-code propagation. Nothing is
-wired into tool execution yet; real WSL2 + Docker Desktop qualification
-remains mandatory before support.
+closed instead of being treated as an idempotent success.
+The native package also has a strict decoder for non-TTY multiplexed output and
+a proof-bound resize operation for one exact full container ID with positive
+unsigned 16-bit terminal dimensions. These primitives do not implement
+container creation, terminal event collection, signals, or end-to-end
+exit-code propagation. Nothing is wired into tool execution yet; real WSL2 +
+Docker Desktop qualification remains mandatory before support.
 
 ## Native WSL volume identity and control lifecycle
 
@@ -287,10 +293,10 @@ following:
    mapper into native tool execution, then complete stdin/TTY and signal
    semantics;
 3. wire the implemented bounded Docker Desktop control-operation, attach,
-   wait and exact container-start primitives plus the raw-stream decoder into
-   container lifecycle, then implement container creation, terminal/resize,
-   signal and exit-code propagation without accepting ambient
-   endpoint overrides;
+   inspect, wait, resize and exact container-start primitives plus the
+   raw-stream decoder into container lifecycle, then implement container
+   creation, terminal event collection, signal and exit-code propagation
+   without accepting ambient endpoint overrides;
 4. Windows-filesystem and WSL-filesystem project tests plus mixed-invocation
    rejection; and
 5. real WSL2 + Docker Desktop end-to-end qualification before any support claim.

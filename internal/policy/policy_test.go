@@ -171,11 +171,13 @@ func TestParseRejectsInvalidRegistrySignaturePolicies(t *testing.T) {
 func TestImageTrustPolicyCanonicalRulesAndSelection(t *testing.T) {
 	verifierPath := filepath.Join(t.TempDir(), "cosign")
 	keyPath := filepath.Join(t.TempDir(), "keys", "release.pub")
+	trustedRootPath := filepath.Join(t.TempDir(), "trusted-root.json")
 	verifierHash := strings.Repeat("a", 64)
 	keyHash := strings.Repeat("b", 64)
+	trustedRootHash := strings.Repeat("c", 64)
 	keylessRule := "GHCR.IO/Acme|keyless|https://token.actions.githubusercontent.com|https://github.com/acme/tools/.github/workflows/release.yml@refs/tags/v1.2.3|online"
 	keyRule := strings.Join([]string{"ghcr.io/acme/release", "key", keyPath, keyHash, "offline-bundle"}, "|")
-	body := fmt.Sprintf("policy_version = 3\ncosign_path = %q\ncosign_sha256 = %q\nimage_trust_rules = [%q, %q]\n", verifierPath, verifierHash, keylessRule, keyRule)
+	body := fmt.Sprintf("policy_version = 4\ncosign_path = %q\ncosign_sha256 = %q\ncosign_trusted_root_path = %q\ncosign_trusted_root_sha256 = %q\nimage_trust_rules = [%q, %q]\n", verifierPath, verifierHash, trustedRootPath, trustedRootHash, keylessRule, keyRule)
 	p, err := parse("policy.toml", []byte(body), time.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -200,10 +202,10 @@ func TestImageTrustPolicyCanonicalRulesAndSelection(t *testing.T) {
 		t.Fatal("invalid image reference was treated as an absent trust rule")
 	}
 	summary := p.Summary()
-	if !strings.Contains(summary, "image_trust_rules=2") || !strings.Contains(summary, "cosign_pinned=true") {
+	if !strings.Contains(summary, "image_trust_rules=2") || !strings.Contains(summary, "cosign_pinned=true") || !strings.Contains(summary, "cosign_trusted_root_pinned=true") {
 		t.Fatalf("summary does not report image trust: %q", summary)
 	}
-	for _, secret := range []string{verifierPath, verifierHash, keyPath, keyHash, rule.Subject} {
+	for _, secret := range []string{verifierPath, verifierHash, keyPath, keyHash, trustedRootPath, trustedRootHash, rule.Subject} {
 		if strings.Contains(summary, secret) {
 			t.Fatalf("summary disclosed image trust material %q: %q", secret, summary)
 		}
@@ -326,6 +328,36 @@ func TestAuthenticateImageTrustPublicKeyPinsSelectedRuleBytes(t *testing.T) {
 	}
 }
 
+func TestAuthenticateImageTrustTrustedRootPinsExactBytes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "trusted-root.json")
+	contents := []byte(`{"mediaType":"application/vnd.dev.sigstore.trustedroot+json;version=0.1"}`)
+	if err := os.WriteFile(path, contents, 0600); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(contents)
+	p := Policy{cosignTrustedRoot: FilePin{Path: path, SHA256: hex.EncodeToString(sum[:])}}
+	snapshot, err := p.AuthenticateImageTrustTrustedRoot()
+	if err != nil || !bytes.Equal(snapshot.Bytes(), contents) || snapshot.SHA256() != hex.EncodeToString(sum[:]) {
+		t.Fatalf("AuthenticateImageTrustTrustedRoot() = (%q, %q, %v)", snapshot.Bytes(), snapshot.SHA256(), err)
+	}
+	if err := os.WriteFile(path, []byte(`{"changed":true}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(snapshot.Bytes(), contents) {
+		t.Fatal("authenticated trusted-root snapshot changed with its source path")
+	}
+	if _, err := p.AuthenticateImageTrustTrustedRoot(); err == nil {
+		t.Fatal("mutated trusted root was accepted")
+	} else {
+		assertPolicyCode(t, err, "image_trust_verifier_invalid")
+	}
+	if _, err := (Policy{}).AuthenticateImageTrustTrustedRoot(); err == nil {
+		t.Fatal("missing trusted root was accepted")
+	} else {
+		assertPolicyCode(t, err, "image_trust_verifier_invalid")
+	}
+}
+
 func authenticateCosignError(p Policy) error {
 	_, err := p.AuthenticateCosignVerifier()
 	return err
@@ -336,7 +368,10 @@ func TestParseRejectsInvalidImageTrustPolicies(t *testing.T) {
 	keyPath := filepath.Join(t.TempDir(), "release.pub")
 	validHash := strings.Repeat("a", 64)
 	validRule := "ghcr.io/acme|keyless|https://token.actions.githubusercontent.com|https://github.com/acme/tools/.github/workflows/release.yml@refs/tags/v1|online"
+	offlineRule := "ghcr.io/acme|keyless|https://token.actions.githubusercontent.com|https://github.com/acme/tools/.github/workflows/release.yml@refs/tags/v1|offline-bundle"
 	validVerifier := fmt.Sprintf("cosign_path = %q\ncosign_sha256 = %q\n", verifierPath, validHash)
+	trustedRootPath := filepath.Join(t.TempDir(), "trusted-root.json")
+	validTrustedRoot := fmt.Sprintf("cosign_trusted_root_path = %q\ncosign_trusted_root_sha256 = %q\n", trustedRootPath, validHash)
 	policy := func(version int, fields string, rules ...string) string {
 		quoted := make([]string, len(rules))
 		for i, rule := range rules {
@@ -348,6 +383,9 @@ func TestParseRejectsInvalidImageTrustPolicies(t *testing.T) {
 		name, body, code string
 	}{
 		{"schema two", policy(2, validVerifier, validRule), "version"},
+		{"offline missing trusted root", policy(4, validVerifier, offlineRule), "syntax"},
+		{"offline incomplete trusted root", policy(4, validVerifier+fmt.Sprintf("cosign_trusted_root_path = %q\n", trustedRootPath), offlineRule), "syntax"},
+		{"trusted root without offline rule", policy(4, validVerifier+validTrustedRoot, validRule), "syntax"},
 		{"missing verifier", policy(3, "", validRule), "syntax"},
 		{"verifier without rules", policy(3, validVerifier), "syntax"},
 		{"relative verifier", policy(3, "cosign_path = \"cosign\"\ncosign_sha256 = \""+validHash+"\"\n", validRule), "syntax"},
@@ -366,6 +404,57 @@ func TestParseRejectsInvalidImageTrustPolicies(t *testing.T) {
 			_, err := parse("policy.toml", []byte(tc.body), time.Now())
 			assertPolicyCode(t, err, tc.code)
 		})
+	}
+}
+
+func TestParseReportsSchemaFourForTrustedRootFields(t *testing.T) {
+	validHash := strings.Repeat("a", 64)
+	verifierPath := filepath.Join(t.TempDir(), "cosign")
+	trustedRootPath := filepath.Join(t.TempDir(), "trusted-root.json")
+	rule := "ghcr.io/acme|keyless|https://token.actions.githubusercontent.com|subject|offline-bundle"
+	for _, version := range []int{1, 2, 3} {
+		body := fmt.Sprintf("policy_version = %d\nrequire_lock = true\ncosign_path = %q\ncosign_sha256 = %q\ncosign_trusted_root_path = %q\ncosign_trusted_root_sha256 = %q\nimage_trust_rules = [%q]\n", version, verifierPath, validHash, trustedRootPath, validHash, rule)
+		_, err := parse("policy.toml", []byte(body), time.Now())
+		assertPolicyCode(t, err, "version")
+		if !strings.Contains(err.Error(), "offline image trust controls require policy_version 4") {
+			t.Fatalf("policy_version %d returned imprecise version error: %v", version, err)
+		}
+	}
+}
+
+func TestParseAcceptsPinnedOfflineImageTrustPolicy(t *testing.T) {
+	dir := t.TempDir()
+	verifierPath := filepath.Join(dir, "cosign.exe")
+	rootPath := filepath.Join(dir, "trusted-root.json")
+	hash := strings.Repeat("a", 64)
+	rule := "ghcr.io/acme|keyless|https://token.actions.githubusercontent.com|https://github.com/acme/tools/.github/workflows/release.yml@refs/tags/v1|offline-bundle"
+	body := fmt.Sprintf("policy_version = 4\ncosign_path = %q\ncosign_sha256 = %q\ncosign_trusted_root_path = %q\ncosign_trusted_root_sha256 = %q\nimage_trust_rules = [%q]\n", verifierPath, hash, rootPath, hash, rule)
+	p, err := parse("policy.toml", []byte(body), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, ok, err := p.ImageTrustFor("ghcr.io/acme/tool:v1")
+	if err != nil || !ok || selected.NetworkMode != ImageTrustOfflineBundle || p.cosignTrustedRoot.Path != rootPath || p.cosignTrustedRoot.SHA256 != hash {
+		t.Fatalf("offline policy = (%+v, %+v, %t, %v)", p, selected, ok, err)
+	}
+	if summary := p.Summary(); !strings.Contains(summary, "cosign_trusted_root_pinned=true") || strings.Contains(summary, rootPath) || strings.Contains(summary, hash) {
+		t.Fatalf("offline policy summary leaks or omits trusted-root state: %q", summary)
+	}
+}
+
+func TestParsePreservesSchemaThreeOfflineRuleAsFailClosed(t *testing.T) {
+	verifierPath := filepath.Join(t.TempDir(), "cosign.exe")
+	hash := strings.Repeat("a", 64)
+	rule := "ghcr.io/acme|keyless|https://token.actions.githubusercontent.com|subject|offline-bundle"
+	body := fmt.Sprintf("policy_version = 3\ncosign_path = %q\ncosign_sha256 = %q\nimage_trust_rules = [%q]\n", verifierPath, hash, rule)
+	p, err := parse("policy.toml", []byte(body), time.Now())
+	if err != nil {
+		t.Fatalf("legacy schema-3 offline rule no longer parses: %v", err)
+	}
+	if _, err := p.AuthenticateImageTrustTrustedRoot(); err == nil {
+		t.Fatal("legacy schema-3 offline rule unexpectedly acquired trusted-root material")
+	} else {
+		assertPolicyCode(t, err, "image_trust_verifier_invalid")
 	}
 }
 
@@ -397,7 +486,7 @@ func TestImageTrustPolicyAllowsEvidenceProductionButRuntimeFailsClosed(t *testin
 
 func TestImageTrustDoesNotChangeEarlierSchemaReferenceAuthorization(t *testing.T) {
 	imageID := "sha256:" + strings.Repeat("a", 64)
-	for _, version := range []int{1, 2, 3} {
+	for _, version := range []int{1, 2, 3, 4} {
 		p := Policy{SchemaVersion: version}
 		if err := p.AuthorizeImage(imageID, true, false); err != nil {
 			t.Errorf("schema %d image-ID authorization changed without image trust rules: %v", version, err)
@@ -452,7 +541,7 @@ func TestParseRejectsInvalidPolicies(t *testing.T) {
 		name, contents, code string
 	}{
 		{"missing version", "require_lock = true\n", "version"},
-		{"unknown version", "policy_version = 4\nrequire_lock = true\n", "version"},
+		{"unknown version", "policy_version = 5\nrequire_lock = true\n", "version"},
 		{"duplicate", "policy_version = 1\nrequire_lock = true\nrequire_lock = false\n", "syntax"},
 		{"unknown key", "policy_version = 1\nrequire_lock = true\nsurprise = true\n", "syntax"},
 		{"section", "policy_version = 1\nrequire_lock = true\n[extra]\n", "syntax"},
@@ -575,7 +664,7 @@ func TestAuthorizeResolvedImageRequiresFreshTrustEvidence(t *testing.T) {
 		}},
 		{name: "subject changed", edit: func(_ *Policy, evidence *RuntimeImageTrustEvidence) { evidence.Signer += "-other" }},
 		{name: "issuer changed", edit: func(_ *Policy, evidence *RuntimeImageTrustEvidence) { evidence.Issuer = "https://issuer.example" }},
-		{name: "offline policy", edit: func(policy *Policy, _ *RuntimeImageTrustEvidence) {
+		{name: "offline policy missing trusted root", edit: func(policy *Policy, _ *RuntimeImageTrustEvidence) {
 			policy.imageTrustRules[0].NetworkMode = ImageTrustOfflineBundle
 		}},
 	}
@@ -592,6 +681,32 @@ func TestAuthorizeResolvedImageRequiresFreshTrustEvidence(t *testing.T) {
 			err := currentPolicy.AuthorizeResolvedImage(configured, resolved, false, candidate)
 			assertPolicyCode(t, err, "image_trust_unverified")
 		})
+	}
+}
+
+func TestAuthorizeResolvedImageAcceptsCurrentOfflineEvidence(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	verifierHash := strings.Repeat("b", 64)
+	policyFingerprint := strings.Repeat("c", 64)
+	issuer := "https://token.actions.githubusercontent.com"
+	subject := "https://github.com/acme/tools/.github/workflows/release.yml@refs/tags/v1"
+	p := Policy{
+		SchemaVersion:     4,
+		Fingerprint:       policyFingerprint,
+		cosignVerifier:    FilePin{Path: "cosign.exe", SHA256: verifierHash},
+		cosignTrustedRoot: FilePin{Path: "trusted-root.json", SHA256: strings.Repeat("d", 64)},
+		imageTrustRules: []ImageTrustRule{{
+			Repository: "ghcr.io/acme", Mechanism: ImageTrustKeyless,
+			Issuer: issuer, Subject: subject, NetworkMode: ImageTrustOfflineBundle,
+		}},
+	}
+	evidence := &RuntimeImageTrustEvidence{
+		Mechanism: ImageTrustKeyless, Repository: "ghcr.io/acme/tool", Digest: digest,
+		Signer: subject, Issuer: issuer, Verifier: ImageTrustVerifierCosign,
+		VerifierSHA256: verifierHash, PolicyFingerprint: policyFingerprint,
+	}
+	if err := p.AuthorizeResolvedImage("ghcr.io/acme/tool:v1", "ghcr.io/acme/tool@"+digest, false, evidence); err != nil {
+		t.Fatalf("fresh offline evidence rejected: %v", err)
 	}
 }
 
