@@ -45,6 +45,7 @@ func TestResizeContainerRejectsInvalidInputsBeforeProof(t *testing.T) {
 		"nil context":  {containerID: testContainerID, height: 24, width: 80},
 		"short ID":     {ctx: context.Background(), containerID: "abc", height: 24, width: 80},
 		"uppercase ID": {ctx: context.Background(), containerID: strings.ToUpper(testContainerID), height: 24, width: 80},
+		"non-hex ID":   {ctx: context.Background(), containerID: strings.Repeat("g", 64), height: 24, width: 80},
 		"zero height":  {ctx: context.Background(), containerID: testContainerID, width: 80},
 		"zero width":   {ctx: context.Background(), containerID: testContainerID, height: 24},
 	}
