@@ -134,11 +134,12 @@ identity/hash and effective trust-policy fingerprint.
 
 Lock schema 2 now defines and strictly validates that evidence shape while
 preserving schema-1 reads and fail-closed old-binary/new-lock behavior. The
-internal verifier executes authenticated staged cosign/key snapshots for online
-exact-digest checks and independently validates bounded JSON output. Lock/update
-produce that evidence, and runtime accepts it only while the digest, verifier,
-signer/key and complete policy fingerprint still match. Offline verification
-remains closed until policy can pin complete trusted-root inputs.
+internal verifier executes authenticated staged cosign/key snapshots for
+exact-digest checks and independently validates bounded JSON output. Schema 4
+pins and stages the complete Sigstore TrustedRoot for `offline-bundle` rules,
+which require both cosign offline mode and that exact root. Lock/update produce
+the resulting evidence, and runtime accepts it only while the digest, verifier,
+signer/key and complete policy fingerprint still match.
 
 Runtime still executes the pinned digest and does not invoke cosign on every
 tool launch. A changed digest, verifier or trust-policy fingerprint makes prior
@@ -325,8 +326,9 @@ is not completion.
    - cosign verifier configuration, per-repository policy, schema-2 storage and
      online lock-evidence production are implemented;
    - runtime freshness authorization is implemented;
-   - offline verification and explicit private-registry credential bridging
-     remain.
+   - offline verification is implemented with schema-4 pinned TrustedRoot
+     inputs;
+   - explicit private-registry credential bridging remains.
 
 2. **Remaining RM-31 self-update qualification**
    - selection/check, bounded staging and `gh attestation verify` are merged in
@@ -345,9 +347,10 @@ is not completion.
      implemented; ordinary runtime integration remains gated;
    - Docker Desktop WSL integration proof, proof-bound bounded control requests,
      the separately constrained attach transport, strict raw-stream decoder,
-     exact container wait and signal operations are implemented but not yet
-     wired into an enabled frontend; terminal/resize, host-signal interception
-     and forwarding policy, and exit-code propagation remain;
+     exact container inspection, wait, TTY-resize and signal operations are
+     implemented but not yet wired into an enabled frontend; container
+     creation/start, terminal event collection, host-signal interception and
+     forwarding policy, and end-to-end exit-code propagation remain;
    - namespace-prefixed/labeled WSL volume identity plus proof-bound exact
      inspect/create/remove and namespace discovery are implemented; tool-time
      creation and state/GC/backup/restore command integration remain;

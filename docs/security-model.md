@@ -74,21 +74,23 @@ readable, and dangerous to let others edit.
   that boundary.
 - **Repository-bound image trust policy.** Schema 3 pins an external cosign
   executable and declares exact keyless or public-key trust for canonical
-  repository boundaries. Lock schema 2 can retain strictly validated,
+  repository boundaries; schema 4 additionally pins the exact Sigstore
+  TrustedRoot required by offline rules. Lock schema 2 can retain strictly validated,
   repository/digest/verifier/policy-bound structured evidence; schema 1 remains
   the digest-only compatibility format. The invocation layer executes only
   authenticated verifier/key snapshots from a protected private directory,
   bounds time and output, scrubs ambient environment state, checks staged bytes
   again after execution, and re-verifies every downloaded bundle locally
   against the exact digest, cosign predicate, and configured identity/key.
-  Lock/update records an online result only when
+  Offline verification authenticates and stages the pinned root and passes both
+  offline/new-bundle mode and `--trusted-root`, so incomplete proof cannot fall back
+  to transparency-log or TUF access. Lock/update records a result only when
   exactly one authenticated transparency bundle fits the schema-2 evidence
   contract. Runtime accepts a covered digest only when that evidence still
   matches the current repository, digest, verifier pin, complete policy
   fingerprint, mechanism and signer/key identity. Missing or stale evidence
-  never falls back to digest-only locking. Offline rules refuse process
-  execution until policy can pin the complete trusted-root and bundle inputs
-  needed to forbid network fallback.
+  never falls back to digest-only locking. Private-registry credentials remain
+  excluded until an explicit non-ambient bridge is implemented.
 - **Fail-closed host boundary.** Non-bootstrap work currently runs only in a
   native Windows process. Windows binaries launched through detected WSL
   interoperability, WSL1, ordinary work on recognized-but-not-yet-enabled native WSL2,

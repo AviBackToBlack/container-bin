@@ -27,8 +27,12 @@ func TestImageTrustLockAndUpdateWindowsDockerDesktop(t *testing.T) {
 	image := requiredE2EEnv(t, "CONTAINERBIN_IMAGE_TRUST_E2E_IMAGE")
 	issuer := requiredE2EEnv(t, "CONTAINERBIN_IMAGE_TRUST_E2E_ISSUER")
 	subject := requiredE2EEnv(t, "CONTAINERBIN_IMAGE_TRUST_E2E_SUBJECT")
+	trustedRootPath := requiredE2EEnv(t, "CONTAINERBIN_IMAGE_TRUST_E2E_TRUSTED_ROOT")
 	if !filepath.IsAbs(cosignPath) {
 		t.Fatalf("CONTAINERBIN_IMAGE_TRUST_E2E_COSIGN must be absolute: %q", cosignPath)
+	}
+	if !filepath.IsAbs(trustedRootPath) {
+		t.Fatalf("CONTAINERBIN_IMAGE_TRUST_E2E_TRUSTED_ROOT must be absolute: %q", trustedRootPath)
 	}
 	cosignBytes, err := os.ReadFile(cosignPath)
 	if err != nil {
@@ -36,6 +40,12 @@ func TestImageTrustLockAndUpdateWindowsDockerDesktop(t *testing.T) {
 	}
 	cosignSum := sha256.Sum256(cosignBytes)
 	cosignSHA256 := hex.EncodeToString(cosignSum[:])
+	trustedRootBytes, err := os.ReadFile(trustedRootPath)
+	if err != nil {
+		t.Fatalf("read qualification Sigstore TrustedRoot: %v", err)
+	}
+	trustedRootSum := sha256.Sum256(trustedRootBytes)
+	trustedRootSHA256 := hex.EncodeToString(trustedRootSum[:])
 
 	dockerOS := strings.TrimSpace(runE2ECommand(t, "docker", "info", "--format", "{{.OSType}}"))
 	if dockerOS != "linux" {
@@ -50,7 +60,10 @@ func TestImageTrustLockAndUpdateWindowsDockerDesktop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("qualification image: %v", err)
 	}
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "online")
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
 	policyPath := filepath.Join(dir, "policy.toml")
 	rule := strings.Join([]string{repository, "keyless", issuer, subject, "online"}, "|")
 	policyBytes := []byte(fmt.Sprintf(
@@ -86,6 +99,33 @@ func TestImageTrustLockAndUpdateWindowsDockerDesktop(t *testing.T) {
 		t.Fatalf("policy-covered Update() on Windows Docker Desktop: %v", err)
 	}
 	assertQualifiedImageTrustLock(t, lockfile.PathFor(cfgPath), image, machinePolicy.Fingerprint)
+
+	offlineDir := filepath.Join(filepath.Dir(dir), "offline")
+	if err := os.Mkdir(offlineDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	offlinePolicyPath := filepath.Join(offlineDir, "policy.toml")
+	offlineRule := strings.Join([]string{repository, "keyless", issuer, subject, "offline-bundle"}, "|")
+	offlinePolicyBytes := []byte(fmt.Sprintf(
+		"policy_version = 4\ncosign_path = %s\ncosign_sha256 = %q\ncosign_trusted_root_path = %s\ncosign_trusted_root_sha256 = %q\nimage_trust_rules = [%s]\n",
+		strconv.Quote(cosignPath), cosignSHA256, strconv.Quote(trustedRootPath), trustedRootSHA256, strconv.Quote(offlineRule),
+	))
+	if err := os.WriteFile(offlinePolicyPath, offlinePolicyBytes, 0600); err != nil {
+		t.Fatalf("write offline qualification policy: %v", err)
+	}
+	offlinePolicy, err := policy.LoadQualificationFile(offlinePolicyPath)
+	if err != nil {
+		t.Fatalf("load offline qualification policy: %v", err)
+	}
+	offlineConfigPath := filepath.Join(offlineDir, "container-bin.toml")
+	if err := Lock(reg, offlineConfigPath, nil, offlinePolicy); err != nil {
+		t.Fatalf("offline policy-covered Lock() on Windows Docker Desktop: %v", err)
+	}
+	assertQualifiedImageTrustLock(t, lockfile.PathFor(offlineConfigPath), image, offlinePolicy.Fingerprint)
+	if err := Update(reg, offlineConfigPath, []string{"image-trust-e2e"}, offlinePolicy); err != nil {
+		t.Fatalf("offline policy-covered Update() on Windows Docker Desktop: %v", err)
+	}
+	assertQualifiedImageTrustLock(t, lockfile.PathFor(offlineConfigPath), image, offlinePolicy.Fingerprint)
 }
 
 func requiredE2EEnv(t *testing.T, name string) string {
