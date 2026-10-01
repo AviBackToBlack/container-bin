@@ -79,7 +79,7 @@ The minimum delivery gate for a code change is:
 | Enterprise policy | **Foundation and signed registry shipped / image trust remains** | PRs #75 and #84 shipped the machine-owned constraint layer and authenticated registry; image trust remains |
 | Image trust | **Online production and runtime authorization implemented / offline and private-registry work remains** | Add fully pinned offline inputs and an explicit private-registry credential bridge |
 | Plugin/provider architecture | **Intentionally deferred** | Reopen only after at least two real integrations cannot fit the declarative model |
-| WSL2 | **Installer foundation implemented / runtime qualification remaining** | PRs #77 and #83 shipped the fail-closed host boundary and fixed native layout/state identity; explicit read-only/apply filesystem preparation and the fixed-path native install/config/shim lifecycle are available alongside namespace-prefixed/labeled volume identity with proof-bound exact inspect/create/remove/discovery, Docker Desktop integration proof, bounded control requests, constrained attach and exact context-bound wait transports, while command/frontend wiring, stream/terminal/signal semantics and real WSL qualification remain |
+| WSL2 | **Installer foundation implemented / runtime qualification remaining** | PRs #77 and #83 shipped the fail-closed host boundary and fixed native layout/state identity; explicit read-only/apply filesystem preparation and the fixed-path native install/config/shim lifecycle are available alongside namespace-prefixed/labeled volume identity with proof-bound exact inspect/create/remove/discovery, Docker Desktop integration proof, bounded control requests, constrained attach, strict raw-stream decoding, exact context-bound wait and proof-bound container-signal operations, while command/frontend wiring, terminal/resize, host-signal interception/forwarding policy, exit semantics and real WSL qualification remain |
 | Per-project overlays | **Completed in PR #80** | Add-only digest-bound trust model shipped on the merged enterprise-policy foundation |
 | Release SBOM | **Conditionally deferred** | Trigger on shipped third-party/runtime dependencies or concrete compliance/consumer demand |
 | Snyk | **Conditionally deferred** | Trigger only for a real coverage gap plus owner/account/token and triage/outage policy |
@@ -607,10 +607,12 @@ registry-derived management/tool-shim reconciliation without enabling tool
 execution. Canonical project storage classification with its proof-consuming
 argument mapper, fail-closed Docker Desktop WSL integration proof and a
 proof-bound bounded Engine API control-request primitive, constrained attach
-transport and exact context-bound container-wait operation are implemented but
-not yet wired into an enabled frontend. Multiplexed-output decoding,
-terminal/resize, signal and end-to-end exit-code propagation remain. Runtime
-wiring, argument/process behavior and real WSL qualification remain.
+transport, strict multiplexed-output decoder, exact context-bound
+container-wait operation and proof-bound container-signal operation are
+implemented but not yet wired into an enabled frontend. Terminal/resize,
+host-signal interception and forwarding policy, and end-to-end exit-code
+propagation remain. Runtime wiring, argument/process behavior and real WSL
+qualification remain.
 
 Implementation must define native config/shim location, Docker endpoint,
 project identity, named-volume behavior, file permissions, case sensitivity,

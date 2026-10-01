@@ -344,9 +344,10 @@ is not completion.
      preparation plus the fixed-path native install/config lifecycle are
      implemented; ordinary runtime integration remains gated;
    - Docker Desktop WSL integration proof, proof-bound bounded control requests,
-     and the separately constrained proof-bound attach transport are implemented
-     but not yet wired into an enabled frontend; multiplexed output, terminal,
-     resize, signal and exit-code semantics remain;
+     the separately constrained attach transport, strict raw-stream decoder,
+     exact container wait and signal operations are implemented but not yet
+     wired into an enabled frontend; terminal/resize, host-signal interception
+     and forwarding policy, and exit-code propagation remain;
    - namespace-prefixed/labeled WSL volume identity plus proof-bound exact
      inspect/create/remove and namespace discovery are implemented; tool-time
      creation and state/GC/backup/restore command integration remain;

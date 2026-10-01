@@ -237,10 +237,14 @@ accepts only an exact full container ID and fixes the request to
 `condition=not-running`. It repeats the socket/peer proof, uses the caller's
 context as the long-poll lifetime, bounds the response to 64 KiB, rejects an
 unsafe Engine error, and accepts only process exit codes from 0 through 255.
-These primitives do not decode multiplexed output or implement container
-creation/start, terminal behavior, resize, signals, or end-to-end exit-code
-propagation. Nothing is wired into tool execution yet; real WSL2 + Docker
-Desktop qualification remains mandatory before support.
+A separate proof-bound signal operation accepts only an exact full container ID
+and an explicit numeric Linux signal in the `1..64` domain, always supplies the
+Engine `signal` query and accepts only HTTP 204. The native package also has a
+strict decoder for non-TTY multiplexed output. These primitives do not implement
+container creation/start, terminal behavior/resize, host-signal interception or
+forwarding policy, or end-to-end exit-code propagation. Nothing is wired into
+tool execution yet; real WSL2 + Docker Desktop qualification remains mandatory
+before support.
 
 ## Native WSL volume identity and control lifecycle
 
@@ -283,9 +287,9 @@ following:
    mapper into native tool execution, then complete stdin/TTY and signal
    semantics;
 3. wire the implemented bounded Docker Desktop control-operation and attach
-   primitives, raw-stream decoder and wait primitive into container lifecycle,
-   then implement terminal/resize, signal and exit-code propagation without
-   accepting ambient
+   primitives, raw-stream decoder, wait and signal operations into container
+   lifecycle, then implement terminal/resize, host-signal interception and
+   forwarding policy, and exit-code propagation without accepting ambient
    endpoint overrides;
 4. Windows-filesystem and WSL-filesystem project tests plus mixed-invocation
    rejection; and

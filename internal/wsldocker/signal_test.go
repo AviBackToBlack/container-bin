@@ -10,7 +10,7 @@ import (
 
 func TestSignalContainerBindsExactSignalToProvenSocket(t *testing.T) {
 	for _, signal := range []int{1, 2, maxLinuxSignal} {
-		t.Run(fmtSignal(signal), func(t *testing.T) {
+		t.Run(strconv.Itoa(signal), func(t *testing.T) {
 			socket := validSocketInfo()
 			statCalls := 0
 			deps := validOperationDependencies(socket)
@@ -25,7 +25,7 @@ func TestSignalContainerBindsExactSignalToProvenSocket(t *testing.T) {
 				if path != DockerSocketPath || request.Method != http.MethodPost || request.Path != "/containers/"+testContainerID+"/kill" {
 					t.Fatalf("perform(%q, %+v)", path, request)
 				}
-				if request.Query.Encode() != "signal="+fmtSignal(signal) || len(request.Body) != 0 || len(request.SuccessStatuses) != 1 || request.SuccessStatuses[0] != http.StatusNoContent {
+				if request.Query.Encode() != "signal="+strconv.Itoa(signal) || len(request.Body) != 0 || len(request.SuccessStatuses) != 1 || request.SuccessStatuses[0] != http.StatusNoContent {
 					t.Fatalf("signal request = %+v", request)
 				}
 				return operationResult{StatusCode: http.StatusNoContent, PeerUID: 0}, nil
@@ -49,6 +49,7 @@ func TestSignalContainerRejectsInvalidInputsBeforeProof(t *testing.T) {
 		"nil context":  {containerID: testContainerID, signal: 2},
 		"short ID":     {ctx: context.Background(), containerID: "abc", signal: 2},
 		"uppercase ID": {ctx: context.Background(), containerID: strings.ToUpper(testContainerID), signal: 2},
+		"non-hex ID":   {ctx: context.Background(), containerID: strings.Repeat("g", 64), signal: 2},
 		"zero signal":  {ctx: context.Background(), containerID: testContainerID},
 		"negative":     {ctx: context.Background(), containerID: testContainerID, signal: -1},
 		"too large":    {ctx: context.Background(), containerID: testContainerID, signal: maxLinuxSignal + 1},
@@ -66,8 +67,4 @@ func TestSignalContainerRejectsInvalidInputsBeforeProof(t *testing.T) {
 	if err := signalContainer(context.Background(), testContainerID, 2, operationDependencies{}); err == nil || !strings.Contains(err.Error(), "dependencies are incomplete") {
 		t.Fatalf("incomplete-dependencies error = %v", err)
 	}
-}
-
-func fmtSignal(signal int) string {
-	return strconv.Itoa(signal)
 }
