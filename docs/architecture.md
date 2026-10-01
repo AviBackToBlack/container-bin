@@ -463,9 +463,11 @@ separate attach transport admits only a live-stream POST for an exact full
 container ID, repeats the complete socket/peer proof, bounds the upgrade and
 error response, and returns a context-bound duplex stream with explicit TTY
 framing metadata and independent stdin half-close. Parent cancellation closes
-the upgraded connection and unblocks I/O. Container lifecycle,
-multiplexed-output decoding, terminal behavior, and signal forwarding remain
-outside that primitive.
+the upgraded connection and unblocks I/O. Sibling proof-bound primitives decode
+strict non-TTY multiplexed output and perform exact container inspection, wait,
+TTY resize and signal operations. They are not yet wired into an enabled
+container lifecycle; creation/start, terminal event collection, host-signal
+interception/forwarding and end-to-end exit propagation remain.
 
 `internal/wslvolume` defines the WSL Docker-volume identity and bounded control
 lifecycle. A volume name starts with `cb-<wsl-namespace>-`;

@@ -237,12 +237,20 @@ accepts only an exact full container ID and fixes the request to
 `condition=not-running`. It repeats the socket/peer proof, uses the caller's
 context as the long-poll lifetime, bounds the response to 64 KiB, rejects an
 unsafe Engine error, and accepts only process exit codes from 0 through 255.
+A separate inspect operation accepts only an exact full container ID, bounds
+the response to 1 MiB, requires the returned ID to match exactly and rejects
+missing lifecycle/terminal fields. It exposes only the immutable ID, running,
+TTY, stdin and defensively copied label state needed by later lifecycle checks.
+A separate proof-bound signal operation accepts only an exact full container ID
+and an explicit numeric Linux signal in the `1..64` domain, always supplies the
+Engine `signal` query and accepts only HTTP 204.
 The native package also has a strict decoder for non-TTY multiplexed output and
 a proof-bound resize operation for one exact full container ID with positive
 unsigned 16-bit terminal dimensions. These primitives do not implement
-container creation/start, terminal event collection, signals, or end-to-end
-exit-code propagation. Nothing is wired into tool execution yet; real WSL2 +
-Docker Desktop qualification remains mandatory before support.
+container creation/start, terminal event collection, host-signal interception
+or forwarding policy, or end-to-end exit-code propagation. Nothing is wired
+into tool execution yet; real WSL2 + Docker Desktop qualification remains
+mandatory before support.
 
 ## Native WSL volume identity and control lifecycle
 
@@ -285,9 +293,10 @@ following:
    mapper into native tool execution, then complete stdin/TTY and signal
    semantics;
 3. wire the implemented bounded Docker Desktop control-operation and attach
-   primitives, raw-stream decoder, wait and resize operations into container
-   lifecycle, then implement terminal event collection, signal and exit-code
-   propagation without accepting ambient endpoint overrides;
+   primitives, raw-stream decoder, inspect, wait, resize and signal operations
+   into container lifecycle, then implement container creation/start, terminal
+   event collection, host-signal interception and forwarding policy, and
+   exit-code propagation without accepting ambient endpoint overrides;
 4. Windows-filesystem and WSL-filesystem project tests plus mixed-invocation
    rejection; and
 5. real WSL2 + Docker Desktop end-to-end qualification before any support claim.
