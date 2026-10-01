@@ -465,9 +465,9 @@ error response, and returns a context-bound duplex stream with explicit TTY
 framing metadata and independent stdin half-close. Parent cancellation closes
 the upgraded connection and unblocks I/O. Sibling proof-bound primitives decode
 strict non-TTY multiplexed output and perform exact container inspection, wait,
-TTY resize and start operations. They are not yet wired into an enabled
-container lifecycle; creation, terminal event collection, signal handling and
-end-to-end exit propagation remain.
+TTY resize, signal and start operations. They are not yet wired into an enabled
+container lifecycle; creation, terminal event collection, host-signal
+interception/forwarding and end-to-end exit propagation remain.
 
 `internal/wslvolume` defines the WSL Docker-volume identity and bounded control
 lifecycle. A volume name starts with `cb-<wsl-namespace>-`;

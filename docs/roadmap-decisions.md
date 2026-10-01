@@ -347,10 +347,10 @@ is not completion.
      implemented; ordinary runtime integration remains gated;
    - Docker Desktop WSL integration proof, proof-bound bounded control requests,
      the separately constrained attach transport, strict raw-stream decoder,
-     exact container inspection, wait, TTY-resize and start operations are
-     implemented but not yet wired into an enabled frontend; container
-     creation, terminal event collection, signal and end-to-end exit-code
-     propagation remain;
+     exact container inspection, wait, TTY-resize, signal and start operations
+     are implemented but not yet wired into an enabled frontend; container
+     creation, terminal event collection, host-signal interception and
+     forwarding policy, and end-to-end exit-code propagation remain;
    - namespace-prefixed/labeled WSL volume identity plus proof-bound exact
      inspect/create/remove and namespace discovery are implemented; tool-time
      creation and state/GC/backup/restore command integration remain;

@@ -245,12 +245,16 @@ A separate start operation accepts only an exact full container ID, repeats
 the socket/peer proof, fixes the request to `POST /containers/{id}/start`, and
 accepts only HTTP 204. Docker's HTTP 304 "already started" response fails
 closed instead of being treated as an idempotent success.
+A separate proof-bound signal operation accepts only an exact full container ID
+and an explicit numeric Linux signal in the `1..64` domain, always supplies the
+Engine `signal` query and accepts only HTTP 204.
 The native package also has a strict decoder for non-TTY multiplexed output and
 a proof-bound resize operation for one exact full container ID with positive
 unsigned 16-bit terminal dimensions. These primitives do not implement
-container creation, terminal event collection, signals, or end-to-end
-exit-code propagation. Nothing is wired into tool execution yet; real WSL2 +
-Docker Desktop qualification remains mandatory before support.
+container creation, terminal event collection, host-signal interception
+or forwarding policy, or end-to-end exit-code propagation. Nothing is wired
+into tool execution yet; real WSL2 + Docker Desktop qualification remains
+mandatory before support.
 
 ## Native WSL volume identity and control lifecycle
 
@@ -293,10 +297,11 @@ following:
    mapper into native tool execution, then complete stdin/TTY and signal
    semantics;
 3. wire the implemented bounded Docker Desktop control-operation, attach,
-   inspect, wait, resize and exact container-start primitives plus the
+   inspect, wait, resize, signal and exact container-start primitives plus the
    raw-stream decoder into container lifecycle, then implement container
-   creation, terminal event collection, signal and exit-code propagation
-   without accepting ambient endpoint overrides;
+   creation, terminal event collection, host-signal interception and forwarding
+   policy, and exit-code propagation without accepting ambient endpoint
+   overrides;
 4. Windows-filesystem and WSL-filesystem project tests plus mixed-invocation
    rejection; and
 5. real WSL2 + Docker Desktop end-to-end qualification before any support claim.
