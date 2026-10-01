@@ -609,10 +609,11 @@ registry-derived management/tool-shim reconciliation without enabling tool
 execution. Canonical project storage classification with its proof-consuming
 argument mapper, fail-closed Docker Desktop WSL integration proof and a
 proof-bound bounded Engine API control-request primitive, constrained attach
-transport and exact context-bound container-wait operation are implemented but
-not yet wired into an enabled frontend. Multiplexed-output decoding,
-terminal/resize, signal and end-to-end exit-code propagation remain. Runtime
-wiring, argument/process behavior and real WSL qualification remain.
+transport, strict multiplexed-output decoder, exact context-bound
+container-wait operation and proof-bound container-TTY resize operation are
+implemented but not yet wired into an enabled frontend. Terminal event
+collection, signal and end-to-end exit-code propagation remain. Runtime wiring,
+argument/process behavior and real WSL qualification remain.
 
 Implementation must define native config/shim location, Docker endpoint,
 project identity, named-volume behavior, file permissions, case sensitivity,

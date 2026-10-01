@@ -1,8 +1,9 @@
 // Package wsldocker proves that a native WSL2 process is connected to Docker
 // Desktop's supported WSL integration rather than an in-distribution or remote
 // Docker Engine, and provides proof-bound bounded control requests plus
-// separately constrained container-attach and wait transports. It does not
-// enable the WSL frontend by itself.
+// separately constrained container-attach and wait transports plus an exact
+// proof-bound TTY-resize operation. It does not enable the WSL frontend by
+// itself.
 package wsldocker
 
 import (
