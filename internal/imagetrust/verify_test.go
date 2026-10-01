@@ -162,7 +162,72 @@ func TestVerifyAuthenticatedKeyStagesPinnedKeyAndScrubsSourcePaths(t *testing.T)
 	}
 }
 
-func TestVerifyAuthenticatedRejectsOfflineBeforeStaging(t *testing.T) {
+func TestVerifyAuthenticatedOfflineStagesPinnedRootAndForbidsFallback(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	issuer := "https://token.actions.githubusercontent.com"
+	subject := "https://github.com/acme/tool/.github/workflows/release.yml@refs/tags/v1"
+	bundle := testSignatureBundle(t, "offline")
+	root := testSnapshot(`{"mediaType":"application/vnd.dev.sigstore.trustedroot+json;version=0.1"}`)
+	parent := t.TempDir()
+	calls := 0
+	v := verifier{
+		runner: runnerFunc(func(_ context.Context, executable string, args []string, dir string) ([]byte, []byte, error) {
+			calls++
+			if filepath.Dir(executable) != dir {
+				t.Fatalf("verifier escaped stage: %q", executable)
+			}
+			if calls == 1 {
+				want := []string{"download", "signature", "ghcr.io/acme/tool@" + digest}
+				if !reflect.DeepEqual(args, want) {
+					t.Fatalf("download args = %#v, want %#v", args, want)
+				}
+				return append(append([]byte(nil), bundle...), '\n'), nil, nil
+			}
+			wantRoot := filepath.Join(dir, trustedRootName)
+			want := []string{
+				"verify-blob-attestation",
+				"--bundle=" + filepath.Join(dir, "bundle-001.sigstore.json"),
+				"--digest=" + strings.TrimPrefix(digest, "sha256:"),
+				"--digestAlg=sha256",
+				"--type=" + cosignPayloadType,
+				"--certificate-identity=" + subject,
+				"--certificate-oidc-issuer=" + issuer,
+				"--offline=true",
+				"--new-bundle-format=true",
+				"--trusted-root=" + wantRoot,
+			}
+			if calls != 2 || !reflect.DeepEqual(args, want) {
+				t.Fatalf("offline verify args = %#v, want %#v", args, want)
+			}
+			contents, err := os.ReadFile(wantRoot)
+			if err != nil || !bytes.Equal(contents, root.Bytes()) {
+				t.Fatalf("staged trusted root = %q, %v", contents, err)
+			}
+			return nil, nil, nil
+		}),
+		now: time.Now,
+		createStage: func() (string, error) {
+			return os.MkdirTemp(parent, stagingPrefix)
+		},
+	}
+	result, err := v.verifyAuthenticated(context.Background(), verificationRequest{
+		resolved:   "ghcr.io/acme/tool@" + digest,
+		repository: "ghcr.io/acme/tool",
+		digest:     digest,
+		rule: policy.ImageTrustRule{
+			Repository: "ghcr.io/acme", Mechanism: policy.ImageTrustKeyless,
+			Issuer: issuer, Subject: subject, NetworkMode: policy.ImageTrustOfflineBundle,
+		},
+		verifier:          testSnapshot("cosign bytes"),
+		trustedRoot:       root,
+		policyFingerprint: strings.Repeat("b", 64),
+	})
+	if err != nil || calls != 2 || result.NetworkMode() != policy.ImageTrustOfflineBundle || result.SignatureCount() != 1 {
+		t.Fatalf("offline verification = (%+v, %v), calls=%d", result, err, calls)
+	}
+}
+
+func TestVerifyAuthenticatedOfflineRejectsMissingTrustedRootBeforeStaging(t *testing.T) {
 	called := false
 	v := verifier{
 		runner: runnerFunc(func(context.Context, string, []string, string) ([]byte, []byte, error) {
@@ -178,7 +243,7 @@ func TestVerifyAuthenticatedRejectsOfflineBeforeStaging(t *testing.T) {
 	_, err := v.verifyAuthenticated(context.Background(), verificationRequest{
 		rule: policy.ImageTrustRule{Repository: "ghcr.io/acme", Mechanism: policy.ImageTrustKeyless, NetworkMode: policy.ImageTrustOfflineBundle},
 	})
-	if err == nil || !strings.Contains(err.Error(), "complete offline trusted-root material") || called {
+	if err == nil || !strings.Contains(err.Error(), "authenticated offline trusted root") || called {
 		t.Fatalf("offline verification = %v, called=%t", err, called)
 	}
 }

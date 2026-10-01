@@ -94,6 +94,15 @@ func TestResolveRepositoryImageWithTrustProducesEvidence(t *testing.T) {
 	}
 }
 
+func TestLockEvidenceAcceptsOfflineBundleVerification(t *testing.T) {
+	result := validFakeTrustResult()
+	result.networkMode = policy.ImageTrustOfflineBundle
+	evidence, err := lockEvidenceFromVerification(result)
+	if err != nil || evidence == nil || evidence.BundleSHA256 != result.bundles[0] || evidence.PolicyFingerprint != result.policyFingerprint {
+		t.Fatalf("offline evidence = (%+v, %v)", evidence, err)
+	}
+}
+
 func TestResolveRepositoryImageWithoutTrustKeepsDigestOnlyEntry(t *testing.T) {
 	verified := false
 	entry, err := resolveRepositoryImageWithTrustUsing(context.Background(), "docker.io/library/python:3.13",
@@ -128,7 +137,11 @@ func TestResolveRepositoryImageWithTrustFailsClosed(t *testing.T) {
 			return r
 		}(), wantErr: "2 distinct transparency bundles"},
 		{name: "no signature", result: func() fakeVerifiedImageTrust { r := result; r.signatureCount = 0; return r }(), wantErr: "no authenticated signatures"},
-		{name: "offline", result: func() fakeVerifiedImageTrust { r := result; r.networkMode = policy.ImageTrustOfflineBundle; return r }(), wantErr: "unsupported network mode"},
+		{name: "unknown network mode", result: func() fakeVerifiedImageTrust {
+			r := result
+			r.networkMode = policy.ImageTrustNetworkMode("best-effort")
+			return r
+		}(), wantErr: "unsupported network mode"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := resolveRepositoryImageWithTrustUsing(context.Background(), configured, selectTrust, resolve,
