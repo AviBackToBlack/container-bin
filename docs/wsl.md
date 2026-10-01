@@ -237,10 +237,14 @@ accepts only an exact full container ID and fixes the request to
 `condition=not-running`. It repeats the socket/peer proof, uses the caller's
 context as the long-poll lifetime, bounds the response to 64 KiB, rejects an
 unsafe Engine error, and accepts only process exit codes from 0 through 255.
-These primitives do not decode multiplexed output or implement container
-creation/start, terminal behavior, resize, signals, or end-to-end exit-code
-propagation. Nothing is wired into tool execution yet; real WSL2 + Docker
-Desktop qualification remains mandatory before support.
+A separate start operation accepts only an exact full container ID, repeats
+the socket/peer proof, fixes the request to `POST /containers/{id}/start`, and
+accepts only HTTP 204. Docker's HTTP 304 "already started" response fails
+closed instead of being treated as an idempotent success. These primitives do
+not decode multiplexed output or implement container creation, terminal
+behavior, resize, signals, or end-to-end exit-code propagation. Nothing is
+wired into tool execution yet; real WSL2 + Docker Desktop qualification
+remains mandatory before support.
 
 ## Native WSL volume identity and control lifecycle
 
@@ -282,10 +286,10 @@ following:
 2. wire the implemented project-root selector, project boundary and argument
    mapper into native tool execution, then complete stdin/TTY and signal
    semantics;
-3. wire the implemented bounded Docker Desktop control-operation and attach
-   primitives, raw-stream decoder and wait primitive into container lifecycle,
-   then implement terminal/resize, signal and exit-code propagation without
-   accepting ambient
+3. wire the implemented bounded Docker Desktop control-operation, attach,
+   wait and exact container-start primitives plus the raw-stream decoder into
+   container lifecycle, then implement container creation, terminal/resize,
+   signal and exit-code propagation without accepting ambient
    endpoint overrides;
 4. Windows-filesystem and WSL-filesystem project tests plus mixed-invocation
    rejection; and
