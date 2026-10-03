@@ -2,8 +2,8 @@
 // Desktop's supported WSL integration rather than an in-distribution or remote
 // Docker Engine, and provides proof-bound bounded control requests plus
 // separately constrained container-create/remove, attach, inspect, wait,
-// TTY-resize and signal transports. It does not enable the WSL frontend by
-// itself.
+// TTY-resize, signal and start transports. It does not enable the WSL frontend
+// by itself.
 package wsldocker
 
 import (

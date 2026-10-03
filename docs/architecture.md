@@ -465,14 +465,15 @@ error response, and returns a context-bound duplex stream with explicit TTY
 framing metadata and independent stdin half-close. Parent cancellation closes
 the upgraded connection and unblocks I/O. Sibling proof-bound primitives decode
 strict non-TTY multiplexed output and perform exact container inspection, wait,
-TTY resize, signal, creation and stopped-container cleanup operations. Creation
-admits only one canonical project bind, exact namespace-prefixed volumes and a
+TTY resize, signal, start, creation and stopped-container cleanup operations.
+Creation admits only one canonical project bind, exact namespace-prefixed
+volumes and a
 fixed unprivileged auto-remove configuration; it generates a unique run label,
 rejects Engine warnings and re-inspects the stopped container before returning
 its immutable identity. Cleanup accepts only that identity, re-proves all
 ownership labels, refuses a running or non-auto-remove object, deletes without
 force and verifies absence. These primitives are not yet wired into an enabled
-container lifecycle; start, terminal event collection, host-signal
+container lifecycle; terminal event collection, host-signal
 interception/forwarding and end-to-end exit propagation remain.
 
 `internal/wslvolume` defines the WSL Docker-volume identity and bounded control

@@ -242,6 +242,10 @@ the response to 1 MiB, requires the returned ID to match exactly and rejects
 missing lifecycle/terminal fields. It exposes only the immutable ID, running,
 TTY, stdin, auto-remove and defensively copied label state needed by later
 lifecycle checks.
+A separate start operation accepts only an exact full container ID, repeats
+the socket/peer proof, fixes the request to `POST /containers/{id}/start`, and
+accepts only HTTP 204. Docker's HTTP 304 "already started" response fails
+closed instead of being treated as an idempotent success.
 A separate proof-bound signal operation accepts only an exact full container ID
 and an explicit numeric Linux signal in the `1..64` domain, always supplies the
 Engine `signal` query and accepts only HTTP 204.
@@ -267,7 +271,7 @@ removal disabled, and verifies absence afterward.
 The native package also has a strict decoder for non-TTY multiplexed output and
 a proof-bound resize operation for one exact full container ID with positive
 unsigned 16-bit terminal dimensions. These primitives do not implement
-container start, terminal event collection, host-signal interception or
+terminal event collection, host-signal interception or
 forwarding policy, or end-to-end exit-code propagation. Nothing is wired into
 tool execution yet; real WSL2 + Docker Desktop qualification remains mandatory
 before support.
@@ -313,10 +317,10 @@ following:
    mapper into native tool execution, then complete stdin/TTY and signal
    semantics;
 3. wire the implemented bounded Docker Desktop control-operation, attach,
-   create/cleanup, raw-stream decoder, inspect, wait, resize and signal
-   operations into container lifecycle, then implement container start,
-   terminal event collection, host-signal interception and forwarding policy,
-   and exit-code propagation without accepting ambient endpoint overrides;
+   create/cleanup, raw-stream decoder, inspect, wait, resize, signal and exact
+   container-start operations into container lifecycle, then implement terminal
+   event collection, host-signal interception and forwarding policy, and
+   exit-code propagation without accepting ambient endpoint overrides;
 4. Windows-filesystem and WSL-filesystem project tests plus mixed-invocation
    rejection; and
 5. real WSL2 + Docker Desktop end-to-end qualification before any support claim.

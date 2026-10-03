@@ -79,7 +79,7 @@ The minimum delivery gate for a code change is:
 | Enterprise policy | **Foundation and signed registry shipped / image trust remains** | PRs #75 and #84 shipped the machine-owned constraint layer and authenticated registry; image trust remains |
 | Image trust | **Online/offline production and runtime authorization implemented / private-registry work remains** | Add an explicit private-registry credential bridge |
 | Plugin/provider architecture | **Intentionally deferred** | Reopen only after at least two real integrations cannot fit the declarative model |
-| WSL2 | **Installer foundation implemented / runtime qualification remaining** | PRs #77 and #83 shipped the fail-closed host boundary and fixed native layout/state identity; explicit read-only/apply filesystem preparation and the fixed-path native install/config/shim lifecycle are available alongside namespace-prefixed/labeled volume identity with proof-bound exact inspect/create/remove/discovery, Docker Desktop integration proof, bounded control requests, constrained attach, strict raw-stream decoding, exact container inspection, exact context-bound wait, proof-bound TTY-resize, container-signal, container-creation and stopped-container cleanup operations, while command/frontend wiring, container start, terminal event collection, host-signal interception/forwarding policy, exit semantics and real WSL qualification remain |
+| WSL2 | **Installer foundation implemented / runtime qualification remaining** | PRs #77 and #83 shipped the fail-closed host boundary and fixed native layout/state identity; explicit read-only/apply filesystem preparation and the fixed-path native install/config/shim lifecycle are available alongside namespace-prefixed/labeled volume identity with proof-bound exact inspect/create/remove/discovery, Docker Desktop integration proof, bounded control requests, constrained attach, strict raw-stream decoding, exact container inspection, exact context-bound wait, proof-bound TTY-resize, container-signal, exact container-start, container-creation and stopped-container cleanup operations, while command/frontend wiring, terminal event collection, host-signal interception/forwarding policy, exit semantics and real WSL qualification remain |
 | Per-project overlays | **Completed in PR #80** | Add-only digest-bound trust model shipped on the merged enterprise-policy foundation |
 | Release SBOM | **Conditionally deferred** | Trigger on shipped third-party/runtime dependencies or concrete compliance/consumer demand |
 | Snyk | **Conditionally deferred** | Trigger only for a real coverage gap plus owner/account/token and triage/outage policy |
@@ -611,8 +611,8 @@ argument mapper, fail-closed Docker Desktop WSL integration proof and a
 proof-bound bounded Engine API control-request primitive, constrained attach
 transport, strict multiplexed-output decoder, exact context-bound
 container inspection, container-wait, container-TTY resize, container-signal,
-container-creation and stopped-container cleanup operations are implemented but
-not yet wired into an enabled frontend. Container start, terminal event
+container-start, container-creation and stopped-container cleanup operations
+are implemented but not yet wired into an enabled frontend. Terminal event
 collection, host-signal interception and forwarding policy, and end-to-end
 exit-code propagation remain. Runtime wiring, argument/process behavior and
 real WSL qualification remain.
