@@ -33,6 +33,7 @@ func productionFrontendDependencies() frontendDependencies {
 		inspectShims:          wslshim.Inspect,
 		lstat:                 os.Lstat,
 		executable:            os.Executable,
+		absPath:               filepath.Abs,
 		evalSymlinks:          filepath.EvalSymlinks,
 		getwd:                 os.Getwd,
 		interactive:           terminal.Interactive,

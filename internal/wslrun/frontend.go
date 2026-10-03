@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"path/filepath"
 
 	"github.com/AviBackToBlack/container-bin/internal/hostenv"
 	"github.com/AviBackToBlack/container-bin/internal/policy"
@@ -24,6 +23,7 @@ type frontendDependencies struct {
 	inspectShims          func(hostenv.WSLLayout, []string) (wslshim.Result, error)
 	lstat                 func(string) (os.FileInfo, error)
 	executable            func() (string, error)
+	absPath               func(string) (string, error)
 	evalSymlinks          func(string) (string, error)
 	getwd                 func() (string, error)
 	interactive           func() bool
@@ -40,7 +40,7 @@ func runFrontend(ctx context.Context, invoked string, args []string, deps fronte
 		return 0, fmt.Errorf("invalid native WSL tool invocation name %q", invoked)
 	}
 	if deps.currentLayout == nil || deps.checkLayout == nil || deps.checkRegistryRecovery == nil || deps.loadPolicy == nil ||
-		deps.loadRegistry == nil || deps.inspectShims == nil || deps.lstat == nil || deps.executable == nil || deps.evalSymlinks == nil || deps.getwd == nil || deps.interactive == nil || deps.environ == nil {
+		deps.loadRegistry == nil || deps.inspectShims == nil || deps.lstat == nil || deps.executable == nil || deps.absPath == nil || deps.evalSymlinks == nil || deps.getwd == nil || deps.interactive == nil || deps.environ == nil {
 		return 0, errors.New("native WSL frontend dependencies are incomplete")
 	}
 	layout, err := deps.currentLayout()
@@ -76,7 +76,7 @@ func runFrontend(ctx context.Context, invoked string, args []string, deps fronte
 	if err != nil {
 		return 0, fmt.Errorf("locate native WSL running executable: %w", err)
 	}
-	executable, err = filepath.Abs(executable)
+	executable, err = deps.absPath(executable)
 	if err != nil {
 		return 0, fmt.Errorf("canonicalize native WSL running executable: %w", err)
 	}
