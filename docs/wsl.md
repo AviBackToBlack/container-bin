@@ -240,17 +240,37 @@ unsafe Engine error, and accepts only process exit codes from 0 through 255.
 A separate inspect operation accepts only an exact full container ID, bounds
 the response to 1 MiB, requires the returned ID to match exactly and rejects
 missing lifecycle/terminal fields. It exposes only the immutable ID, running,
-TTY, stdin and defensively copied label state needed by later lifecycle checks.
+TTY, stdin, auto-remove and defensively copied label state needed by later
+lifecycle checks.
 A separate proof-bound signal operation accepts only an exact full container ID
 and an explicit numeric Linux signal in the `1..64` domain, always supplies the
 Engine `signal` query and accepts only HTTP 204.
+The container-creation operation accepts an already-authorized image, command,
+environment and working directory, at most one canonical project bind, and
+only named volumes prefixed by the exact WSL state namespace. Duplicate mount
+targets, Docker-socket binds, foreign volumes, malformed environment entries
+and implicit privilege/endpoint controls are not representable. It fixes all
+three attach streams, open/one-shot stdin and daemon-side auto-remove, generates
+a 128-bit run identity, and labels the container with the exact namespace, run
+and tool ownership. A successful Engine response must contain one full
+lowercase container ID and no warnings. A fresh inspect must then prove the
+same ID and labels, stopped state, requested TTY mode, open stdin and auto-remove
+configuration. A post-create validation failure triggers non-force deletion of
+the exact returned ID; an invalid/missing ID fails closed because no safe cleanup
+target exists.
+
+The paired cleanup operation takes only the immutable identity returned by
+creation. An already auto-removed container succeeds. Otherwise it re-inspects
+the exact ID, requires every ownership label and auto-remove configuration,
+refuses a running container, sends `DELETE` with both force and anonymous-volume
+removal disabled, and verifies absence afterward.
 The native package also has a strict decoder for non-TTY multiplexed output and
 a proof-bound resize operation for one exact full container ID with positive
 unsigned 16-bit terminal dimensions. These primitives do not implement
-container creation/start, terminal event collection, host-signal interception
-or forwarding policy, or end-to-end exit-code propagation. Nothing is wired
-into tool execution yet; real WSL2 + Docker Desktop qualification remains
-mandatory before support.
+container start, terminal event collection, host-signal interception or
+forwarding policy, or end-to-end exit-code propagation. Nothing is wired into
+tool execution yet; real WSL2 + Docker Desktop qualification remains mandatory
+before support.
 
 ## Native WSL volume identity and control lifecycle
 
@@ -292,11 +312,11 @@ following:
 2. wire the implemented project-root selector, project boundary and argument
    mapper into native tool execution, then complete stdin/TTY and signal
    semantics;
-3. wire the implemented bounded Docker Desktop control-operation and attach
-   primitives, raw-stream decoder, inspect, wait, resize and signal operations
-   into container lifecycle, then implement container creation/start, terminal
-   event collection, host-signal interception and forwarding policy, and
-   exit-code propagation without accepting ambient endpoint overrides;
+3. wire the implemented bounded Docker Desktop control-operation, attach,
+   create/cleanup, raw-stream decoder, inspect, wait, resize and signal
+   operations into container lifecycle, then implement container start,
+   terminal event collection, host-signal interception and forwarding policy,
+   and exit-code propagation without accepting ambient endpoint overrides;
 4. Windows-filesystem and WSL-filesystem project tests plus mixed-invocation
    rejection; and
 5. real WSL2 + Docker Desktop end-to-end qualification before any support claim.

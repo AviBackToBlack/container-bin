@@ -13,17 +13,19 @@ const maxContainerInspectOutput = 1 << 20
 // ContainerSnapshot is the bounded immutable subset of one exact Docker
 // container inspection needed by later ownership and lifecycle checks.
 type ContainerSnapshot struct {
-	id        string
-	labels    map[string]string
-	running   bool
-	tty       bool
-	openStdin bool
+	id         string
+	labels     map[string]string
+	running    bool
+	tty        bool
+	openStdin  bool
+	autoRemove bool
 }
 
 func (s ContainerSnapshot) ID() string                { return s.id }
 func (s ContainerSnapshot) Running() bool             { return s.running }
 func (s ContainerSnapshot) TTY() bool                 { return s.tty }
 func (s ContainerSnapshot) OpenStdin() bool           { return s.openStdin }
+func (s ContainerSnapshot) AutoRemove() bool          { return s.autoRemove }
 func (s ContainerSnapshot) Labels() map[string]string { return cloneContainerLabels(s.labels) }
 
 func inspectContainer(ctx context.Context, containerID string, deps operationDependencies) (ContainerSnapshot, error) {
@@ -61,6 +63,9 @@ func decodeContainerInspectResponse(raw []byte, expectedID string) (ContainerSna
 		State *struct {
 			Running *bool `json:"Running"`
 		} `json:"State"`
+		HostConfig *struct {
+			AutoRemove *bool `json:"AutoRemove"`
+		} `json:"HostConfig"`
 	}
 	if err := json.Unmarshal(raw, &response); err != nil {
 		return ContainerSnapshot{}, fmt.Errorf("decode Docker container inspect response: %w", err)
@@ -86,12 +91,19 @@ func decodeContainerInspectResponse(raw []byte, expectedID string) (ContainerSna
 	if response.State.Running == nil {
 		return ContainerSnapshot{}, errors.New("Docker container inspect response is missing State.Running")
 	}
+	if response.HostConfig == nil {
+		return ContainerSnapshot{}, errors.New("Docker container inspect response is missing HostConfig")
+	}
+	if response.HostConfig.AutoRemove == nil {
+		return ContainerSnapshot{}, errors.New("Docker container inspect response is missing HostConfig.AutoRemove")
+	}
 	return ContainerSnapshot{
-		id:        response.ID,
-		labels:    cloneContainerLabels(response.Config.Labels),
-		running:   *response.State.Running,
-		tty:       *response.Config.TTY,
-		openStdin: *response.Config.OpenStdin,
+		id:         response.ID,
+		labels:     cloneContainerLabels(response.Config.Labels),
+		running:    *response.State.Running,
+		tty:        *response.Config.TTY,
+		openStdin:  *response.Config.OpenStdin,
+		autoRemove: *response.HostConfig.AutoRemove,
 	}, nil
 }
 
