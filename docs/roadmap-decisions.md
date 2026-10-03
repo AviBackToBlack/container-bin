@@ -16,7 +16,7 @@ items from being repeatedly rediscovered as if they were immediately actionable.
 | RM-24 Python / uv | **Keep both** | Decision complete. Built-in `python`/`pip` keep the dedicated Python provider; `uv`/`uvx` remain separate opt-in stateful profiles. |
 | RM-26 Python global CLI exposure | **pipx yes; plain pip expose no** | Completed in PR #74. The separate stateful pipx profile and managed store shipped; project/compat `/venv/bin` remains intentionally unexposed. |
 | RM-34 Cargo expose enhancement | **Intentionally deferred** | Existing expose-all and explicit binary selection are sufficient. Reopen only for a concrete unmet use case. |
-| WSL2 | **Native WSL frontend** | Host boundary shipped in PR #77. Fixed-layout preparation and the native install/config/shim lifecycle are explicitly available, while runtime/Docker wiring and real WSL qualification remain. No Windows↔WSL path/state guessing. |
+| WSL2 | **Native WSL frontend** | Fixed-layout install plus ordinary managed-tool runtime/Docker wiring are implemented. Native state commands, integration corpus and real WSL qualification remain. No Windows↔WSL path/state guessing. |
 | Enterprise policy | **Machine-owned constraint layer** | Foundation shipped in PR #75. Authenticated registry and image-trust follow-ups must extend this boundary and cannot be weakened by lower layers. |
 | Image trust | **Policy-driven Sigstore/cosign at lock time** | Ready after signed-registry policy. Digest locking remains default where policy permits. Required trust never silently falls back to digest-only. |
 | Per-project overlays | **Explicit digest-bound, add-only trust model** | Implementation-ready on the merged policy foundation. Initial overlays exclude host mounts, env prefixes and shared cross-project volumes. |
@@ -344,21 +344,18 @@ is not completion.
      layout/state identity are merged in PRs #77 and #83;
    - explicit read-only/apply Linux ownership, permission and symlink layout
      preparation plus the fixed-path native install/config lifecycle are
-     implemented; ordinary runtime integration remains gated;
+     implemented; ordinary managed tool shims now enter the native runtime;
    - Docker Desktop WSL integration proof, proof-bound bounded control requests,
      the separately constrained attach transport, strict raw-stream decoder,
      exact container inspection, wait, TTY-resize, signal, start, creation and
-     stopped-container cleanup operations are implemented but not yet wired
-     into an enabled frontend; terminal event collection, host-signal
-     interception and forwarding policy, and end-to-end exit-code propagation
-     remain;
+     stopped-container cleanup operations are wired with terminal events,
+     host-signal forwarding, retained-container cleanup and exit propagation;
    - namespace-prefixed/labeled WSL volume identity plus proof-bound exact
      inspect/create/remove and namespace discovery are implemented; tool-time
-     creation and state/GC/backup/restore command integration remain;
+     creation is wired while state/GC/backup/restore command integration remains;
    - profile-aware nearest/outermost/trusted project-root selection, canonical
      project and descendant storage classification (including symlink and
-     nested-mount rejection), and proof-consuming argument mapping are
-     implemented but not yet wired into an enabled frontend;
+     nested-mount rejection), and proof-consuming argument mapping are wired;
    - project identity and cross-boundary rejection integration tests;
    - real WSL Docker E2E.
 

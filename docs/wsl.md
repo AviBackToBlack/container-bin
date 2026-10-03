@@ -5,15 +5,16 @@ Linux shims inside one WSL2 distribution, using Docker Desktop's supported WSL
 integration. A Windows `cb.exe` launched through WSL interoperability is not the
 WSL frontend, and standalone Linux remains a separate, demand-gated product.
 
-The implemented foundation establishes the runtime boundary, fixed native-WSL
-layout contract, explicit filesystem preparation and the native install/config
-lifecycle. It does not publish a Linux artifact or enable WSL execution yet.
-Until the remaining frontend wiring, Docker and qualification slices land,
-ordinary commands fail closed on every host except native Windows.
+The implementation establishes the runtime boundary, fixed native-WSL layout,
+explicit install/config lifecycle and ordinary managed-tool execution through
+Docker Desktop's Engine socket. It does not yet make a release support claim:
+real WSL2 + Docker Desktop qualification and the remaining native management
+state lifecycle still have to land before v2.0.0.
 
 ## Runtime classification
 
-- Native Windows is the currently supported frontend.
+- Native Windows is the currently qualified release frontend. The native WSL2
+  frontend is implemented here but remains qualification-gated for v2.0.0.
 - A Windows process with `WSL_INTEROP` or `WSL_DISTRO_NAME` is classified as
   Windows-through-WSL interoperability and rejected. The diagnostic names the
   inherited marker so a stray variable in an otherwise native Windows process
@@ -29,9 +30,9 @@ ordinary commands fail closed on every host except native Windows.
 - `cb version`, `cb help` and `cb config` remain bootstrap-safe for diagnosis;
   they perform no Docker or registry mutation and return before host enforcement.
 - `cb wsl prepare --check|--apply` and `cb wsl install --check|--apply` are the
-  only native-WSL management exceptions. They classify the live host themselves
-  and use only the fixed paths described below; all normal tool and management
-  execution remains gated.
+  native-WSL management surface. Managed tool shims are enabled after install;
+  other `cb` management commands remain explicitly unavailable rather than
+  falling through to Windows-oriented Docker CLI, path or state behavior.
 
 Environment variables alone never promote an ordinary Linux kernel to WSL2.
 Custom kernels that remove the Microsoft WSL2 identity markers fail closed;
@@ -65,9 +66,9 @@ location remains the separate
 administrator-owned `/etc/container-bin/policy.toml` contract.
 
 The filesystem checks are a point-in-time preflight, not a durable path handle.
-The installer revalidates the layout under the mutation lock, and shim writes
-use descriptor-relative, no-follow traversal. Later runtime and Docker wiring
-must preserve the same rule at every mutation boundary.
+The installer revalidates the layout under the mutation lock, shim writes use
+descriptor-relative, no-follow traversal, and ordinary tool execution repeats
+the fixed-layout, registry, shim and Docker identity checks before each run.
 
 `cb wsl prepare --check` validates this contract without changing the
 filesystem and reports every missing required directory. Explicit
@@ -111,7 +112,9 @@ managed-binary path with mode `0755`. An already byte-identical target is a
 no-op. The management shim and every registry-derived tool shim are then
 created only when missing and fully revalidated. Foreign files, owners, targets
 or unsafe modes stop the transaction instead of being repaired or replaced.
-The command performs no Docker request and does not enable tool execution.
+The install command itself performs no Docker request. After a successful
+apply and revalidation, its managed tool shims are eligible for ordinary
+runtime execution.
 An interruption before the final binary rename can leave a current-user-owned
 `.cb-install-<random>.tmp` regular file in the private binary directory.
 ContainerBin does not sweep filename lookalikes without stronger provenance;
@@ -161,7 +164,7 @@ distribution therefore cannot silently adopt existing state.
 
 ## Project storage boundary
 
-The unexposed `internal/wslproject` selector applies the profile's shared
+The `internal/wslproject` selector applies the profile's shared
 project-marker defaults and `nearest`/`outermost` policy, or an exact trusted
 overlay root. It rejects malformed marker names and symlink or special-file
 markers instead of following them. With no marker, the exact working directory
@@ -182,7 +185,7 @@ preserves relative package patterns such as `./...`, maps absolute package
 patterns, and rejects external, symlinked or cross-mount paths instead of
 creating implicit mounts or translating Windows spellings. Ambiguous bare
 arguments remain unchanged so a project entry cannot replace a tool subcommand.
-Runtime execution is still gated.
+The native runtime consumes this exact proof for every project-mode tool.
 
 A WSL-filesystem project root must be on the same filesystem device as the
 distribution root. A Windows-filesystem project root must be below a proven default
@@ -259,30 +262,36 @@ namespace-prefixed name, complete labels, local driver and local scope, so Docke
 cannot implicitly create or adopt foreign state. Duplicate mount targets,
 malformed environment entries and implicit privilege/endpoint controls are not
 representable. Creation fixes all three attach streams, open/one-shot stdin and
-daemon-side auto-remove, generates a 128-bit run identity, and labels the
+an explicit retention mode, generates a 128-bit run identity, and labels the
 container with the exact namespace, run and tool ownership. A successful Engine
 response must contain one full lowercase container ID and no warnings. A fresh
 inspect must then prove the same ID and labels, stopped state, requested TTY
-mode, all attach flags, open/one-shot stdin and auto-remove configuration. A
-post-create validation failure uses a fresh bounded cleanup context, re-proves
+mode, all attach flags, open/one-shot stdin and retention configuration. The
+default primitive retains daemon auto-remove behavior. The runtime instead
+retains its owned container until the exact wait response captures the exit
+status, avoiding an auto-remove race for very short-lived tools, and then uses
+the proof-bound non-force cleanup operation. A post-create validation failure
+uses a fresh bounded cleanup context, re-proves
 the returned ID's complete ownership and performs non-force deletion only when
 that proof succeeds; an invalid/missing ID fails closed because no safe cleanup
 target exists.
 
 The paired cleanup operation takes only the immutable identity returned by
 creation. An already auto-removed container succeeds. Otherwise it re-inspects
-the exact ID, requires every ownership label and auto-remove configuration,
+the exact ID, requires every ownership label and the original retention configuration,
 refuses a running container, sends `DELETE` with both force and anonymous-volume
 removal disabled, and verifies absence afterward. If daemon-side auto-remove
 wins the race between inspection and deletion, a DELETE 404 succeeds only after
 a fresh proof-bound inspection confirms absence.
-The native package also has a strict decoder for non-TTY multiplexed output and
-a proof-bound resize operation for one exact full container ID with positive
-unsigned 16-bit terminal dimensions. These primitives do not implement
-terminal event collection, host-signal interception or
-forwarding policy, or end-to-end exit-code propagation. Nothing is wired into
-tool execution yet; real WSL2 + Docker Desktop qualification remains mandatory
-before support.
+The runtime attaches before start, streams stdin with an explicit half-close,
+decodes non-TTY stdout/stderr framing, uses raw terminal mode for TTY sessions,
+applies the initial size, consumes `SIGWINCH`, and forwards HUP, INT, QUIT,
+USR1, USR2, TERM, CONT and TSTP numerically to the exact owned container. It
+waits for the Engine exit status, drains output, restores the terminal and
+performs proof-bound cleanup; the tool's `0..255` exit code passes through.
+Infrastructure or stream failure cancels the live wait, sends SIGKILL through
+the same proof-bound transport, waits for stop and then cleans up. Real WSL2 +
+Docker Desktop qualification remains mandatory before release support.
 
 ## Native WSL volume identity and control lifecycle
 
@@ -309,29 +318,29 @@ on partial-result warnings, duplicates or results outside both namespace
 filters. Because the Engine applies those label and name filters together,
 discovery deliberately does not report a same-name foreign volume that omits
 the namespace label; exact-name inspect or ensure still finds and rejects that
-collision. Tool execution plus `cb state`/`cb gc` are not wired to these
-primitives yet.
+collision. Tool execution now plans the complete state set before mutation,
+ensures each exact volume, and passes its complete labels into container
+creation. Stateful project/shared profiles and the Python provider's
+per-project venv, namespace-shared compatibility venv and pip cache are wired.
+`cb state`/`cb gc` and backup/restore remain separate native management work.
 
-## Required before WSL execution can be enabled
+## Remaining before the v2 WSL support claim
 
-The native installer/config lifecycle is now implemented, but execution stays
-gated. Later reviewable slices must still implement and qualify all of the
-following:
+Ordinary managed tool execution is implemented. Release qualification still
+requires all of the following:
 
-1. wire the proof-bound volume primitives into tool-time shared/project
-   creation plus `cb state`, `cb gc`, backup and restore; each consumer must
-   construct and match the complete distribution/machine/user identity;
-2. wire the implemented project-root selector, project boundary and argument
-   mapper into native tool execution, then complete stdin/TTY and signal
-   semantics;
-3. wire the implemented bounded Docker Desktop control-operation, attach,
-   create/cleanup, raw-stream decoder, inspect, wait, resize, signal and exact
-   container-start operations into container lifecycle, then implement terminal
-   event collection, host-signal interception and forwarding policy, and
-   exit-code propagation without accepting ambient endpoint overrides;
-4. Windows-filesystem and WSL-filesystem project tests plus mixed-invocation
+1. complete the native state-management subset required for safe supported
+   cleanup and diagnostics; every consumer must construct and match the complete
+   distribution/machine/user identity;
+2. Windows-filesystem and WSL-filesystem project tests plus mixed-invocation
    rejection; and
-5. real WSL2 + Docker Desktop end-to-end qualification before any support claim.
+3. real WSL2 + Docker Desktop end-to-end qualification before any support claim.
+
+The WSL runtime deliberately rejects `host_mounts`: that registry field uses a
+Windows drive-path grammar and silently reinterpreting it as Linux would violate
+the no-equivalence contract. Project descendants and managed volumes are the
+supported native mount inputs. The runtime likewise uses only the fixed WSL
+registry and lockfile and never falls back to executable-relative Windows state.
 
 Docker's setup contract is documented in its
 [WSL2 backend guide](https://docs.docker.com/desktop/features/wsl/): WSL2

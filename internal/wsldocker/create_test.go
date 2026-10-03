@@ -69,6 +69,40 @@ func TestCreateContainerBuildsExactRequestAndReprovesOwnership(t *testing.T) {
 	}
 }
 
+func TestCreateContainerCanRetainOwnedContainerForExitStatusCollection(t *testing.T) {
+	spec := testContainerCreateSpec()
+	spec.Mounts = spec.Mounts[:1]
+	spec.RetainUntilCleanup = true
+	deps := testCreateDependencies()
+	calls := 0
+	deps.operations.perform = func(_ context.Context, _ string, request Request) (operationResult, error) {
+		calls++
+		switch calls {
+		case 1:
+			var body containerCreateBody
+			if err := json.Unmarshal(request.Body, &body); err != nil {
+				t.Fatal(err)
+			}
+			if body.HostConfig.AutoRemove {
+				t.Fatal("retained container unexpectedly enabled daemon auto-remove")
+			}
+			return operationResult{StatusCode: http.StatusCreated, PeerUID: 0, Raw: []byte(`{"Id":"` + testContainerID + `","Warnings":[]}`)}, nil
+		case 2:
+			return operationResult{StatusCode: http.StatusOK, PeerUID: 0, Raw: ownedContainerInspect(testContainerID, spec, testRunID, false, false)}, nil
+		default:
+			t.Fatalf("unexpected request %d: %#v", calls, request)
+			return operationResult{}, nil
+		}
+	}
+	container, err := createContainer(context.Background(), spec, deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !container.retainUntilCleanup || calls != 2 {
+		t.Fatalf("retained container = %#v, calls=%d", container, calls)
+	}
+}
+
 func TestCreateContainerRollsBackWarningAndPostCreateMismatch(t *testing.T) {
 	for name, response := range map[string]func(ContainerCreateSpec) []byte{
 		"warning": func(ContainerCreateSpec) []byte {

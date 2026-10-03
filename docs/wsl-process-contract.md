@@ -1,103 +1,103 @@
 # Native WSL process contract
 
-This document defines the process semantics selected for ContainerBin's future
-native-Linux frontend inside WSL2. It pins behavior that is portable and
-testable before that frontend is enabled. It does **not** enable ordinary WSL
-commands, publish a Linux binary, or claim real WSL2 + Docker Desktop
-qualification. The host gate in [the WSL boundary](wsl.md) remains closed.
-
+This document defines the process semantics implemented by ContainerBin's
+native-Linux frontend inside WSL2. Managed tool shims are enabled in this tree;
+the v2 support claim still requires real WSL2 + Docker Desktop qualification.
 The corresponding Windows behavior is documented separately in
 [the Windows shell/process contract](shell-contract.md).
 
-## Argv and paths
+## Argv, working directory and paths
 
-On native Linux, each argument received in `os.Args` is forwarded as the same
-distinct string. ContainerBin does not perform the Windows-only PowerShell
-repair that joins a registry-declared `path_equals` option ending in `=` with
-the next argument. For example, the two arguments `-chdir=` and `project` stay
-two arguments under WSL; only Windows can repair that shape to
-`-chdir=project`.
+Each argument received in `os.Args` remains one distinct string. ContainerBin
+does not perform the Windows-only PowerShell repair that joins a declared
+`path_equals` option ending in `=` with the next argument.
 
-The non-Windows path mapper is an exact argv pass-through and produces no
-additional bind mounts. Linux absolute and relative paths, symlinks, case and
-filesystem identity must be handled by the native WSL project/layout wiring,
-not guessed through Windows path translation. That broader filesystem wiring
-and its real Docker tests remain prerequisites for enabling the frontend.
+Project-mode tools apply the registry's nearest/outermost marker policy (or an
+exact trusted project root), prove the current directory and project storage
+boundary, and bind that root at `/workspace/project`. Linux absolute paths,
+explicit relative paths and registry-forced path positions are mapped only
+after the exact descendant is re-proven under that root. External paths,
+symlinks, nested mounts, Windows spelling and guessed `/mnt/<drive>` equivalence
+fail closed. Ambiguous bare arguments and package patterns remain tool syntax.
 
-## Environment names
+Isolated tools use `/root`, create no project bind and preserve argv literally.
+They can use only shared state volumes; registry validation already forbids
+project state and project-marker policy in isolated mode.
 
-Profiles remain allowlist-only: only names selected by `env_names` or prefixes
-selected by `env_prefixes` are added to `docker run`. Matching follows the host
-operating system:
+`host_mounts` is rejected by the WSL runtime. Its registry grammar deliberately
+describes Windows drive paths, and interpreting those values as native Linux
+paths would violate the no-equivalence rule.
 
-- Windows matching is case-insensitive, preserving existing behavior.
-- Native Linux/WSL matching is case-sensitive. `PATH`, `Path` and `path` are
-  distinct names, and a profile declaring one does not silently select another.
+## Environment
 
-ContainerBin passes the selected name to Docker without copying its value into
-the command line. The Docker child inherits the process environment and Docker
-resolves the selected value by exact name.
+Profiles remain allowlist-only. Names selected by `env_names` or prefixes
+selected by `env_prefixes` are matched case-sensitively against the native Linux
+environment. Selected `NAME=value` assignments are copied into the Engine create
+request; the Docker CLI and its ambient environment are not involved. Literal
+`env_set` assignments override a selected host value of the same exact name,
+matching the existing provider precedence.
 
-## Streams, TTY and exit status
+Python additionally fixes `VIRTUAL_ENV=/venv` and the provider-owned `PATH`.
+Those provider values override a conflicting host or profile value because the
+bootstrap depends on the exact `/venv/bin/python` identity.
 
-The Docker CLI receives stdin, stdout and stderr directly. ContainerBin adds no
-buffering, encoding conversion or line editing. The child also receives the
-current process environment unchanged.
+## Container and state lifecycle
 
-The unexposed native Engine API path has a separate strict decoder for Docker's
-non-TTY raw-stream framing. It accepts complete stdout and stderr frames with
-zeroed reserved header bytes, routes their payloads without frame-sized
-allocation, and treats a clean EOF as valid only between frames. Stdin or
-unknown stream identifiers, truncated frames, malformed reserved bytes, and
-unsafe daemon-error payloads fail closed. This primitive does not enable the
-frontend or change the existing Docker CLI path.
+The runtime resolves the image against the fixed WSL lockfile and machine
+policy, plans the complete mount set, validates the create request, and only
+then ensures each exact namespaced volume. Stateful profiles retain their
+project/shared declarations. The Python provider uses a case-sensitive
+project-scoped venv when a marker is found, a namespace-shared compatibility
+venv otherwise, and one namespace-shared pip cache.
 
-The same proof-bound path has an explicit container-TTY resize operation. It
-accepts only an exact full container ID and positive unsigned 16-bit height and
-width values, sends them to Docker's fixed resize endpoint, and accepts only an
-HTTP 200 response. It does not inspect the caller's terminal or subscribe to
-resize events; later frontend wiring must supply dimensions from a proven TTY
-and invoke the operation for each accepted resize event.
+The owned container is created stopped and retained until cleanup. This avoids
+daemon auto-remove racing an ultra-short-lived process before its status can be
+collected. ContainerBin attaches before start, starts exactly once, begins an
+Engine wait, captures the `0..255` status, drains output, and removes the stopped
+container through the proof-bound non-force cleanup path. Every control or
+stream connection repeats the Docker Desktop WSL socket and peer proof.
 
-`docker run` always receives `-i`. It additionally receives `-t` only when both
-stdin and stdout report character-device mode; either redirection, either stat
-failure, or a non-character stream keeps the invocation non-TTY. Stderr does
-not participate in that decision.
+## Streams and TTY
 
-A normal child completion returns exit status 0. If the Docker child exits with
-a non-zero status, ContainerBin returns that exact child status and no wrapper
-error. A failure to start Docker is a ContainerBin infrastructure error; the
-internal runner returns status 1 plus the start error, and the top-level command
-maps infrastructure failures through ContainerBin's documented exit policy.
+ContainerBin always attaches stdin, stdout and stderr. Non-TTY stdin is copied
+byte-for-byte and half-closed at EOF while output remains open. Docker's strict
+raw-stream framing is decoded into the caller's separate stdout and stderr; a
+truncated or malformed frame is an infrastructure failure.
 
-A signal-terminated Unix child is a separate, unresolved case:
-`exec.ExitError.ExitCode()` returns `-1`, and the current pre-frontend path would
-pass that value to `os.Exit`, surfacing as status 255 rather than a conventional
-`128 + signal` status. This is not accepted as the final native-WSL contract.
-The real WSL qualification slice must select and test an explicit mapping before
-the frontend is enabled.
+TTY mode is selected only when both stdin and stdout are character devices.
+The native terminal enters raw mode, the initial size is applied after start,
+and each `SIGWINCH` triggers a fresh positive row/column resize. Docker's TTY
+stream is unframed and is written to stdout; terminal state is restored on every
+return path.
 
-These stream, TTY and exit rules are covered by portable tests using a real
-child process; they do not require Docker.
+The runtime waits up to five seconds for the attach stream to drain after the
+Engine reports exit. Failure to drain is an infrastructure error rather than a
+silent loss of trailing output.
 
-## Signals
+## Signals, failures and exit status
 
-The unexposed native Engine API path has a proof-bound container-signal
-operation. It accepts one exact full container ID and one explicit numeric Linux
-signal in the `1..64` domain, always supplies Docker's `signal` query parameter
-and accepts only HTTP 204. It never relies on the endpoint's default `SIGKILL`.
+The host intercepts HUP, INT, QUIT, USR1, USR2, TERM, CONT and TSTP and forwards
+their exact numeric Linux value to the owned container. `SIGWINCH` is consumed
+as a resize event and is not forwarded. KILL and STOP cannot be intercepted.
 
-This primitive does not choose which host signals to intercept, install signal
-handlers or define cleanup ordering. The enabled frontend must make those
-policies explicit and qualify them end to end before invoking the operation.
+The tool's Engine status passes through unchanged, including conventional
+signal-derived statuses such as 130 when the container process returns them.
+ContainerBin does not invent a second mapping from host signals.
 
-The tool-run path installs no signal handler and creates no new process group.
-On native Linux/WSL, the `cb` process and its `docker` child therefore retain
-the operating system's default process-group relationship. ContainerBin does
-not synthesize, translate or explicitly forward signals.
+If attach, output, resize, signal forwarding, wait or the caller context fails
+while the container is running, ContainerBin cancels the live operations, sends
+SIGKILL through the proof-bound signal endpoint, waits for the retained
+container to stop, and then performs proof-bound cleanup. Any cleanup failure is
+joined to the original diagnostic. The top level maps infrastructure failures
+to ContainerBin's documented exit code 120.
 
-That code-level statement is intentionally narrower than a runtime support
-claim. Terminal-generated signal delivery through WSL, Docker Desktop, the
-Docker CLI and the container process—and resulting cleanup behavior—must still
-be exercised in the real WSL2 + Docker Desktop qualification suite before the
-frontend can be enabled.
+A failed start response is treated as transport-ambiguous: the Engine may have
+accepted the request before the connection failed. Cleanup therefore attempts
+the same bounded stop/wait sequence and then a proof-bound non-force removal;
+the removal can safely clean an already-stopped container but refuses one that
+is still running.
+
+These semantics have in-process integration coverage. The release gate still
+requires real WSL2 + Docker Desktop exercises for piped stdin, split output,
+interactive resize, Ctrl-C/termination, fast exit, cleanup and exact exit-code
+propagation on both distribution and default Windows-drive projects.

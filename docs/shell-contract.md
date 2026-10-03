@@ -1,6 +1,6 @@
 # Windows shell/process compatibility contract
 
-For the separately gated native-WSL frontend, see the
+For the separately implemented native-WSL frontend, see the
 [native WSL process contract](wsl-process-contract.md). Its argv and
 environment-name rules deliberately follow Linux rather than Windows semantics.
 

@@ -79,7 +79,7 @@ The minimum delivery gate for a code change is:
 | Enterprise policy | **Foundation and signed registry shipped / image trust remains** | PRs #75 and #84 shipped the machine-owned constraint layer and authenticated registry; image trust remains |
 | Image trust | **Online/offline production and runtime authorization implemented / private-registry work remains** | Add an explicit private-registry credential bridge |
 | Plugin/provider architecture | **Intentionally deferred** | Reopen only after at least two real integrations cannot fit the declarative model |
-| WSL2 | **Installer foundation implemented / runtime qualification remaining** | PRs #77 and #83 shipped the fail-closed host boundary and fixed native layout/state identity; explicit read-only/apply filesystem preparation and the fixed-path native install/config/shim lifecycle are available alongside namespace-prefixed/labeled volume identity with proof-bound exact inspect/create/remove/discovery, Docker Desktop integration proof, bounded control requests, constrained attach, strict raw-stream decoding, exact container inspection, exact context-bound wait, proof-bound TTY-resize, container-signal, exact container-start, container-creation and stopped-container cleanup operations, while command/frontend wiring, terminal event collection, host-signal interception/forwarding policy, exit semantics and real WSL qualification remain |
+| WSL2 | **Native tool runtime implemented / state commands and qualification remaining** | The fail-closed host boundary, fixed install/config/shim lifecycle, project proof/mapping, namespaced tool-time volumes, direct Docker Desktop Engine lifecycle, stdin/output framing, raw TTY, resize, signal forwarding, retained-container cleanup and exit propagation are wired for managed tool shims. Native state-management commands, integration corpus and real WSL2 + Docker Desktop qualification remain. |
 | Per-project overlays | **Completed in PR #80** | Add-only digest-bound trust model shipped on the merged enterprise-policy foundation |
 | Release SBOM | **Conditionally deferred** | Trigger on shipped third-party/runtime dependencies or concrete compliance/consumer demand |
 | Snyk | **Conditionally deferred** | Trigger only for a real coverage gap plus owner/account/token and triage/outage policy |
@@ -605,17 +605,16 @@ PR #77 shipped the fail-closed host runtime boundary and explicit Windows/WSL
 separation. The fixed native Linux config/shim/state layout can now be checked
 or prepared explicitly, and `cb wsl install --check|--apply` composes it with
 fixed-path policy/registry loading, managed-binary installation and
-registry-derived management/tool-shim reconciliation without enabling tool
-execution. Canonical project storage classification with its proof-consuming
-argument mapper, fail-closed Docker Desktop WSL integration proof and a
-proof-bound bounded Engine API control-request primitive, constrained attach
-transport, strict multiplexed-output decoder, exact context-bound
-container inspection, container-wait, container-TTY resize, container-signal,
-container-start, container-creation and stopped-container cleanup operations
-are implemented but not yet wired into an enabled frontend. Terminal event
-collection, host-signal interception and forwarding policy, and end-to-end
-exit-code propagation remain. Runtime wiring, argument/process behavior and
-real WSL qualification remain.
+registry-derived management/tool-shim reconciliation. Ordinary managed tool
+execution now composes canonical project storage proof and argument mapping,
+namespaced stateful/Python volume creation, fixed-lock image authorization,
+Docker Desktop WSL integration proof, create/attach/start/wait/resize/signal/
+cleanup, strict non-TTY output decoding, raw TTY mode, terminal resize events,
+host-signal forwarding and exact exit-code propagation. Containers are retained
+until wait records the exit status and are then removed through the proof-bound
+cleanup path, avoiding an auto-remove race for fast tools. Native state-command
+integration, project/cross-boundary integration coverage and real WSL
+qualification remain.
 
 Implementation must define native config/shim location, Docker endpoint,
 project identity, named-volume behavior, file permissions, case sensitivity,
@@ -726,7 +725,7 @@ in PR #91.
 2. Signed-registry enterprise policy.
 3. Image trust at lock time, after signed-registry policy merges.
 4. Remaining RM-31 real published-release/self-test E2E qualification.
-5. Remaining WSL2 runtime/Docker wiring and real E2E.
+5. Remaining native WSL state commands, integration corpus and real E2E.
 6. RM-30 Authenticode only after certificate/protected-signing prerequisites exist.
 7. RM-29 real Windows-on-Arm + Docker Desktop qualification last; do not delay
    higher-value work for it.

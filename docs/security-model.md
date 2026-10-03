@@ -91,19 +91,20 @@ readable, and dangerous to let others edit.
   fingerprint, mechanism and signer/key identity. Missing or stale evidence
   never falls back to digest-only locking. Private-registry credentials remain
   excluded until an explicit non-ambient bridge is implemented.
-- **Fail-closed host boundary.** Non-bootstrap work currently runs only in a
-  native Windows process. Windows binaries launched through detected WSL
-  interoperability, WSL1, ordinary work on recognized-but-not-yet-enabled native WSL2,
-  standalone Linux and other hosts refuse before registry or Docker work.
-  WSL2 classification requires Microsoft WSL2 kernel markers; environment
-  variables alone cannot turn ordinary Linux into a supported host. The sole
-  native-WSL exceptions are the explicit `cb wsl prepare --check|--apply` and
-  `cb wsl install --check|--apply` lifecycles. Preparation validates or creates
-  only the fixed current-user layout and loads no registry or machine policy.
+- **Fail-closed host boundary.** Non-bootstrap work runs only in a native
+  Windows process or a distribution-identified native WSL2 process. Windows
+  binaries launched through detected WSL interoperability, WSL1, standalone
+  Linux and other hosts refuse before registry or Docker work. WSL2
+  classification requires Microsoft WSL2 kernel markers and a canonical
+  `WSL_DISTRO_NAME`; environment variables alone cannot turn ordinary Linux
+  into a supported host. Native WSL preparation validates or creates only the
+  fixed current-user layout and loads no registry or machine policy.
   Installation validates that layout before fixed-path policy/registry access,
   authenticates signed registries when required, and reconciles only the fixed
-  managed binary and provenance-checked symlinks. Neither path performs Docker
-  work or enables tool execution.
+  managed binary and provenance-checked symlinks. Ordinary managed tool
+  execution then revalidates that fixed installation and uses the proof-bound
+  Docker Desktop WSL transport; unsupported native management commands remain
+  rejected.
 - **Native WSL installation does not adopt ambient files.** The bootstrap
   executable is the exact OS-reported running image and must be a bounded,
   current-user-owned regular non-symlink file with safe executable permissions.
@@ -150,22 +151,28 @@ readable, and dangerous to let others edit.
   requires that same proof immediately before deletion and verifies absence
   afterward. Prefix/label filters are discovery-only and cannot authorize
   adoption or mutation. Windows and other WSL scopes remain foreign state.
-- **Native WSL run containers are transaction-bound.** The unexposed create
+- **Native WSL run containers are transaction-bound.** The create
   primitive accepts no raw Engine body, endpoint, privilege or Docker-socket
   mount controls. It admits at most one existing, symlink-free canonical project
   bind, rejects both fixed Docker-socket spellings and their source ancestors,
   and freshly proves each named volume's exact local name and complete ownership
-  labels before use. It sets daemon-side auto-remove and labels each run with a
-  generated 128-bit identity, exact WSL namespace and tool. The returned full
+  labels before use. It requires an explicit retention mode and labels each run
+  with a generated 128-bit identity, exact WSL namespace and tool. The returned full
   container ID is not exposed until a fresh inspect proves those labels,
-  stopped state, every attach/stdin flag, requested TTY and auto-remove
+  stopped state, every attach/stdin flag, requested TTY and retention
   configuration. Post-create validation failure uses a separate bounded context
   and re-proves exact ownership before any non-force rollback. Later cleanup
   accepts only the immutable returned identity, re-proves ownership, refuses a
-  running or non-auto-remove container, deletes without force or anonymous-volume
+  running container or changed retention mode, deletes without force or anonymous-volume
   removal, and verifies absence; a racing auto-remove 404 is accepted only after
   another inspection proves absence. A malformed create response without a
   valid full ID fails closed rather than guessing a cleanup target.
+- **Native WSL runtime failure cleanup is bounded.** Normal tool runs retain the
+  owned container until Engine wait captures the exact status, closing the
+  auto-remove race for fast processes. Stream, resize, forwarding or wait
+  failure cancels live operations, sends SIGKILL only to the immutable owned
+  container, waits under a fresh bound and then invokes the same non-force
+  proof-bound removal. Cleanup errors are never hidden by the original failure.
 - **Machine policy cannot be redirected or weakened.** A present enterprise
   policy is loaded only from the fixed OS path, requires administrator/root
   ownership and restrictive permissions, and authorizes the already-resolved

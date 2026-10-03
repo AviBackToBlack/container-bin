@@ -341,7 +341,7 @@ internal/registry    Tool/Registry, TOML parser, defaults, registry file
 internal/toml        the shared TOML subset lexer                    (leaf)
 internal/atomicio    crash-safe write + .bak recovery                (leaf)
 internal/mutationlock  the registry mutation lock primitive          (leaf)
-internal/hostenv       host classification and gated WSL layout       (leaf)
+internal/hostenv       host classification and fixed WSL layout       (leaf)
 internal/terminal      shared stdin/stdout character-device decision   (leaf)
 internal/wslfs         native WSL filesystem ownership/mode preflight
 internal/wslshim       native WSL registry-derived shim preflight/mutation
@@ -351,6 +351,7 @@ internal/wslpathmap    native WSL project argument mapping
 internal/wsldocker     native WSL Docker Desktop integration proof
 internal/wslvolume     native WSL namespaced volume identity/lifecycle and
                        stateful-tool binding planning
+internal/wslrun        native WSL fixed-layout tool runtime orchestration
 internal/selfupdate    release selection, staging, verification and replacement
 ```
 
@@ -358,7 +359,7 @@ The exact import edges, from `go list -f '{{.ImportPath}} {{.Imports}}' ./...`,
 project-internal imports only:
 
 ```
-main         -> cli, diag, dockerrun, hostenv, mutationlock, policy, projectconfig, registry, selfupdate, state, wslfs, wslinstall
+main         -> cli, diag, dockerrun, hostenv, mutationlock, policy, projectconfig, registry, selfupdate, state, wslfs, wslinstall, wslrun
 cli          -> atomicio, diag, dockerrun, dockervol, lockfile, pathmap, policy, registry, statearchive, toml
 projectconfig -> atomicio, pathmap, policy, registry, toml
 diag         -> dockerrun, dockervol, lockfile, pathmap, policy, registry
@@ -376,6 +377,7 @@ wslproject  -> hostenv, registry
 wslpathmap  -> registry, wslproject
 wsldocker   -> hostenv
 wslvolume   -> hostenv, registry, wsldocker, wslproject
+wslrun      -> hostenv, lockfile, policy, registry, terminal, wsldocker, wslfs, wslpathmap, wslproject, wslshim, wslvolume
 selfupdate  -> mutationlock, registry
 atomicio, dockervol, hostenv, mutationlock, terminal, toml -> (leaves)
 ```
@@ -425,7 +427,7 @@ composed after `internal/wslfs` validates the same layout's home, intermediate
 path and filesystem-device boundary. It never replaces or removes foreign
 objects and never discovers unrelated directory entries.
 
-`internal/wslinstall` composes those two boundaries into the explicitly gated
+`internal/wslinstall` composes those two boundaries into the explicit
 `cb wsl install --check|--apply` lifecycle. Check mode validates the layout
 before read-only fixed-path policy/registry access and reports the exact
 registry, binary and shim work without recovering backups. Apply mode prepares
@@ -433,10 +435,10 @@ the layout, revalidates it under `main`'s signal-aware mutation lock, recovers
 or upgrades an unsigned registry at mode `0600` (or requires an authenticated
 pre-provisioned signed registry), atomically publishes the validated running
 binary at the fixed path, then reconciles the management and registry-derived
-tool symlinks through `internal/wslshim`. It performs no Docker I/O and leaves
-ordinary WSL dispatch gated.
+tool symlinks through `internal/wslshim`. It performs no Docker I/O; ordinary
+managed tool dispatch revalidates the resulting identity in `internal/wslrun`.
 
-`internal/wslproject` is an unexposed profile-aware selector and classifier for
+`internal/wslproject` is a profile-aware selector and classifier for
 native WSL project roots. It applies the registry's nearest/outermost marker
 policy or an exact trusted overlay root, then proves both the selected root and
 the starting working directory. Marker names must be single Linux path elements,
@@ -449,7 +451,7 @@ DrvFs or WSL virtiofs mount. Custom DrvFs roots, entire-drive roots, ambiguous
 `/mnt` paths and Windows spellings fail closed. The package preserves the exact
 Linux spelling and does not translate between Windows and WSL path identities.
 
-`internal/wsldocker` is an unexposed native-WSL detector for Docker Desktop's
+`internal/wsldocker` is the native-WSL detector for Docker Desktop's
 supported distribution integration. It rejects Docker endpoint/TLS/API
 environment overrides and uses a direct Engine API request on the root-owned,
 non-world-writable `/var/run/docker.sock`, without loading an ambient Docker CLI
@@ -457,8 +459,8 @@ or context. The connected peer must be root and the socket device/inode must be
 stable across the request. The engine must report the exact Linux Docker
 Desktop name/OS, a Microsoft WSL2 kernel and Docker Desktop's address label.
 The probe has fixed time and output bounds. A reachable local or remote Docker
-Engine is deliberately insufficient; later frontend wiring must repeat this
-proof and retain the explicit Unix endpoint for every Docker operation. Its
+Engine is deliberately insufficient; each runtime operation repeats this proof
+and retains the explicit Unix endpoint. Its
 separate attach transport admits only a live-stream POST for an exact full
 container ID, repeats the complete socket/peer proof, bounds the upgrade and
 error response, and returns a context-bound duplex stream with explicit TTY
@@ -467,14 +469,11 @@ the upgraded connection and unblocks I/O. Sibling proof-bound primitives decode
 strict non-TTY multiplexed output and perform exact container inspection, wait,
 TTY resize, signal, start, creation and stopped-container cleanup operations.
 Creation admits only one canonical project bind, exact namespace-prefixed
-volumes and a
-fixed unprivileged auto-remove configuration; it generates a unique run label,
+volumes and an explicit auto-remove/retention configuration; it generates a unique run label,
 rejects Engine warnings and re-inspects the stopped container before returning
 its immutable identity. Cleanup accepts only that identity, re-proves all
-ownership labels, refuses a running or non-auto-remove object, deletes without
-force and verifies absence. These primitives are not yet wired into an enabled
-container lifecycle; terminal event collection, host-signal
-interception/forwarding and end-to-end exit propagation remain.
+ownership labels, refuses a running object or changed retention mode, deletes
+without force and verifies absence.
 
 `internal/wslvolume` defines the WSL Docker-volume identity and bounded control
 lifecycle. A volume name starts with `cb-<wsl-namespace>-`;
@@ -492,7 +491,18 @@ identity constructed by this package and its complete labels plus local
 driver/scope. The package also preflights an entire stateful profile's
 project/shared binding set, re-proves the exact project root before deriving
 project identities, and ensures each distinct identity only after the complete
-plan validates. Container/frontend and state-command wiring remain gated.
+plan validates. Tool-time wiring is active; native state commands remain.
+
+`internal/wslrun` is the native WSL vertical orchestrator. It requires the
+fixed layout, private registry, managed binary and exact invoked shim; resolves
+images only through the fixed WSL lockfile and machine policy; selects and maps
+one proven project; validates the complete command/environment/mount plan before
+volume mutation; then composes create, attach, start, wait, resize, signal and
+cleanup. It retains the owned container until the wait response records the
+exit status, so daemon auto-remove cannot race fast tools. Non-TTY streams use
+strict Docker framing; TTY sessions use raw terminal mode, resize events and an
+explicit Linux signal-forwarding set. Any runtime failure cancels live I/O,
+proof-bound kills the container, waits for stop and performs non-force cleanup.
 
 After the host runtime boundary is enforced, `cb self-update` is dispatched
 before machine policy and registry loading. Release selection therefore remains

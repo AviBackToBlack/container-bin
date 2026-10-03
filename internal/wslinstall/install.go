@@ -1,6 +1,6 @@
 // Package wslinstall composes the fixed native-WSL layout, machine policy,
-// registry lifecycle, managed binary and symlink reconciliation. It does not
-// enable ordinary tool execution; runtime wiring remains separately gated.
+// registry lifecycle, managed binary and symlink reconciliation. It performs
+// no Docker I/O; ordinary tool shims revalidate this identity at execution.
 package wslinstall
 
 import (
@@ -307,7 +307,7 @@ func printPlan(out io.Writer, plan Plan, applied bool) error {
 		fmt.Fprintln(&report, "status:        APPLY REQUIRED")
 		fmt.Fprintln(&report, "apply:         cb wsl install --apply")
 	}
-	fmt.Fprintln(&report, "frontend:      GATED (runtime wiring and WSL E2E are not enabled)")
+	fmt.Fprintln(&report, "frontend:      RUNTIME ENABLED (release support requires real WSL qualification)")
 	if _, err := io.WriteString(out, report.String()); err != nil {
 		return fmt.Errorf("write native WSL installation report: %w", err)
 	}

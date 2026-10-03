@@ -22,6 +22,7 @@ import (
 	"github.com/AviBackToBlack/container-bin/internal/state"
 	"github.com/AviBackToBlack/container-bin/internal/wslfs"
 	"github.com/AviBackToBlack/container-bin/internal/wslinstall"
+	"github.com/AviBackToBlack/container-bin/internal/wslrun"
 )
 
 // version is injected at release time via:
@@ -40,6 +41,11 @@ var loadPolicy = policy.Load
 // requireHostFrontend is a test seam around the fail-closed host boundary.
 // Production always uses hostenv.RequireFrontend.
 var requireHostFrontend = hostenv.RequireFrontend
+var currentHostRuntime = hostenv.Current
+
+// runWSLTool is the ordinary native-WSL tool-dispatch seam. The implementation
+// owns fixed-layout, registry, project, Docker and process validation.
+var runWSLTool = wslrun.Run
 
 // runSelfUpdate is a test seam for proving the complete explicit self-update
 // command remains available before policy or registry I/O. Production always
@@ -71,6 +77,24 @@ func main() {
 	}
 	if err := requireHostFrontend(); err != nil {
 		fatalf("host runtime: %v", err)
+		return
+	}
+	hostRuntime, err := currentHostRuntime()
+	if err != nil {
+		fatalf("host runtime: %v", err)
+		return
+	}
+	if hostRuntime.Kind == hostenv.WSL2Native {
+		if isManagementInvocation(invoked) {
+			fatalf("native WSL management command %q is unavailable; use `cb wsl install --check|--apply`, `cb version`, `cb help`, or a managed tool shim", strings.Join(os.Args[1:], " "))
+			return
+		}
+		code, err := runWSLTool(context.Background(), invoked, os.Args[1:])
+		if err != nil {
+			fatalf("%v", err)
+			return
+		}
+		osExit(code)
 		return
 	}
 	if selfupdate.IsHelperInvocation(invoked, os.Args[1:]) {
@@ -417,7 +441,7 @@ func bootstrapRegistryPath() string {
 }
 
 func usage(cfg string) {
-	fmt.Printf(`container-bin (cb) %s — Docker-backed Windows CLI shims
+	fmt.Printf(`container-bin (cb) %s — Docker-backed Windows and native WSL2 CLI shims
 
 Commands:
   cb setup     initialize/upgrade registry, install shims, then run doctor
@@ -453,6 +477,10 @@ Commands:
   cb config    print registry path
   cb version   print container-bin version
   cb help      print this help without loading the registry
+
+Native WSL2:
+  Bootstrap, cb wsl ..., and managed tool shims are enabled. Other management
+  commands remain Windows-only until their native state/update contracts land.
 
 Registry:
   %s

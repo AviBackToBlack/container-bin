@@ -28,8 +28,8 @@ func removeContainer(ctx context.Context, container Container, deps operationDep
 	if err := requireOwnedContainer(container, snapshot); err != nil {
 		return fmt.Errorf("refuse Docker container removal: %w", err)
 	}
-	if !snapshot.AutoRemove() {
-		return errors.New("refuse Docker container removal without auto-remove ownership configuration")
+	if snapshot.AutoRemove() != !container.retainUntilCleanup {
+		return errors.New("refuse Docker container removal whose retention configuration changed")
 	}
 	if snapshot.Running() {
 		return errors.New("refuse non-force removal of a running Docker container")

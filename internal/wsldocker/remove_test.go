@@ -37,6 +37,31 @@ func TestRemoveContainerProvesOwnershipAndVerifiesAbsence(t *testing.T) {
 	}
 }
 
+func TestRemoveContainerAcceptsExplicitlyRetainedOwnedContainer(t *testing.T) {
+	spec := testContainerCreateSpec()
+	spec.RetainUntilCleanup = true
+	container := Container{id: testContainerID, namespace: spec.Namespace, runID: testRunID, tool: spec.Tool, retainUntilCleanup: true}
+	deps := validOperationDependencies(validSocketInfo())
+	calls := 0
+	deps.perform = func(context.Context, string, Request) (operationResult, error) {
+		calls++
+		switch calls {
+		case 1:
+			return operationResult{StatusCode: http.StatusOK, PeerUID: 0, Raw: ownedContainerInspect(container.id, spec, testRunID, false, false)}, nil
+		case 2:
+			return operationResult{StatusCode: http.StatusNoContent, PeerUID: 0}, nil
+		case 3:
+			return operationResult{StatusCode: http.StatusNotFound, PeerUID: 0, Raw: []byte(`{"message":"No such container"}`)}, nil
+		default:
+			t.Fatalf("unexpected request %d", calls)
+			return operationResult{}, nil
+		}
+	}
+	if err := removeContainer(context.Background(), container, deps); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRemoveContainerAcceptsAlreadyAutoRemovedContainer(t *testing.T) {
 	container := Container{id: testContainerID, namespace: testWSLNamespace, runID: testRunID, tool: "node24"}
 	deps := validOperationDependencies(validSocketInfo())

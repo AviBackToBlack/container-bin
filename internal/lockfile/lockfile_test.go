@@ -502,6 +502,21 @@ func TestRuntimeImageForToolReportsPolicyBeforeStaleLock(t *testing.T) {
 	}
 }
 
+func TestRuntimeImageForToolAtUsesExplicitFrontendLockPath(t *testing.T) {
+	tool := registry.Tool{Name: "demo", Image: "example.com/acme/demo:1", Provider: "stateless"}
+	path := filepath.Join(t.TempDir(), "container-bin.lock")
+	got, err := RuntimeImageForToolAt(tool, policy.Policy{}, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != tool.Image {
+		t.Fatalf("RuntimeImageForToolAt() = %q, want %q", got, tool.Image)
+	}
+	if _, err := RuntimeImageForToolAt(tool, policy.Policy{}, "relative.lock"); err == nil || !strings.Contains(err.Error(), "must be absolute") {
+		t.Fatalf("relative lock path error = %v", err)
+	}
+}
+
 func TestLoadLockFile_RecoversFromBackup(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "container-bin.lock")
