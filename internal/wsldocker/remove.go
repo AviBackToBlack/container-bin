@@ -35,7 +35,18 @@ func removeContainer(ctx context.Context, container Container, deps operationDep
 		return errors.New("refuse non-force removal of a running Docker container")
 	}
 	if err := deleteContainer(ctx, container.id, deps); err != nil {
-		return err
+		var apiError *APIError
+		if !errors.As(err, &apiError) || apiError.StatusCode != http.StatusNotFound {
+			return err
+		}
+		_, exists, inspectErr := inspectContainerIfExists(ctx, container.id, deps)
+		if inspectErr != nil {
+			return fmt.Errorf("verify Docker container absence after remove returned not found: %w", inspectErr)
+		}
+		if exists {
+			return err
+		}
+		return nil
 	}
 	_, exists, err = inspectContainerIfExists(ctx, container.id, deps)
 	if err != nil {

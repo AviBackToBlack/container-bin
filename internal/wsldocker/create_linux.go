@@ -5,6 +5,7 @@ package wsldocker
 import (
 	"context"
 	"net/http"
+	"path/filepath"
 )
 
 // CreateContainer creates and re-inspects one exact stopped container through
@@ -22,6 +23,7 @@ func CreateContainer(ctx context.Context, spec ContainerCreateSpec) (Container, 
 				return performDockerRequest(ctx, socketPath, request, operationTimeout, maxOutput, 0)
 			},
 		},
-		newRunID: newContainerRunID,
+		newRunID:          newContainerRunID,
+		resolveBindSource: filepath.EvalSymlinks,
 	})
 }

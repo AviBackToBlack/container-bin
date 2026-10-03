@@ -251,23 +251,31 @@ and an explicit numeric Linux signal in the `1..64` domain, always supplies the
 Engine `signal` query and accepts only HTTP 204.
 The container-creation operation accepts an already-authorized image, command,
 environment and working directory, at most one canonical project bind, and
-only named volumes prefixed by the exact WSL state namespace. Duplicate mount
-targets, Docker-socket binds, foreign volumes, malformed environment entries
-and implicit privilege/endpoint controls are not representable. It fixes all
-three attach streams, open/one-shot stdin and daemon-side auto-remove, generates
-a 128-bit run identity, and labels the container with the exact namespace, run
-and tool ownership. A successful Engine response must contain one full
-lowercase container ID and no warnings. A fresh inspect must then prove the
-same ID and labels, stopped state, requested TTY mode, open stdin and auto-remove
-configuration. A post-create validation failure triggers non-force deletion of
-the exact returned ID; an invalid/missing ID fails closed because no safe cleanup
+only exact volume identities carrying their complete expected ownership labels.
+The bind root must exist, resolve without symlinks and cannot be the fixed
+Docker socket, its `/run` alias or an ancestor containing either socket path.
+Every named volume is freshly inspected before creation and must match its exact
+namespace-prefixed name, complete labels, local driver and local scope, so Docker
+cannot implicitly create or adopt foreign state. Duplicate mount targets,
+malformed environment entries and implicit privilege/endpoint controls are not
+representable. Creation fixes all three attach streams, open/one-shot stdin and
+daemon-side auto-remove, generates a 128-bit run identity, and labels the
+container with the exact namespace, run and tool ownership. A successful Engine
+response must contain one full lowercase container ID and no warnings. A fresh
+inspect must then prove the same ID and labels, stopped state, requested TTY
+mode, all attach flags, open/one-shot stdin and auto-remove configuration. A
+post-create validation failure uses a fresh bounded cleanup context, re-proves
+the returned ID's complete ownership and performs non-force deletion only when
+that proof succeeds; an invalid/missing ID fails closed because no safe cleanup
 target exists.
 
 The paired cleanup operation takes only the immutable identity returned by
 creation. An already auto-removed container succeeds. Otherwise it re-inspects
 the exact ID, requires every ownership label and auto-remove configuration,
 refuses a running container, sends `DELETE` with both force and anonymous-volume
-removal disabled, and verifies absence afterward.
+removal disabled, and verifies absence afterward. If daemon-side auto-remove
+wins the race between inspection and deletion, a DELETE 404 succeeds only after
+a fresh proof-bound inspection confirms absence.
 The native package also has a strict decoder for non-TTY multiplexed output and
 a proof-bound resize operation for one exact full container ID with positive
 unsigned 16-bit terminal dimensions. These primitives do not implement

@@ -9,13 +9,16 @@ import (
 	"fmt"
 	"net/http"
 	"path"
+	"reflect"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
 
 const (
 	maxContainerCreateOutput = 64 << 10
+	containerRollbackTimeout = 30 * time.Second
 	containerNamespaceLabel  = "cb.wsl_namespace"
 	containerRunIDLabel      = "cb.run_id"
 	containerToolLabel       = "cb.tool"
@@ -28,6 +31,9 @@ type ContainerMount struct {
 	Source   string `json:"Source"`
 	Target   string `json:"Target"`
 	ReadOnly bool   `json:"ReadOnly"`
+	// VolumeLabels is the complete expected ownership identity for a named
+	// volume. It is proof metadata and is never sent in the container request.
+	VolumeLabels map[string]string `json:"-"`
 }
 
 // ContainerCreateSpec is the already-authorized runtime configuration for one
@@ -58,8 +64,9 @@ func (c Container) Namespace() string { return c.namespace }
 func (c Container) Tool() string      { return c.tool }
 
 type createDependencies struct {
-	operations operationDependencies
-	newRunID   func() (string, error)
+	operations        operationDependencies
+	newRunID          func() (string, error)
+	resolveBindSource func(string) (string, error)
 }
 
 type containerCreateBody struct {
@@ -87,8 +94,11 @@ func createContainer(ctx context.Context, spec ContainerCreateSpec, deps createD
 	if err := validateContainerCreateSpec(spec); err != nil {
 		return Container{}, fmt.Errorf("Docker Desktop WSL container create: %w", err)
 	}
-	if deps.operations.check == nil || deps.operations.statSocket == nil || deps.operations.perform == nil || deps.newRunID == nil {
+	if deps.operations.check == nil || deps.operations.statSocket == nil || deps.operations.perform == nil || deps.newRunID == nil || deps.resolveBindSource == nil {
 		return Container{}, errors.New("Docker Desktop WSL container create dependencies are incomplete")
+	}
+	if err := proveContainerMounts(ctx, spec.Mounts, deps.operations, deps.resolveBindSource); err != nil {
+		return Container{}, fmt.Errorf("prove Docker mounts before container creation: %w", err)
 	}
 	runID, err := deps.newRunID()
 	if err != nil {
@@ -159,15 +169,17 @@ func createContainer(ctx context.Context, spec ContainerCreateSpec, deps createD
 		return Container{}, rollbackCreatedContainer(ctx, container, deps.operations,
 			errors.New("created Docker container is already running"))
 	}
-	if snapshot.TTY() != spec.TTY || !snapshot.OpenStdin() || !snapshot.AutoRemove() {
+	if snapshot.TTY() != spec.TTY || !snapshot.AttachStdin() || !snapshot.AttachStdout() || !snapshot.AttachStderr() || !snapshot.OpenStdin() || !snapshot.StdinOnce() || !snapshot.AutoRemove() {
 		return Container{}, rollbackCreatedContainer(ctx, container, deps.operations,
-			errors.New("created Docker container terminal or auto-remove configuration does not match the request"))
+			errors.New("created Docker container stdio, terminal or auto-remove configuration does not match the request"))
 	}
 	return container, nil
 }
 
 func rollbackCreatedContainer(ctx context.Context, container Container, operations operationDependencies, cause error) error {
-	if err := deleteContainer(ctx, container.id, operations); err != nil {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), containerRollbackTimeout)
+	defer cancel()
+	if err := removeContainer(cleanupCtx, container, operations); err != nil {
 		return fmt.Errorf("%w; rollback of created container %s also failed: %v", cause, container.id, err)
 	}
 	return cause
@@ -262,7 +274,7 @@ func validateContainerMount(mount ContainerMount, namespace string) error {
 		if err := validateContainerPath(mount.Source); err != nil {
 			return fmt.Errorf("bind source: %w", err)
 		}
-		if mount.Source == DockerSocketPath || mount.Target == DockerSocketPath {
+		if bindSourceContainsDockerSocket(mount.Source) || mount.Target == DockerSocketPath || mount.Target == "/run/docker.sock" {
 			return errors.New("Docker socket bind mounts are forbidden")
 		}
 	case "volume":
@@ -272,8 +284,81 @@ func validateContainerMount(mount ContainerMount, namespace string) error {
 		if !strings.HasPrefix(mount.Source, "cb-"+namespace+"-") {
 			return fmt.Errorf("named-volume source %q is outside the native WSL namespace", mount.Source)
 		}
+		if err := validateVolumeLabels(mount.VolumeLabels, namespace); err != nil {
+			return fmt.Errorf("named-volume ownership labels: %w", err)
+		}
 	default:
 		return fmt.Errorf("unsupported type %q", mount.Type)
+	}
+	return nil
+}
+
+func bindSourceContainsDockerSocket(source string) bool {
+	for _, socketPath := range []string{DockerSocketPath, "/run/docker.sock"} {
+		if source == socketPath || strings.HasPrefix(socketPath, source+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+func validateVolumeLabels(labels map[string]string, namespace string) error {
+	if labels == nil || labels["cb.managed"] != "true" || labels[containerNamespaceLabel] != namespace {
+		return errors.New("exact managed namespace identity is required")
+	}
+	if labels["cb.kind"] != "shared" && labels["cb.kind"] != "project" {
+		return errors.New("managed volume kind must be shared or project")
+	}
+	group, logical, ok := strings.Cut(labels["cb.owner"], "/")
+	if !ok || strings.ContainsRune(logical, '/') || !validRuntimeName(group) || !validRuntimeName(logical) {
+		return errors.New("managed volume owner is invalid")
+	}
+	for key, value := range labels {
+		if key == "" || !utf8.ValidString(key) || !utf8.ValidString(value) || strings.ContainsRune(key, '\x00') || strings.ContainsRune(value, '\x00') {
+			return errors.New("managed volume labels contain an invalid key or value")
+		}
+	}
+	return nil
+}
+
+func proveContainerMounts(ctx context.Context, mounts []ContainerMount, operations operationDependencies, resolveBindSource func(string) (string, error)) error {
+	for _, mount := range mounts {
+		if mount.Type == "bind" {
+			resolved, err := resolveBindSource(mount.Source)
+			if err != nil {
+				return fmt.Errorf("resolve bind source %s: %w", mount.Source, err)
+			}
+			if resolved != mount.Source {
+				return fmt.Errorf("bind source %s resolves to %s; symlinked bind roots are forbidden", mount.Source, resolved)
+			}
+			if bindSourceContainsDockerSocket(resolved) {
+				return fmt.Errorf("bind source %s contains the Docker socket", mount.Source)
+			}
+			continue
+		}
+		if mount.Type != "volume" {
+			continue
+		}
+		response, err := execute(ctx, Request{
+			Method:          http.MethodGet,
+			Path:            "/volumes/" + mount.Source,
+			SuccessStatuses: []int{http.StatusOK},
+		}, operations)
+		if err != nil {
+			return fmt.Errorf("inspect exact volume %s: %w", mount.Source, err)
+		}
+		var observed struct {
+			Name   string            `json:"Name"`
+			Driver string            `json:"Driver"`
+			Scope  string            `json:"Scope"`
+			Labels map[string]string `json:"Labels"`
+		}
+		if err := json.Unmarshal(response.Body, &observed); err != nil {
+			return fmt.Errorf("decode exact volume %s: %w", mount.Source, err)
+		}
+		if observed.Name != mount.Source || observed.Driver != "local" || observed.Scope != "local" || !reflect.DeepEqual(observed.Labels, mount.VolumeLabels) {
+			return fmt.Errorf("volume %s does not match its exact local identity and ownership labels", mount.Source)
+		}
 	}
 	return nil
 }

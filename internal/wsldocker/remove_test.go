@@ -48,6 +48,26 @@ func TestRemoveContainerAcceptsAlreadyAutoRemovedContainer(t *testing.T) {
 	}
 }
 
+func TestRemoveContainerAcceptsAutoRemoveRaceAfterOwnershipProof(t *testing.T) {
+	spec := testContainerCreateSpec()
+	container := Container{id: testContainerID, namespace: spec.Namespace, runID: testRunID, tool: spec.Tool}
+	deps := validOperationDependencies(validSocketInfo())
+	calls := 0
+	deps.perform = func(context.Context, string, Request) (operationResult, error) {
+		calls++
+		if calls == 1 {
+			return operationResult{StatusCode: http.StatusOK, PeerUID: 0, Raw: ownedContainerInspect(container.id, spec, testRunID, false, true)}, nil
+		}
+		return operationResult{StatusCode: http.StatusNotFound, PeerUID: 0, Raw: []byte(`{"message":"No such container"}`)}, nil
+	}
+	if err := removeContainer(context.Background(), container, deps); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 3 {
+		t.Fatalf("requests = %d", calls)
+	}
+}
+
 func TestRemoveContainerRejectsForeignRunningOrNonAutoRemoveContainer(t *testing.T) {
 	for name, inspect := range map[string][]byte{
 		"foreign":        ownedContainerInspect(testContainerID, testContainerCreateSpec(), strings.Repeat("0", 32), false, true),

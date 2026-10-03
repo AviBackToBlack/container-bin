@@ -26,7 +26,7 @@ func TestInspectContainerBindsExactSnapshotToProvenSocket(t *testing.T) {
 		}
 		return operationResult{StatusCode: http.StatusOK, PeerUID: 0, Raw: []byte(`{
 			"Id":"` + testContainerID + `",
-			"Config":{"Labels":{"cb.managed":"true","cb.run_id":"run-1"},"Tty":true,"OpenStdin":true},
+			"Config":{"Labels":{"cb.managed":"true","cb.run_id":"run-1"},"Tty":true,"AttachStdin":true,"AttachStdout":true,"AttachStderr":true,"OpenStdin":true,"StdinOnce":true},
 			"State":{"Running":true},
 			"HostConfig":{"AutoRemove":true}
 		}`)}, nil
@@ -35,7 +35,7 @@ func TestInspectContainerBindsExactSnapshotToProvenSocket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.ID() != testContainerID || !snapshot.Running() || !snapshot.TTY() || !snapshot.OpenStdin() || !snapshot.AutoRemove() || statCalls != 2 {
+	if snapshot.ID() != testContainerID || !snapshot.Running() || !snapshot.TTY() || !snapshot.AttachStdin() || !snapshot.AttachStdout() || !snapshot.AttachStderr() || !snapshot.OpenStdin() || !snapshot.StdinOnce() || !snapshot.AutoRemove() || statCalls != 2 {
 		t.Fatalf("snapshot = %#v, stat calls = %d", snapshot, statCalls)
 	}
 	labels := snapshot.Labels()
@@ -71,31 +71,36 @@ func TestInspectContainerRejectsInvalidInputsBeforeProof(t *testing.T) {
 }
 
 func TestDecodeContainerInspectResponseRejectsUnsafeShapes(t *testing.T) {
-	valid := `{"Id":"` + testContainerID + `","Config":{"Labels":null,"Tty":false,"OpenStdin":false},"State":{"Running":false},"HostConfig":{"AutoRemove":false}}`
+	validConfig := `"Labels":null,"Tty":false,"AttachStdin":false,"AttachStdout":false,"AttachStderr":false,"OpenStdin":false,"StdinOnce":false`
+	valid := `{"Id":"` + testContainerID + `","Config":{` + validConfig + `},"State":{"Running":false},"HostConfig":{"AutoRemove":false}}`
 	otherID := strings.Repeat("a", 64)
 	tests := map[string]struct {
 		raw  []byte
 		want string
 	}{
-		"malformed":          {raw: []byte(`{`), want: "decode"},
-		"oversized":          {raw: make([]byte, maxContainerInspectOutput+1), want: "exceeds"},
-		"missing ID":         {raw: []byte(`{"Config":{},"State":{}}`), want: "invalid ID"},
-		"invalid ID":         {raw: []byte(`{"Id":"abc","Config":{},"State":{}}`), want: "invalid ID"},
-		"mismatched ID":      {raw: []byte(`{"Id":"` + otherID + `","Config":{},"State":{}}`), want: "expected exact"},
-		"missing Config":     {raw: []byte(`{"Id":"` + testContainerID + `","State":{}}`), want: "missing Config"},
-		"null Config":        {raw: []byte(`{"Id":"` + testContainerID + `","Config":null,"State":{}}`), want: "missing Config"},
-		"missing State":      {raw: []byte(`{"Id":"` + testContainerID + `","Config":{}}`), want: "missing State"},
-		"null State":         {raw: []byte(`{"Id":"` + testContainerID + `","Config":{},"State":null}`), want: "missing State"},
-		"missing Tty":        {raw: []byte(`{"Id":"` + testContainerID + `","Config":{"OpenStdin":false},"State":{"Running":false}}`), want: "missing Config.Tty"},
-		"null Tty":           {raw: []byte(`{"Id":"` + testContainerID + `","Config":{"Tty":null,"OpenStdin":false},"State":{"Running":false}}`), want: "missing Config.Tty"},
-		"missing stdin":      {raw: []byte(`{"Id":"` + testContainerID + `","Config":{"Tty":false},"State":{"Running":false}}`), want: "missing Config.OpenStdin"},
-		"null stdin":         {raw: []byte(`{"Id":"` + testContainerID + `","Config":{"Tty":false,"OpenStdin":null},"State":{"Running":false}}`), want: "missing Config.OpenStdin"},
-		"missing Running":    {raw: []byte(`{"Id":"` + testContainerID + `","Config":{"Tty":false,"OpenStdin":false},"State":{}}`), want: "missing State.Running"},
-		"null Running":       {raw: []byte(`{"Id":"` + testContainerID + `","Config":{"Tty":false,"OpenStdin":false},"State":{"Running":null}}`), want: "missing State.Running"},
-		"missing HostConfig": {raw: []byte(`{"Id":"` + testContainerID + `","Config":{"Tty":false,"OpenStdin":false},"State":{"Running":false}}`), want: "missing HostConfig"},
-		"null HostConfig":    {raw: []byte(`{"Id":"` + testContainerID + `","Config":{"Tty":false,"OpenStdin":false},"State":{"Running":false},"HostConfig":null}`), want: "missing HostConfig"},
-		"missing AutoRemove": {raw: []byte(`{"Id":"` + testContainerID + `","Config":{"Tty":false,"OpenStdin":false},"State":{"Running":false},"HostConfig":{}}`), want: "missing HostConfig.AutoRemove"},
-		"null AutoRemove":    {raw: []byte(`{"Id":"` + testContainerID + `","Config":{"Tty":false,"OpenStdin":false},"State":{"Running":false},"HostConfig":{"AutoRemove":null}}`), want: "missing HostConfig.AutoRemove"},
+		"malformed":             {raw: []byte(`{`), want: "decode"},
+		"oversized":             {raw: make([]byte, maxContainerInspectOutput+1), want: "exceeds"},
+		"missing ID":            {raw: []byte(`{"Config":{},"State":{}}`), want: "invalid ID"},
+		"invalid ID":            {raw: []byte(`{"Id":"abc","Config":{},"State":{}}`), want: "invalid ID"},
+		"mismatched ID":         {raw: []byte(`{"Id":"` + otherID + `","Config":{},"State":{}}`), want: "expected exact"},
+		"missing Config":        {raw: []byte(`{"Id":"` + testContainerID + `","State":{}}`), want: "missing Config"},
+		"null Config":           {raw: []byte(`{"Id":"` + testContainerID + `","Config":null,"State":{}}`), want: "missing Config"},
+		"missing State":         {raw: []byte(`{"Id":"` + testContainerID + `","Config":{}}`), want: "missing State"},
+		"null State":            {raw: []byte(`{"Id":"` + testContainerID + `","Config":{},"State":null}`), want: "missing State"},
+		"missing Tty":           {raw: []byte(`{"Id":"` + testContainerID + `","Config":{"AttachStdin":false,"AttachStdout":false,"AttachStderr":false,"OpenStdin":false,"StdinOnce":false},"State":{"Running":false},"HostConfig":{"AutoRemove":false}}`), want: "missing Config.Tty"},
+		"null Tty":              {raw: []byte(`{"Id":"` + testContainerID + `","Config":{"Tty":null,"AttachStdin":false,"AttachStdout":false,"AttachStderr":false,"OpenStdin":false,"StdinOnce":false},"State":{"Running":false},"HostConfig":{"AutoRemove":false}}`), want: "missing Config.Tty"},
+		"missing attach stdin":  {raw: []byte(`{"Id":"` + testContainerID + `","Config":{"Tty":false,"AttachStdout":false,"AttachStderr":false,"OpenStdin":false,"StdinOnce":false},"State":{"Running":false},"HostConfig":{"AutoRemove":false}}`), want: "missing Config.AttachStdin"},
+		"missing attach stdout": {raw: []byte(`{"Id":"` + testContainerID + `","Config":{"Tty":false,"AttachStdin":false,"AttachStderr":false,"OpenStdin":false,"StdinOnce":false},"State":{"Running":false},"HostConfig":{"AutoRemove":false}}`), want: "missing Config.AttachStdout"},
+		"missing attach stderr": {raw: []byte(`{"Id":"` + testContainerID + `","Config":{"Tty":false,"AttachStdin":false,"AttachStdout":false,"OpenStdin":false,"StdinOnce":false},"State":{"Running":false},"HostConfig":{"AutoRemove":false}}`), want: "missing Config.AttachStderr"},
+		"missing stdin":         {raw: []byte(`{"Id":"` + testContainerID + `","Config":{"Tty":false,"AttachStdin":false,"AttachStdout":false,"AttachStderr":false,"StdinOnce":false},"State":{"Running":false},"HostConfig":{"AutoRemove":false}}`), want: "missing Config.OpenStdin"},
+		"null stdin":            {raw: []byte(`{"Id":"` + testContainerID + `","Config":{"Tty":false,"AttachStdin":false,"AttachStdout":false,"AttachStderr":false,"OpenStdin":null,"StdinOnce":false},"State":{"Running":false},"HostConfig":{"AutoRemove":false}}`), want: "missing Config.OpenStdin"},
+		"missing stdin once":    {raw: []byte(`{"Id":"` + testContainerID + `","Config":{"Tty":false,"AttachStdin":false,"AttachStdout":false,"AttachStderr":false,"OpenStdin":false},"State":{"Running":false},"HostConfig":{"AutoRemove":false}}`), want: "missing Config.StdinOnce"},
+		"missing Running":       {raw: []byte(`{"Id":"` + testContainerID + `","Config":{` + validConfig + `},"State":{},"HostConfig":{"AutoRemove":false}}`), want: "missing State.Running"},
+		"null Running":          {raw: []byte(`{"Id":"` + testContainerID + `","Config":{` + validConfig + `},"State":{"Running":null},"HostConfig":{"AutoRemove":false}}`), want: "missing State.Running"},
+		"missing HostConfig":    {raw: []byte(`{"Id":"` + testContainerID + `","Config":{` + validConfig + `},"State":{"Running":false}}`), want: "missing HostConfig"},
+		"null HostConfig":       {raw: []byte(`{"Id":"` + testContainerID + `","Config":{` + validConfig + `},"State":{"Running":false},"HostConfig":null}`), want: "missing HostConfig"},
+		"missing AutoRemove":    {raw: []byte(`{"Id":"` + testContainerID + `","Config":{` + validConfig + `},"State":{"Running":false},"HostConfig":{}}`), want: "missing HostConfig.AutoRemove"},
+		"null AutoRemove":       {raw: []byte(`{"Id":"` + testContainerID + `","Config":{` + validConfig + `},"State":{"Running":false},"HostConfig":{"AutoRemove":null}}`), want: "missing HostConfig.AutoRemove"},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -105,7 +110,7 @@ func TestDecodeContainerInspectResponseRejectsUnsafeShapes(t *testing.T) {
 		})
 	}
 	snapshot, err := decodeContainerInspectResponse([]byte(valid), testContainerID)
-	if err != nil || snapshot.Labels() == nil || len(snapshot.Labels()) != 0 || snapshot.Running() || snapshot.TTY() || snapshot.OpenStdin() {
+	if err != nil || snapshot.Labels() == nil || len(snapshot.Labels()) != 0 || snapshot.Running() || snapshot.TTY() || snapshot.AttachStdin() || snapshot.AttachStdout() || snapshot.AttachStderr() || snapshot.OpenStdin() || snapshot.StdinOnce() {
 		t.Fatalf("minimal snapshot = %#v, err = %v", snapshot, err)
 	}
 }
