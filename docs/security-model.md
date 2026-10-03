@@ -150,6 +150,22 @@ readable, and dangerous to let others edit.
   requires that same proof immediately before deletion and verifies absence
   afterward. Prefix/label filters are discovery-only and cannot authorize
   adoption or mutation. Windows and other WSL scopes remain foreign state.
+- **Native WSL run containers are transaction-bound.** The unexposed create
+  primitive accepts no raw Engine body, endpoint, privilege or Docker-socket
+  mount controls. It admits at most one existing, symlink-free canonical project
+  bind, rejects both fixed Docker-socket spellings and their source ancestors,
+  and freshly proves each named volume's exact local name and complete ownership
+  labels before use. It sets daemon-side auto-remove and labels each run with a
+  generated 128-bit identity, exact WSL namespace and tool. The returned full
+  container ID is not exposed until a fresh inspect proves those labels,
+  stopped state, every attach/stdin flag, requested TTY and auto-remove
+  configuration. Post-create validation failure uses a separate bounded context
+  and re-proves exact ownership before any non-force rollback. Later cleanup
+  accepts only the immutable returned identity, re-proves ownership, refuses a
+  running or non-auto-remove container, deletes without force or anonymous-volume
+  removal, and verifies absence; a racing auto-remove 404 is accepted only after
+  another inspection proves absence. A malformed create response without a
+  valid full ID fails closed rather than guessing a cleanup target.
 - **Machine policy cannot be redirected or weakened.** A present enterprise
   policy is loaded only from the fixed OS path, requires administrator/root
   ownership and restrictive permissions, and authorizes the already-resolved
