@@ -479,8 +479,8 @@ Commands:
   cb help      print this help without loading the registry
 
 Native WSL2:
-  Bootstrap, cb wsl ..., and managed tool shims are enabled. Other management
-  commands remain Windows-only until their native state/update contracts land.
+  Bootstrap and cb wsl ... are enabled. The managed-tool runtime is wired but
+  activation awaits orphan reconciliation and real Docker Desktop qualification.
 
 Registry:
   %s

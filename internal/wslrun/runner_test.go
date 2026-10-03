@@ -188,11 +188,28 @@ func TestExecuteToolCleansUpAfterAmbiguousStartFailure(t *testing.T) {
 		Tool: "demo", Namespace: testNamespace, Image: "demo:1", WorkingDirectory: "/root", RetainUntilCleanup: true,
 	}}
 	_, err := executeTool(context.Background(), plan, deps)
-	if err == nil || !strings.Contains(err.Error(), "start native WSL tool container: connection closed") {
+	if err == nil || !strings.Contains(err.Error(), "start native WSL tool container: connection closed") || !strings.Contains(err.Error(), "stop native WSL tool container after failure: container is not running") {
 		t.Fatalf("start failure = %v", err)
 	}
 	if got, want := calls, []string{"create", "events", "attach", "start", "signal", "remove"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("cleanup calls = %#v, want %#v", got, want)
+	}
+}
+
+func TestExecuteToolReportsCompletedInputFailureBeforeSuccessfulExit(t *testing.T) {
+	inputDone := make(chan error, 1)
+	inputDone <- errors.New("source read failed")
+	_, err := finishToolResult(0, inputDone)
+	if err == nil || !strings.Contains(err.Error(), "copy native WSL tool input: source read failed") {
+		t.Fatalf("input failure = %v", err)
+	}
+}
+
+func TestFinishToolResultDoesNotWaitForBlockedInput(t *testing.T) {
+	inputDone := make(chan error)
+	code, err := finishToolResult(23, inputDone)
+	if err != nil || code != 23 {
+		t.Fatalf("finishToolResult() = (%d, %v), want (23, nil)", code, err)
 	}
 }
 

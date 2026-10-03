@@ -491,7 +491,8 @@ identity constructed by this package and its complete labels plus local
 driver/scope. The package also preflights an entire stateful profile's
 project/shared binding set, re-proves the exact project root before deriving
 project identities, and ensures each distinct identity only after the complete
-plan validates. Tool-time wiring is active; native state commands remain.
+plan validates. Tool-time composition is wired but the host boundary keeps it
+activation-gated until orphan reconciliation lands; native state commands remain.
 
 `internal/wslrun` is the native WSL vertical orchestrator. It requires the
 fixed layout, private registry, managed binary and exact invoked shim; resolves
@@ -503,6 +504,10 @@ exit status, so daemon auto-remove cannot race fast tools. Non-TTY streams use
 strict Docker framing; TTY sessions use raw terminal mode, resize events and an
 explicit Linux signal-forwarding set. Any runtime failure cancels live I/O,
 proof-bound kills the container, waits for stop and performs non-force cleanup.
+The production host boundary does not yet dispatch into this orchestrator:
+SIGKILL of the host shim can bypass every in-process defer and strand a retained
+container, so activation waits for proof-bound orphan reconciliation rather
+than making an unsafe partial support claim.
 
 After the host runtime boundary is enforced, `cb self-update` is dispatched
 before machine policy and registry loading. Release selection therefore remains

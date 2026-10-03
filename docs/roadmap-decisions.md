@@ -16,7 +16,7 @@ items from being repeatedly rediscovered as if they were immediately actionable.
 | RM-24 Python / uv | **Keep both** | Decision complete. Built-in `python`/`pip` keep the dedicated Python provider; `uv`/`uvx` remain separate opt-in stateful profiles. |
 | RM-26 Python global CLI exposure | **pipx yes; plain pip expose no** | Completed in PR #74. The separate stateful pipx profile and managed store shipped; project/compat `/venv/bin` remains intentionally unexposed. |
 | RM-34 Cargo expose enhancement | **Intentionally deferred** | Existing expose-all and explicit binary selection are sufficient. Reopen only for a concrete unmet use case. |
-| WSL2 | **Native WSL frontend** | Fixed-layout install plus ordinary managed-tool runtime/Docker wiring are implemented. Native state commands, integration corpus and real WSL qualification remain. No Windows↔WSL path/state guessing. |
+| WSL2 | **Native WSL frontend** | Fixed-layout install plus managed-tool runtime/Docker composition are wired behind the host gate. Retained-container orphan reconciliation, native state commands, integration corpus and real WSL qualification remain before activation. No Windows↔WSL path/state guessing. |
 | Enterprise policy | **Machine-owned constraint layer** | Foundation shipped in PR #75. Authenticated registry and image-trust follow-ups must extend this boundary and cannot be weakened by lower layers. |
 | Image trust | **Policy-driven Sigstore/cosign at lock time** | Ready after signed-registry policy. Digest locking remains default where policy permits. Required trust never silently falls back to digest-only. |
 | Per-project overlays | **Explicit digest-bound, add-only trust model** | Implementation-ready on the merged policy foundation. Initial overlays exclude host mounts, env prefixes and shared cross-project volumes. |
@@ -344,7 +344,8 @@ is not completion.
      layout/state identity are merged in PRs #77 and #83;
    - explicit read-only/apply Linux ownership, permission and symlink layout
      preparation plus the fixed-path native install/config lifecycle are
-     implemented; ordinary managed tool shims now enter the native runtime;
+     implemented; ordinary managed tool dispatch is composed but remains
+     activation-gated pending orphan reconciliation;
    - Docker Desktop WSL integration proof, proof-bound bounded control requests,
      the separately constrained attach transport, strict raw-stream decoder,
      exact container inspection, wait, TTY-resize, signal, start, creation and

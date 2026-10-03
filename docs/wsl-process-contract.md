@@ -1,8 +1,9 @@
 # Native WSL process contract
 
 This document defines the process semantics implemented by ContainerBin's
-native-Linux frontend inside WSL2. Managed tool shims are enabled in this tree;
-the v2 support claim still requires real WSL2 + Docker Desktop qualification.
+native-Linux frontend inside WSL2. The runtime is composed and covered in this
+tree, but production dispatch remains activation-gated until retained-container
+orphan reconciliation and real WSL2 + Docker Desktop qualification land.
 The corresponding Windows behavior is documented separately in
 [the Windows shell/process contract](shell-contract.md).
 
@@ -63,6 +64,11 @@ ContainerBin always attaches stdin, stdout and stderr. Non-TTY stdin is copied
 byte-for-byte and half-closed at EOF while output remains open. Docker's strict
 raw-stream framing is decoded into the caller's separate stdout and stderr; a
 truncated or malformed frame is an infrastructure failure.
+
+If stdin copying has already completed with an error when the tool exits, that
+error wins over the tool status so truncated piped input is not reported as
+success. ContainerBin does not wait indefinitely for a terminal or pipe reader
+that remains blocked after the tool and output stream have both completed.
 
 TTY mode is selected only when both stdin and stdout are character devices.
 The native terminal enters raw mode, the initial size is applied after start,

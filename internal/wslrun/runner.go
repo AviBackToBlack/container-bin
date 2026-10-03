@@ -125,7 +125,7 @@ func executeTool(ctx context.Context, plan toolPlan, deps runDependencies) (code
 			// non-force removal safely distinguishes an already-stopped container
 			// from one that is still running without guessing or force-deleting it.
 			if err := deps.remove(cleanupCtx, container); err != nil {
-				retErr = errors.Join(retErr, lifecycleErr, fmt.Errorf("clean up ambiguously running native WSL tool container: %w", err))
+				retErr = errors.Join(retErr, fmt.Errorf("clean up ambiguously running native WSL tool container: %w", err))
 			} else {
 				removed = true
 				running = false
@@ -136,6 +136,7 @@ func executeTool(ctx context.Context, plan toolPlan, deps runDependencies) (code
 				retErr = errors.Join(retErr, fmt.Errorf("clean up native WSL tool container: %w", err))
 			}
 		}
+		retErr = errors.Join(retErr, lifecycleErr)
 	}()
 
 	events, stop, err := deps.startEvents(plan.spec.TTY)
@@ -204,7 +205,7 @@ func executeTool(ctx context.Context, plan toolPlan, deps runDependencies) (code
 				if *outputResult != nil {
 					return 0, fmt.Errorf("copy native WSL tool output: %w", *outputResult)
 				}
-				return result.code, nil
+				return finishToolResult(result.code, inputDone)
 			}
 			timer := time.NewTimer(outputDrainTimeout)
 			select {
@@ -213,7 +214,7 @@ func executeTool(ctx context.Context, plan toolPlan, deps runDependencies) (code
 				if outputErr != nil {
 					return 0, fmt.Errorf("copy native WSL tool output: %w", outputErr)
 				}
-				return result.code, nil
+				return finishToolResult(result.code, inputDone)
 			case <-timer.C:
 				return 0, errors.New("native WSL attach stream did not close after the container exited")
 			case <-ctx.Done():
@@ -252,4 +253,20 @@ func executeTool(ctx context.Context, plan toolPlan, deps runDependencies) (code
 			return 0, fmt.Errorf("native WSL tool execution canceled: %w", ctx.Err())
 		}
 	}
+}
+
+func finishToolResult(code int, inputDone <-chan error) (int, error) {
+	if inputDone == nil {
+		return code, nil
+	}
+	select {
+	case err := <-inputDone:
+		if err != nil && !errors.Is(err, io.ErrClosedPipe) {
+			return 0, fmt.Errorf("copy native WSL tool input: %w", err)
+		}
+	default:
+		// A terminal or pipe reader can remain blocked after the tool exits.
+		// Do not turn successful process completion into an unbounded stdin wait.
+	}
+	return code, nil
 }

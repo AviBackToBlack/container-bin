@@ -49,9 +49,9 @@ func Current() (Runtime, error) {
 	return classify(goos, kernelRelease, os.Getenv("WSL_DISTRO_NAME"), os.Getenv("WSL_INTEROP")), nil
 }
 
-// RequireFrontend enforces the supported host boundary. Native Windows and a
-// distribution-identified native WSL2 process are frontends; Windows interop,
-// WSL1, ambiguous Microsoft kernels and standalone Linux remain rejected.
+// RequireFrontend enforces the supported host boundary. Native Windows is
+// enabled. Native WSL2 is classified precisely but remains activation-gated
+// until retained-container orphan reconciliation and real qualification land.
 func RequireFrontend() error {
 	return requireFrontend(Current())
 }
@@ -76,7 +76,7 @@ func requireFrontend(info Runtime, probeErr error) error {
 		if err := validateDistroIdentity(info.Distro); err != nil {
 			return fmt.Errorf("native WSL2 distribution identity cannot be proven: %w", err)
 		}
-		return nil
+		return fmt.Errorf("native WSL2 distribution %q was detected; the tool runtime is wired but activation is gated until orphan-container reconciliation and real Docker Desktop qualification land", info.Distro)
 	case WSL1Native:
 		return errors.New("WSL1 is unsupported; the native frontend requires WSL2 and Docker Desktop WSL integration")
 	case WSLUnrecognized:

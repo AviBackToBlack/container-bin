@@ -50,7 +50,7 @@ func TestRequireFrontend(t *testing.T) {
 		{name: "wsl2 missing distro", info: Runtime{Kind: WSL2Native}, want: "distribution identity cannot be proven"},
 		{name: "wsl2 whitespace distro", info: Runtime{Kind: WSL2Native, Distro: " \t"}, want: "distribution identity cannot be proven"},
 		{name: "wsl2 noncanonical distro", info: Runtime{Kind: WSL2Native, Distro: " Ubuntu"}, want: "distribution identity cannot be proven"},
-		{name: "wsl2", info: Runtime{Kind: WSL2Native, Distro: "Ubuntu"}},
+		{name: "wsl2 gated", info: Runtime{Kind: WSL2Native, Distro: "Ubuntu"}, want: "activation is gated"},
 		{name: "wsl1", info: Runtime{Kind: WSL1Native}, want: "WSL1 is unsupported"},
 		{name: "unrecognized Microsoft kernel", info: Runtime{Kind: WSLUnrecognized, KernelRelease: "4.19.128-microsoft-standard"}, want: "generation cannot be proven"},
 		{name: "linux", info: Runtime{Kind: LinuxNative}, want: "standalone Linux hosts are unsupported"},

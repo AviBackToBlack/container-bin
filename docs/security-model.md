@@ -91,20 +91,20 @@ readable, and dangerous to let others edit.
   fingerprint, mechanism and signer/key identity. Missing or stale evidence
   never falls back to digest-only locking. Private-registry credentials remain
   excluded until an explicit non-ambient bridge is implemented.
-- **Fail-closed host boundary.** Non-bootstrap work runs only in a native
-  Windows process or a distribution-identified native WSL2 process. Windows
-  binaries launched through detected WSL interoperability, WSL1, standalone
-  Linux and other hosts refuse before registry or Docker work. WSL2
+- **Fail-closed host boundary.** Non-bootstrap work currently runs only in a
+  native Windows process. Windows binaries launched through detected WSL
+  interoperability, WSL1, standalone Linux and other hosts refuse before
+  registry or Docker work. WSL2
   classification requires Microsoft WSL2 kernel markers and a canonical
   `WSL_DISTRO_NAME`; environment variables alone cannot turn ordinary Linux
   into a supported host. Native WSL preparation validates or creates only the
   fixed current-user layout and loads no registry or machine policy.
   Installation validates that layout before fixed-path policy/registry access,
   authenticates signed registries when required, and reconciles only the fixed
-  managed binary and provenance-checked symlinks. Ordinary managed tool
-  execution then revalidates that fixed installation and uses the proof-bound
-  Docker Desktop WSL transport; unsupported native management commands remain
-  rejected.
+  managed binary and provenance-checked symlinks. The ordinary managed-tool
+  runtime is composed and tested but remains behind this host gate until
+  retained-container orphan reconciliation and real qualification land;
+  unsupported native management commands remain rejected.
 - **Native WSL installation does not adopt ambient files.** The bootstrap
   executable is the exact OS-reported running image and must be a bounded,
   current-user-owned regular non-symlink file with safe executable permissions.
@@ -173,6 +173,9 @@ readable, and dangerous to let others edit.
   failure cancels live operations, sends SIGKILL only to the immutable owned
   container, waits under a fresh bound and then invokes the same non-force
   proof-bound removal. Cleanup errors are never hidden by the original failure.
+  An uncatchable host-shim SIGKILL can bypass every in-process cleanup path, so
+  production activation remains gated until a separate proof-bound orphan
+  reconciliation mechanism handles both running and stopped retained objects.
 - **Machine policy cannot be redirected or weakened.** A present enterprise
   policy is loaded only from the fixed OS path, requires administrator/root
   ownership and restrictive permissions, and authorizes the already-resolved

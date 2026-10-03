@@ -307,7 +307,7 @@ func printPlan(out io.Writer, plan Plan, applied bool) error {
 		fmt.Fprintln(&report, "status:        APPLY REQUIRED")
 		fmt.Fprintln(&report, "apply:         cb wsl install --apply")
 	}
-	fmt.Fprintln(&report, "frontend:      RUNTIME ENABLED (release support requires real WSL qualification)")
+	fmt.Fprintln(&report, "frontend:      RUNTIME WIRED; ACTIVATION GATED (orphan reconciliation and real WSL qualification remain)")
 	if _, err := io.WriteString(out, report.String()); err != nil {
 		return fmt.Errorf("write native WSL installation report: %w", err)
 	}
