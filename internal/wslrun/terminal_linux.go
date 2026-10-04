@@ -32,11 +32,7 @@ func prepareHostTerminal(tty bool) (terminalControl, error) {
 	if err := setTermios(stdinFD, raw); err != nil {
 		return terminalControl{}, fmt.Errorf("enter native WSL raw terminal mode: %w", err)
 	}
-	height, width, err := terminalSize(stdinFD)
-	if err != nil {
-		_ = setTermios(stdinFD, original)
-		return terminalControl{}, fmt.Errorf("read native WSL terminal size: %w", err)
-	}
+	height, width, _ := usableTerminalSize(stdinFD, terminalSize)
 	var (
 		once       sync.Once
 		restoreErr error
@@ -51,12 +47,19 @@ func prepareHostTerminal(tty bool) (terminalControl, error) {
 	}, nil
 }
 
-// interactiveHostTerminal requires a real Linux terminal on stdin. Character
-// device mode alone is insufficient because /dev/null and /dev/zero also set
-// os.ModeCharDevice but reject terminal ioctls. Stdout may be redirected; TTY
-// sizing is taken from the controlling stdin terminal.
+// interactiveHostTerminal requires real Linux terminals on stdin and stdout.
+// Character-device mode alone is insufficient because /dev/null and /dev/zero
+// also set os.ModeCharDevice but reject terminal ioctls. This matches the
+// Windows frontend's rule that redirected output selects non-TTY execution.
 func interactiveHostTerminal() bool {
-	_, err := getTermios(os.Stdin.Fd())
+	return interactiveTerminalPair(os.Stdin.Fd(), os.Stdout.Fd(), getTermios)
+}
+
+func interactiveTerminalPair(stdinFD, stdoutFD uintptr, query func(uintptr) (syscall.Termios, error)) bool {
+	if _, err := query(stdinFD); err != nil {
+		return false
+	}
+	_, err := query(stdoutFD)
 	return err == nil
 }
 
@@ -97,11 +100,13 @@ func startHostEvents(tty bool) (<-chan hostEvent, func(), error) {
 				}
 				event := hostEvent{signal: int(number)}
 				if number == syscall.SIGWINCH {
-					height, width, err := terminalSize(os.Stdin.Fd())
-					event = hostEvent{resize: true, height: height, width: width}
-					if err != nil {
-						event = hostEvent{err: fmt.Errorf("read resized native WSL terminal: %w", err)}
+					height, width, ok := usableTerminalSize(os.Stdin.Fd(), terminalSize)
+					if !ok {
+						// Terminal dimensions are advisory. A transiently
+						// unreadable or zero-sized pty must not terminate the tool.
+						continue
 					}
+					event = hostEvent{resize: true, height: height, width: width}
 				}
 				select {
 				case events <- event:
@@ -131,6 +136,16 @@ func setTermios(fd uintptr, value syscall.Termios) error {
 	return nil
 }
 
+type terminalSizeReader func(uintptr) (uint16, uint16, error)
+
+func usableTerminalSize(fd uintptr, read terminalSizeReader) (uint16, uint16, bool) {
+	height, width, err := read(fd)
+	if err != nil || height == 0 || width == 0 {
+		return 0, 0, false
+	}
+	return height, width, true
+}
+
 func terminalSize(fd uintptr) (uint16, uint16, error) {
 	// Linux struct winsize is four consecutive unsigned shorts. Keep the
 	// definition local rather than adding x/sys solely for one ioctl.
@@ -143,9 +158,6 @@ func terminalSize(fd uintptr) (uint16, uint16, error) {
 	_, _, errno := syscall.Syscall6(syscall.SYS_IOCTL, fd, syscall.TIOCGWINSZ, uintptr(unsafe.Pointer(&size)), 0, 0, 0)
 	if errno != 0 {
 		return 0, 0, errno
-	}
-	if size.Row == 0 || size.Col == 0 {
-		return 0, 0, errors.New("terminal reported zero rows or columns")
 	}
 	return size.Row, size.Col, nil
 }

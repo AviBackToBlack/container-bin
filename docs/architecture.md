@@ -377,7 +377,7 @@ wslproject  -> hostenv, registry
 wslpathmap  -> registry, wslproject
 wsldocker   -> hostenv
 wslvolume   -> hostenv, registry, wsldocker, wslproject
-wslrun      -> hostenv, lockfile, policy, registry, terminal, wsldocker, wslfs, wslpathmap, wslproject, wslshim, wslvolume
+wslrun      -> hostenv, lockfile, policy, registry, wsldocker, wslfs, wslpathmap, wslproject, wslshim, wslvolume
 selfupdate  -> mutationlock, registry
 atomicio, dockervol, hostenv, mutationlock, terminal, toml -> (leaves)
 ```

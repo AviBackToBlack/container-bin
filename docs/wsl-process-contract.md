@@ -70,13 +70,15 @@ error wins over the tool status so truncated piped input is not reported as
 success. ContainerBin does not wait indefinitely for a terminal or pipe reader
 that remains blocked after the tool and output stream have both completed.
 
-TTY mode is selected only when stdin accepts a real Linux termios query;
-character-device mode alone is insufficient because `/dev/null` and `/dev/zero`
-are not terminals. Stdout may be redirected. The native stdin terminal enters
-raw mode, provides the initial size after start, and each `SIGWINCH` triggers a
-fresh positive row/column resize from that same terminal. Docker's TTY stream is
-unframed and is written to stdout; terminal state is restored on every return
-path.
+TTY mode is selected only when both stdin and stdout accept real Linux termios
+queries; character-device mode alone is insufficient because `/dev/null` and
+`/dev/zero` are not terminals. Redirecting either stream selects non-TTY
+execution, matching the Windows frontend. The native stdin terminal enters raw
+mode and provides the initial size after start when positive dimensions are
+measurable. A zero-sized or temporarily unreadable terminal skips that resize,
+and an unmeasurable `SIGWINCH` is dropped rather than terminating the running
+tool. Docker's TTY stream is unframed and is written to stdout; terminal state
+is restored on every return path.
 
 The runtime waits up to five seconds for the attach stream to drain after the
 Engine reports exit. Failure to drain is an infrastructure error rather than a

@@ -167,7 +167,7 @@ func executeTool(ctx context.Context, plan toolPlan, deps runDependencies) (code
 		waitCode, waitErr := deps.wait(runCtx, container.id)
 		waitDone <- waitResult{code: waitCode, err: waitErr}
 	}()
-	if plan.spec.TTY {
+	if plan.spec.TTY && term.height != 0 && term.width != 0 {
 		if err := deps.resize(runCtx, container.id, term.height, term.width); err != nil && !containerCompletionRace(err) {
 			return 0, fmt.Errorf("set initial native WSL container terminal size: %w", err)
 		}

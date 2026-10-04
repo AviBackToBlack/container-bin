@@ -161,6 +161,27 @@ func TestExecuteToolPreservesFastTTYExitAcrossInitialResizeRace(t *testing.T) {
 	}
 }
 
+func TestExecuteToolSkipsUnknownInitialTTYSize(t *testing.T) {
+	stream := &fakeAttach{reader: bytes.NewReader([]byte("done")), writeDone: make(chan struct{})}
+	var stdout, stderr bytes.Buffer
+	var calls []string
+	deps := successfulRunDependencies(t, stream, &stdout, &stderr, &calls)
+	deps.prepareTerminal = func(bool) (terminalControl, error) {
+		return terminalControl{restore: func() error { return nil }}, nil
+	}
+	deps.resize = func(context.Context, string, uint16, uint16) error {
+		t.Fatal("unknown initial terminal size triggered a resize")
+		return nil
+	}
+	plan := toolPlan{spec: wsldocker.ContainerCreateSpec{
+		Tool: "demo", Namespace: testNamespace, Image: "demo:1", WorkingDirectory: "/root", TTY: true,
+	}}
+	code, err := executeTool(context.Background(), plan, deps)
+	if err != nil || code != 23 || stdout.String() != "done" {
+		t.Fatalf("unknown-size TTY result code=%d stdout=%q err=%v", code, stdout.String(), err)
+	}
+}
+
 func TestExecuteToolPreservesExitAcrossQueuedControlEvents(t *testing.T) {
 	stream := &fakeAttach{reader: bytes.NewReader([]byte("done")), writeDone: make(chan struct{})}
 	var stdout, stderr bytes.Buffer

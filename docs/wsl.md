@@ -286,13 +286,15 @@ removal disabled, and verifies absence afterward. If daemon-side auto-remove
 wins the race between inspection and deletion, a DELETE 404 succeeds only after
 a fresh proof-bound inspection confirms absence.
 The runtime attaches before start, streams stdin with an explicit half-close,
-decodes non-TTY stdout/stderr framing, selects TTY only when stdin accepts a
-real termios query, uses raw terminal mode, applies the initial size from stdin,
-consumes `SIGWINCH`, and forwards HUP, INT, QUIT, USR1, USR2, TERM, CONT, TSTP
-and PIPE numerically to the exact owned container. Completion-race 404/409
-responses from resize/signal are deferred to the authoritative Engine wait. It
-waits for the Engine exit status, drains output, restores the terminal and
-performs proof-bound cleanup; the tool's `0..255` exit code passes through.
+decodes non-TTY stdout/stderr framing, selects TTY only when both stdin and
+stdout accept real termios queries, uses raw terminal mode, and applies a
+positive initial size from stdin when measurable. Zero-sized or unreadable
+dimensions skip that resize; an unmeasurable `SIGWINCH` is dropped rather than
+terminating the tool. The runtime forwards HUP, INT, QUIT, USR1, USR2, TERM,
+CONT, TSTP and PIPE numerically to the exact owned container. Completion-race
+404/409 responses from resize/signal are deferred to the authoritative Engine
+wait. It waits for the Engine exit status, drains output, restores the terminal
+and performs proof-bound cleanup; the tool's `0..255` exit code passes through.
 Infrastructure or stream failure cancels the live wait, sends SIGKILL through
 the same proof-bound transport, waits for stop and then cleans up. Real WSL2 +
 Docker Desktop qualification remains mandatory before release support.
