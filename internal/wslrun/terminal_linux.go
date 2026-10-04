@@ -32,7 +32,7 @@ func prepareHostTerminal(tty bool) (terminalControl, error) {
 	if err := setTermios(stdinFD, raw); err != nil {
 		return terminalControl{}, fmt.Errorf("enter native WSL raw terminal mode: %w", err)
 	}
-	height, width, err := terminalSize(os.Stdout.Fd())
+	height, width, err := terminalSize(stdinFD)
 	if err != nil {
 		_ = setTermios(stdinFD, original)
 		return terminalControl{}, fmt.Errorf("read native WSL terminal size: %w", err)
@@ -51,11 +51,21 @@ func prepareHostTerminal(tty bool) (terminalControl, error) {
 	}, nil
 }
 
+// interactiveHostTerminal requires a real Linux terminal on stdin. Character
+// device mode alone is insufficient because /dev/null and /dev/zero also set
+// os.ModeCharDevice but reject terminal ioctls. Stdout may be redirected; TTY
+// sizing is taken from the controlling stdin terminal.
+func interactiveHostTerminal() bool {
+	_, err := getTermios(os.Stdin.Fd())
+	return err == nil
+}
+
 func startHostEvents(tty bool) (<-chan hostEvent, func(), error) {
 	signals := make(chan os.Signal, 16)
 	watched := []os.Signal{
 		syscall.SIGHUP, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGUSR1,
 		syscall.SIGUSR2, syscall.SIGTERM, syscall.SIGCONT, syscall.SIGTSTP,
+		syscall.SIGPIPE,
 	}
 	if tty {
 		watched = append(watched, syscall.SIGWINCH)
@@ -87,7 +97,7 @@ func startHostEvents(tty bool) (<-chan hostEvent, func(), error) {
 				}
 				event := hostEvent{signal: int(number)}
 				if number == syscall.SIGWINCH {
-					height, width, err := terminalSize(os.Stdout.Fd())
+					height, width, err := terminalSize(os.Stdin.Fd())
 					event = hostEvent{resize: true, height: height, width: width}
 					if err != nil {
 						event = hostEvent{err: fmt.Errorf("read resized native WSL terminal: %w", err)}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"time"
 
 	"github.com/AviBackToBlack/container-bin/internal/wsldocker"
@@ -161,8 +162,13 @@ func executeTool(ctx context.Context, plan toolPlan, deps runDependencies) (code
 	if err := deps.start(runCtx, container.id); err != nil {
 		return 0, fmt.Errorf("start native WSL tool container: %w", err)
 	}
+	waitDone := make(chan waitResult, 1)
+	go func() {
+		waitCode, waitErr := deps.wait(runCtx, container.id)
+		waitDone <- waitResult{code: waitCode, err: waitErr}
+	}()
 	if plan.spec.TTY {
-		if err := deps.resize(runCtx, container.id, term.height, term.width); err != nil {
+		if err := deps.resize(runCtx, container.id, term.height, term.width); err != nil && !containerCompletionRace(err) {
 			return 0, fmt.Errorf("set initial native WSL container terminal size: %w", err)
 		}
 	}
@@ -187,12 +193,6 @@ func executeTool(ctx context.Context, plan toolPlan, deps runDependencies) (code
 		}
 		inputDone <- closeErr
 	}()
-	waitDone := make(chan waitResult, 1)
-	go func() {
-		waitCode, waitErr := deps.wait(runCtx, container.id)
-		waitDone <- waitResult{code: waitCode, err: waitErr}
-	}()
-
 	var outputResult *error
 	for {
 		select {
@@ -241,11 +241,11 @@ func executeTool(ctx context.Context, plan toolPlan, deps runDependencies) (code
 				return 0, event.err
 			}
 			if event.resize {
-				if err := deps.resize(runCtx, container.id, event.height, event.width); err != nil {
+				if err := deps.resize(runCtx, container.id, event.height, event.width); err != nil && !containerCompletionRace(err) {
 					return 0, fmt.Errorf("resize native WSL tool terminal: %w", err)
 				}
 			} else if event.signal != 0 {
-				if err := deps.signal(runCtx, container.id, event.signal); err != nil {
+				if err := deps.signal(runCtx, container.id, event.signal); err != nil && !containerCompletionRace(err) {
 					return 0, fmt.Errorf("forward signal %d to native WSL tool container: %w", event.signal, err)
 				}
 			}
@@ -253,6 +253,14 @@ func executeTool(ctx context.Context, plan toolPlan, deps runDependencies) (code
 			return 0, fmt.Errorf("native WSL tool execution canceled: %w", ctx.Err())
 		}
 	}
+}
+
+func containerCompletionRace(err error) bool {
+	var apiErr *wsldocker.APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	return apiErr.StatusCode == http.StatusNotFound || apiErr.StatusCode == http.StatusConflict
 }
 
 func finishToolResult(code int, inputDone <-chan error) (int, error) {

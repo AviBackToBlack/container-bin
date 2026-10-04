@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"net/http"
 	"reflect"
 	"strings"
 	"sync"
@@ -133,6 +134,70 @@ func TestExecuteToolAppliesTTYSizeAndForwardsHostEvents(t *testing.T) {
 	}
 	if !reflect.DeepEqual(signals, []int{2}) {
 		t.Fatalf("forwarded signals = %#v", signals)
+	}
+}
+
+func TestExecuteToolPreservesFastTTYExitAcrossInitialResizeRace(t *testing.T) {
+	stream := &fakeAttach{reader: bytes.NewReader([]byte("done")), writeDone: make(chan struct{})}
+	var stdout, stderr bytes.Buffer
+	var calls []string
+	deps := successfulRunDependencies(t, stream, &stdout, &stderr, &calls)
+	deps.prepareTerminal = func(bool) (terminalControl, error) {
+		return terminalControl{height: 24, width: 80, restore: func() error { return nil }}, nil
+	}
+	deps.resize = func(context.Context, string, uint16, uint16) error {
+		return &wsldocker.APIError{StatusCode: http.StatusConflict, Message: "container is not running"}
+	}
+	deps.wait = func(context.Context, string) (int, error) {
+		calls = append(calls, "wait")
+		return 7, nil
+	}
+	plan := toolPlan{spec: wsldocker.ContainerCreateSpec{
+		Tool: "demo", Namespace: testNamespace, Image: "demo:1", WorkingDirectory: "/root", TTY: true,
+	}}
+	code, err := executeTool(context.Background(), plan, deps)
+	if err != nil || code != 7 || stdout.String() != "done" {
+		t.Fatalf("fast TTY result code=%d stdout=%q err=%v", code, stdout.String(), err)
+	}
+}
+
+func TestExecuteToolPreservesExitAcrossQueuedControlEvents(t *testing.T) {
+	stream := &fakeAttach{reader: bytes.NewReader([]byte("done")), writeDone: make(chan struct{})}
+	var stdout, stderr bytes.Buffer
+	var calls []string
+	deps := successfulRunDependencies(t, stream, &stdout, &stderr, &calls)
+	events := make(chan hostEvent, 2)
+	events <- hostEvent{resize: true, height: 40, width: 120}
+	events <- hostEvent{signal: 2}
+	close(events)
+	deps.startEvents = func(bool) (<-chan hostEvent, func(), error) { return events, func() {}, nil }
+	deps.prepareTerminal = func(bool) (terminalControl, error) {
+		return terminalControl{height: 24, width: 80, restore: func() error { return nil }}, nil
+	}
+	resizeCalls := 0
+	deps.resize = func(context.Context, string, uint16, uint16) error {
+		resizeCalls++
+		if resizeCalls == 1 {
+			return nil
+		}
+		return &wsldocker.APIError{StatusCode: http.StatusConflict, Message: "container is not running"}
+	}
+	controlsDone := make(chan struct{})
+	deps.signal = func(context.Context, string, int) error {
+		close(controlsDone)
+		return &wsldocker.APIError{StatusCode: http.StatusNotFound, Message: "no such container"}
+	}
+	deps.wait = func(context.Context, string) (int, error) {
+		calls = append(calls, "wait")
+		<-controlsDone
+		return 9, nil
+	}
+	plan := toolPlan{spec: wsldocker.ContainerCreateSpec{
+		Tool: "demo", Namespace: testNamespace, Image: "demo:1", WorkingDirectory: "/root", TTY: true,
+	}}
+	code, err := executeTool(context.Background(), plan, deps)
+	if err != nil || code != 9 || stdout.String() != "done" {
+		t.Fatalf("queued-event result code=%d stdout=%q err=%v", code, stdout.String(), err)
 	}
 }
 

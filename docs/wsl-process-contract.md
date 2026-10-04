@@ -70,11 +70,13 @@ error wins over the tool status so truncated piped input is not reported as
 success. ContainerBin does not wait indefinitely for a terminal or pipe reader
 that remains blocked after the tool and output stream have both completed.
 
-TTY mode is selected only when both stdin and stdout are character devices.
-The native terminal enters raw mode, the initial size is applied after start,
-and each `SIGWINCH` triggers a fresh positive row/column resize. Docker's TTY
-stream is unframed and is written to stdout; terminal state is restored on every
-return path.
+TTY mode is selected only when stdin accepts a real Linux termios query;
+character-device mode alone is insufficient because `/dev/null` and `/dev/zero`
+are not terminals. Stdout may be redirected. The native stdin terminal enters
+raw mode, provides the initial size after start, and each `SIGWINCH` triggers a
+fresh positive row/column resize from that same terminal. Docker's TTY stream is
+unframed and is written to stdout; terminal state is restored on every return
+path.
 
 The runtime waits up to five seconds for the attach stream to drain after the
 Engine reports exit. Failure to drain is an infrastructure error rather than a
@@ -82,13 +84,21 @@ silent loss of trailing output.
 
 ## Signals, failures and exit status
 
-The host intercepts HUP, INT, QUIT, USR1, USR2, TERM, CONT and TSTP and forwards
-their exact numeric Linux value to the owned container. `SIGWINCH` is consumed
-as a resize event and is not forwarded. KILL and STOP cannot be intercepted.
+The host intercepts HUP, INT, QUIT, USR1, USR2, TERM, CONT, TSTP and PIPE and
+forwards their exact numeric Linux value to the owned container. Intercepting
+`SIGPIPE` also ensures a broken output pipe returns through the normal `EPIPE`
+error and deferred cleanup instead of terminating the shim first. `SIGWINCH` is
+consumed as a resize event and is not forwarded. KILL and STOP cannot be
+intercepted.
 
 The tool's Engine status passes through unchanged, including conventional
 signal-derived statuses such as 130 when the container process returns them.
 ContainerBin does not invent a second mapping from host signals.
+
+An Engine 404/409 from an initial or queued resize/signal operation is treated
+as a possible completion race, not as the final outcome. The already-started
+Engine wait remains authoritative: a normal wait result preserves the tool exit
+status, while a vanished container still makes wait fail closed.
 
 If attach, output, resize, signal forwarding, wait or the caller context fails
 while the container is running, ContainerBin cancels the live operations, sends

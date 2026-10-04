@@ -10,7 +10,6 @@ import (
 
 	"github.com/AviBackToBlack/container-bin/internal/policy"
 	"github.com/AviBackToBlack/container-bin/internal/registry"
-	"github.com/AviBackToBlack/container-bin/internal/terminal"
 	"github.com/AviBackToBlack/container-bin/internal/wsldocker"
 	"github.com/AviBackToBlack/container-bin/internal/wslfs"
 	"github.com/AviBackToBlack/container-bin/internal/wslshim"
@@ -36,7 +35,7 @@ func productionFrontendDependencies() frontendDependencies {
 		absPath:               filepath.Abs,
 		evalSymlinks:          filepath.EvalSymlinks,
 		getwd:                 os.Getwd,
-		interactive:           terminal.Interactive,
+		interactive:           interactiveHostTerminal,
 		environ:               os.Environ,
 		plan:                  productionPlanDependencies(),
 		run: runDependencies{
