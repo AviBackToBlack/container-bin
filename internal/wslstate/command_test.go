@@ -71,12 +71,16 @@ func TestGCDryRunSelectsCurrentProjectAndNeverSharedState(t *testing.T) {
 	removed := false
 	deps.remove = func(context.Context, wslvolume.Volume) error { removed = true; return nil }
 
-	var out bytes.Buffer
-	if err := run(context.Background(), []string{"gc", "python"}, &out, deps); err != nil {
-		t.Fatal(err)
-	}
-	if removed || !strings.Contains(out.String(), project.Name()) || strings.Contains(out.String(), cache.Name()) {
-		t.Fatalf("dry-run removed=%t output=%q", removed, out.String())
+	for _, filter := range []string{"python", wslvolume.PythonStateGroup} {
+		t.Run(filter, func(t *testing.T) {
+			var out bytes.Buffer
+			if err := run(context.Background(), []string{"gc", filter}, &out, deps); err != nil {
+				t.Fatal(err)
+			}
+			if removed || !strings.Contains(out.String(), project.Name()) || strings.Contains(out.String(), cache.Name()) {
+				t.Fatalf("dry-run removed=%t output=%q", removed, out.String())
+			}
+		})
 	}
 }
 

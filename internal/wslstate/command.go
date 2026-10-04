@@ -387,7 +387,7 @@ func expectedVolumes(scope wslvolume.Scope, reg registry.Registry, cwd, filter s
 	sort.Strings(names)
 	for _, name := range names {
 		tool := reg.Tools[name]
-		if filter != "" && filter != tool.Name && resolved != tool.Name && filter != tool.StateGroup && !(filter == "python" && tool.Provider == "python") {
+		if !toolMatchesFilter(tool, filter, resolved) {
 			continue
 		}
 		switch tool.Provider {
@@ -435,6 +435,13 @@ func expectedVolumes(scope wslvolume.Scope, reg registry.Registry, cwd, filter s
 		}
 	}
 	return current, shared, nil
+}
+
+func toolMatchesFilter(tool registry.Tool, filter, resolved string) bool {
+	if filter == "" || filter == tool.Name || resolved == tool.Name || filter == tool.StateGroup {
+		return true
+	}
+	return tool.Provider == "python" && (filter == "python" || filter == wslvolume.PythonStateGroup)
 }
 
 func addExpected(target map[string]wslvolume.Volume, volume wslvolume.Volume) error {
