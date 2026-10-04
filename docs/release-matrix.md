@@ -193,7 +193,41 @@ So CI validates compilation and pure/unit logic on a GitHub-hosted Windows
 runner. The matrix is what validates the `docs/shell-contract.md` semantics on a
 real Windows 11 + Docker Desktop host before a release.
 
-### Live self-update attestation verifier check
+### Live published-release self-update qualification
+
+The repository includes a Windows/amd64 harness that builds the current source
+with an injected earlier version, installs isolated hardlink and byte-identical
+managed shims, and updates that private installation to an exact canonical
+published release:
+
+```powershell
+$env:GH_TOKEN = gh auth token --hostname github.com
+pwsh -NoProfile -File .\scripts\qualify-self-update-published.ps1 `
+  -FromVersion v1.0.0 `
+  -TargetVersion v1.1.0 `
+  -GitHubCLI (Get-Command gh.exe).Source
+```
+
+Run it from the repository root. `go` may be a native executable or a
+ContainerBin shim; the harness sets the intended repository working directory
+and explicit Windows/amd64 build target in the same child process. The selected
+GitHub CLI must be the official Authenticode-valid executable, and an explicit
+`GH_TOKEN` or `GITHUB_TOKEN` is required. The harness never prints the token.
+
+This exercises release selection, canonical bounded downloads, checksum and
+GitHub build-provenance verification, the private helper handoff, repeated
+verification after the parent exits, transactional replacement, bootstrap
+version smoke testing, hardlink reconciliation for both originally hardlinked
+and byte-identical shims, and cleanup of staging/helper/rollback artifacts. It
+uses a unique system-temp installation and removes only that validated path.
+
+Qualification evidence on 2026-10-04: current `main` at `e625ab6` was built as
+`v1.0.0` and updated to the canonical published `v1.1.0` release on native
+Windows/amd64. The exact published asset (`cb.exe`, 3,383,808 bytes), checksum
+manifest and GitHub Actions provenance passed; both managed shims were
+reconciled as hardlinks and no private update artifact remained.
+
+### Lower-level live attestation verifier check
 
 `internal/selfupdate` includes an opt-in native-Windows integration test for the
 external verifier boundary. It must be run with an Authenticode-valid GitHub CLI
