@@ -95,9 +95,6 @@ func executeTool(ctx context.Context, plan toolPlan, deps runDependencies) (code
 	)
 	defer func() {
 		cancelRun()
-		if stopEvents != nil {
-			stopEvents()
-		}
 		if stream != nil {
 			if err := stream.Close(); retErr == nil && err != nil {
 				retErr = fmt.Errorf("close native WSL attach stream: %w", err)
@@ -138,6 +135,12 @@ func executeTool(ctx context.Context, plan toolPlan, deps runDependencies) (code
 			}
 		}
 		retErr = errors.Join(retErr, lifecycleErr)
+		if stopEvents != nil {
+			// Keep catchable host signals intercepted until proof-bound cleanup
+			// finishes. Restoring their default disposition earlier can terminate
+			// the shim inside the cleanup window and strand a retained container.
+			stopEvents()
+		}
 	}()
 
 	events, stop, err := deps.startEvents(plan.spec.TTY)

@@ -229,6 +229,12 @@ func TestExecuteToolForceStopsOwnedContainerAfterStreamFailure(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	var calls []string
 	deps := successfulRunDependencies(t, stream, &stdout, &stderr, &calls)
+	deps.startEvents = func(bool) (<-chan hostEvent, func(), error) {
+		calls = append(calls, "events")
+		events := make(chan hostEvent)
+		close(events)
+		return events, func() { calls = append(calls, "stop-events") }, nil
+	}
 	deps.wait = func(ctx context.Context, _ string) (int, error) {
 		if _, cleanup := ctx.Deadline(); cleanup {
 			calls = append(calls, "cleanup-wait")
@@ -254,6 +260,9 @@ func TestExecuteToolForceStopsOwnedContainerAfterStreamFailure(t *testing.T) {
 	}
 	if !containsCall(calls, "cleanup-wait") || !containsCall(calls, "remove") {
 		t.Fatalf("cleanup calls = %#v", calls)
+	}
+	if removeAt, stopAt := callIndex(calls, "remove"), callIndex(calls, "stop-events"); removeAt < 0 || stopAt <= removeAt {
+		t.Fatalf("host events stopped before cleanup completed: %#v", calls)
 	}
 }
 
@@ -357,4 +366,13 @@ func containsCall(calls []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func callIndex(calls []string, want string) int {
+	for index, call := range calls {
+		if call == want {
+			return index
+		}
+	}
+	return -1
 }

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AviBackToBlack/container-bin/internal/dockerrun"
 	"github.com/AviBackToBlack/container-bin/internal/hostenv"
 	"github.com/AviBackToBlack/container-bin/internal/policy"
 	"github.com/AviBackToBlack/container-bin/internal/registry"
@@ -13,6 +14,12 @@ import (
 )
 
 const testNamespace = "wsl2-0123456789abcdef0123456789abcdef"
+
+func TestPythonBootstrapMatchesWindowsFrontend(t *testing.T) {
+	if pythonBootstrap != dockerrun.PythonBootstrap {
+		t.Fatal("native WSL and Windows Python bootstrap commands diverged")
+	}
+}
 
 func TestBuildToolPlanWiresProjectMappingEnvironmentAndCommand(t *testing.T) {
 	deps := testPlanDependencies(true)

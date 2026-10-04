@@ -107,7 +107,11 @@ while the container is running, ContainerBin cancels the live operations, sends
 SIGKILL through the proof-bound signal endpoint, waits for the retained
 container to stop, and then performs proof-bound cleanup. Any cleanup failure is
 joined to the original diagnostic. The top level maps infrastructure failures
-to ContainerBin's documented exit code 120.
+to ContainerBin's documented exit code 120. Catchable host signals remain
+intercepted until that cleanup finishes, so their default disposition cannot
+terminate the shim inside the bounded cleanup window and strand a retained
+container. SIGKILL remains uncatchable and is covered by the activation gate's
+orphan-reconciliation requirement.
 
 A failed start response is treated as transport-ambiguous: the Engine may have
 accepted the request before the connection failed. Cleanup therefore attempts
