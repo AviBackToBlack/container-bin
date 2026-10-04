@@ -17,8 +17,8 @@ const wslNamespaceDomain = "container-bin/wsl2-state/v1\x00"
 // WSLLayout is the fixed user-local filesystem and Docker-state contract for
 // one native WSL2 distribution. It is computed without consulting XDG or PATH
 // environment variables so a launcher or project cannot redirect trust state.
-// Ordinary frontend execution remains gated until the later installer, Docker
-// integration, path and end-to-end qualification slices land.
+// Ordinary frontend execution consumes this identity after the installer and
+// filesystem checks revalidate the fixed paths.
 type WSLLayout struct {
 	Distro         string
 	UID            uint32

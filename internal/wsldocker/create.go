@@ -47,21 +47,34 @@ type ContainerCreateSpec struct {
 	WorkingDirectory string
 	Mounts           []ContainerMount
 	TTY              bool
+	// RetainUntilCleanup disables daemon auto-removal so an orchestrator can
+	// reliably collect even an ultra-short-lived process exit status before
+	// invoking the proof-bound cleanup operation.
+	RetainUntilCleanup bool
 }
 
 // Container is the immutable identity of one container created and
 // re-inspected through the proof-bound Docker Desktop WSL transport.
 type Container struct {
-	id        string
-	runID     string
-	namespace string
-	tool      string
+	id                 string
+	runID              string
+	namespace          string
+	tool               string
+	retainUntilCleanup bool
 }
 
 func (c Container) ID() string        { return c.id }
 func (c Container) RunID() string     { return c.runID }
 func (c Container) Namespace() string { return c.namespace }
 func (c Container) Tool() string      { return c.tool }
+
+// ValidateContainerCreateSpec performs the same complete request validation as
+// CreateContainer without proving mounts or contacting Docker. Runtime
+// orchestrators use it before ensuring named volumes so malformed execution
+// input cannot leave otherwise-valid empty state behind.
+func ValidateContainerCreateSpec(spec ContainerCreateSpec) error {
+	return validateContainerCreateSpec(spec)
+}
 
 type createDependencies struct {
 	operations        operationDependencies
@@ -108,7 +121,7 @@ func createContainer(ctx context.Context, spec ContainerCreateSpec, deps createD
 		return Container{}, errors.New("generated Docker Desktop WSL container run identity is invalid")
 	}
 
-	container := Container{runID: runID, namespace: spec.Namespace, tool: spec.Tool}
+	container := Container{runID: runID, namespace: spec.Namespace, tool: spec.Tool, retainUntilCleanup: spec.RetainUntilCleanup}
 	body := containerCreateBody{
 		AttachStdin:  true,
 		AttachStdout: true,
@@ -122,7 +135,7 @@ func createContainer(ctx context.Context, spec ContainerCreateSpec, deps createD
 		Labels:       containerLabels(container),
 		WorkingDir:   spec.WorkingDirectory,
 	}
-	body.HostConfig.AutoRemove = true
+	body.HostConfig.AutoRemove = !spec.RetainUntilCleanup
 	body.HostConfig.Mounts = append([]ContainerMount(nil), spec.Mounts...)
 	raw, err := json.Marshal(body)
 	if err != nil {
@@ -169,9 +182,9 @@ func createContainer(ctx context.Context, spec ContainerCreateSpec, deps createD
 		return Container{}, rollbackCreatedContainer(ctx, container, deps.operations,
 			errors.New("created Docker container is already running"))
 	}
-	if snapshot.TTY() != spec.TTY || !snapshot.AttachStdin() || !snapshot.AttachStdout() || !snapshot.AttachStderr() || !snapshot.OpenStdin() || !snapshot.StdinOnce() || !snapshot.AutoRemove() {
+	if snapshot.TTY() != spec.TTY || !snapshot.AttachStdin() || !snapshot.AttachStdout() || !snapshot.AttachStderr() || !snapshot.OpenStdin() || !snapshot.StdinOnce() || snapshot.AutoRemove() != !spec.RetainUntilCleanup {
 		return Container{}, rollbackCreatedContainer(ctx, container, deps.operations,
-			errors.New("created Docker container stdio, terminal or auto-remove configuration does not match the request"))
+			errors.New("created Docker container stdio, terminal or retention configuration does not match the request"))
 	}
 	return container, nil
 }

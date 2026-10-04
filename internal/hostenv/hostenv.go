@@ -49,9 +49,9 @@ func Current() (Runtime, error) {
 	return classify(goos, kernelRelease, os.Getenv("WSL_DISTRO_NAME"), os.Getenv("WSL_INTEROP")), nil
 }
 
-// RequireFrontend enforces the currently shipped host boundary. Native
-// Windows is supported. WSL2 is recognized explicitly but remains gated until
-// its config, shim, state-namespace and Docker integration slices have landed.
+// RequireFrontend enforces the supported host boundary. Native Windows is
+// enabled. Native WSL2 is classified precisely but remains activation-gated
+// until retained-container orphan reconciliation and real qualification land.
 func RequireFrontend() error {
 	return requireFrontend(Current())
 }
@@ -73,13 +73,16 @@ func requireFrontend(info Runtime, probeErr error) error {
 		if strings.TrimSpace(info.Distro) == "" {
 			return errors.New("native WSL2 was detected but WSL_DISTRO_NAME is unavailable, so distribution identity cannot be proven")
 		}
-		return fmt.Errorf("native WSL2 distribution %q was detected, but the WSL frontend is not enabled in this release", info.Distro)
+		if err := validateDistroIdentity(info.Distro); err != nil {
+			return fmt.Errorf("native WSL2 distribution identity cannot be proven: %w", err)
+		}
+		return fmt.Errorf("native WSL2 distribution %q was detected; the tool runtime is wired but activation is gated until orphan-container reconciliation and real Docker Desktop qualification land", info.Distro)
 	case WSL1Native:
-		return errors.New("WSL1 is unsupported; the planned native frontend requires WSL2 and Docker Desktop WSL integration")
+		return errors.New("WSL1 is unsupported; the native frontend requires WSL2 and Docker Desktop WSL integration")
 	case WSLUnrecognized:
 		return fmt.Errorf("Microsoft WSL kernel %q lacks an explicit WSL2 marker, so its generation cannot be proven; this host is unsupported", info.KernelRelease)
 	case LinuxNative:
-		return errors.New("standalone Linux hosts are unsupported; Linux execution is limited to the planned native WSL2 frontend")
+		return errors.New("standalone Linux hosts are unsupported; Linux execution is limited to the native WSL2 frontend")
 	default:
 		return fmt.Errorf("host operating system %q is unsupported", info.GOOS)
 	}

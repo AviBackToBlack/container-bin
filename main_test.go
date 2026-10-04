@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AviBackToBlack/container-bin/internal/hostenv"
 	"github.com/AviBackToBlack/container-bin/internal/policy"
 	"github.com/AviBackToBlack/container-bin/internal/projectconfig"
 	"github.com/AviBackToBlack/container-bin/internal/registry"
@@ -148,6 +149,57 @@ func TestWSLPreflightSkipsGeneralHostPolicyAndRegistry(t *testing.T) {
 	}
 }
 
+func TestNativeWSLToolDispatchSkipsWindowsRegistryAndRuntime(t *testing.T) {
+	oldArgs := os.Args
+	oldRequireHostFrontend := requireHostFrontend
+	oldCurrentHostRuntime := currentHostRuntime
+	oldRunWSLTool := runWSLTool
+	oldLoadRegistry := loadRegistry
+	oldLoadPolicy := loadPolicy
+	oldExit := osExit
+	defer func() {
+		os.Args = oldArgs
+		requireHostFrontend = oldRequireHostFrontend
+		currentHostRuntime = oldCurrentHostRuntime
+		runWSLTool = oldRunWSLTool
+		loadRegistry = oldLoadRegistry
+		loadPolicy = oldLoadPolicy
+		osExit = oldExit
+	}()
+
+	requireHostFrontend = func() error { return nil }
+	currentHostRuntime = func() (hostenv.Runtime, error) {
+		return hostenv.Runtime{Kind: hostenv.WSL2Native, Distro: "Ubuntu-24.04"}, nil
+	}
+	loadRegistry = func(registry.Authenticator) (registry.Registry, string, error) {
+		panic("native WSL dispatch attempted the Windows registry loader")
+	}
+	loadPolicy = func() (policy.Policy, error) {
+		panic("native WSL dispatch attempted the Windows runtime path")
+	}
+	called := false
+	runWSLTool = func(_ context.Context, invoked string, args []string) (int, error) {
+		called = true
+		if invoked != "node" || strings.Join(args, " ") != "--version" {
+			t.Fatalf("WSL dispatch = %q %#v", invoked, args)
+		}
+		return 42, nil
+	}
+	type exitCode int
+	osExit = func(code int) { panic(exitCode(code)) }
+	os.Args = []string{"node", "--version"}
+
+	defer func() {
+		if got := recover(); got != exitCode(42) {
+			t.Fatalf("main panic = %v, want tool exit 42", got)
+		}
+		if !called {
+			t.Fatal("native WSL tool runner was not called")
+		}
+	}()
+	main()
+}
+
 func TestHostBoundaryPrecedesPolicyAndRegistryLoad(t *testing.T) {
 	oldArgs := os.Args
 	oldLoadRegistry := loadRegistry
@@ -195,12 +247,14 @@ func TestSelfUpdateEnforcesHostBoundaryAndSkipsPolicyAndRegistry(t *testing.T) {
 	oldLoadPolicy := loadPolicy
 	oldRequireHostFrontend := requireHostFrontend
 	oldRunSelfUpdate := runSelfUpdate
+	oldCurrentHostRuntime := currentHostRuntime
 	defer func() {
 		os.Args = oldArgs
 		loadRegistry = oldLoadRegistry
 		loadPolicy = oldLoadPolicy
 		requireHostFrontend = oldRequireHostFrontend
 		runSelfUpdate = oldRunSelfUpdate
+		currentHostRuntime = oldCurrentHostRuntime
 	}()
 
 	hostChecked := false
@@ -208,6 +262,7 @@ func TestSelfUpdateEnforcesHostBoundaryAndSkipsPolicyAndRegistry(t *testing.T) {
 		hostChecked = true
 		return nil
 	}
+	currentHostRuntime = func() (hostenv.Runtime, error) { return hostenv.Runtime{Kind: hostenv.WindowsNative}, nil }
 	loadRegistry = func(registry.Authenticator) (registry.Registry, string, error) {
 		panic("self-update check attempted to load the registry")
 	}
@@ -241,16 +296,19 @@ func TestSelfUpdateHelperDispatchIsPrivateAndSkipsPolicyAndRegistry(t *testing.T
 	oldLoadPolicy := loadPolicy
 	oldRequireHostFrontend := requireHostFrontend
 	oldRunSelfUpdateHelper := runSelfUpdateHelper
+	oldCurrentHostRuntime := currentHostRuntime
 	defer func() {
 		os.Args = oldArgs
 		loadRegistry = oldLoadRegistry
 		loadPolicy = oldLoadPolicy
 		requireHostFrontend = oldRequireHostFrontend
 		runSelfUpdateHelper = oldRunSelfUpdateHelper
+		currentHostRuntime = oldCurrentHostRuntime
 	}()
 
 	hostChecked := false
 	requireHostFrontend = func() error { hostChecked = true; return nil }
+	currentHostRuntime = func() (hostenv.Runtime, error) { return hostenv.Runtime{Kind: hostenv.WindowsNative}, nil }
 	loadRegistry = func(registry.Authenticator) (registry.Registry, string, error) {
 		panic("self-update helper attempted to load the registry")
 	}

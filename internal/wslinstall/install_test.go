@@ -54,10 +54,13 @@ func TestCheckIsReadOnlyAndReportsRequiredActions(t *testing.T) {
 	if mutatingLoadCalled {
 		t.Fatal("read-only check used mutating registry load")
 	}
-	for _, want := range []string{"read-only; no files changed", "registry:      create", "binary:        create", "management:    create", "APPLY REQUIRED", "frontend:      GATED"} {
+	for _, want := range []string{"read-only; no files changed", "registry:      create", "binary:        create", "management:    create", "APPLY REQUIRED", "frontend:      INSTALL REQUIRED; RUNTIME WIRED; ACTIVATION GATED"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("output missing %q:\n%s", want, out.String())
 		}
+	}
+	if strings.Contains(out.String(), "frontend:      INSTALLED") {
+		t.Fatalf("incomplete installation reported installed:\n%s", out.String())
 	}
 }
 
@@ -236,10 +239,13 @@ func TestApplyComposesRegistryBinaryAndShimLifecycle(t *testing.T) {
 	if !prepared || !locked || !registryExists || !binaryReady || !managementReady || !shimsReady {
 		t.Fatalf("incomplete lifecycle: prepared=%t locked=%t registry=%t binary=%t management=%t shims=%t", prepared, locked, registryExists, binaryReady, managementReady, shimsReady)
 	}
-	for _, want := range []string{"applied and revalidated", "INSTALLATION READY", "frontend:      GATED"} {
+	for _, want := range []string{"applied and revalidated", "INSTALLATION READY", "frontend:      INSTALLED; RUNTIME WIRED; ACTIVATION GATED"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("output missing %q:\n%s", want, out.String())
 		}
+	}
+	if strings.Contains(out.String(), "frontend:      INSTALL REQUIRED") {
+		t.Fatalf("ready installation still reported apply required:\n%s", out.String())
 	}
 }
 
