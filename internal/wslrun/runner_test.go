@@ -26,6 +26,7 @@ type fakeAttach struct {
 	closed      bool
 	writeDone   chan struct{}
 	writeOnce   sync.Once
+	closeErr    error
 }
 
 func (s *fakeAttach) Read(p []byte) (int, error) { return s.reader.Read(p) }
@@ -43,7 +44,7 @@ func (s *fakeAttach) CloseWrite() error {
 	})
 	return nil
 }
-func (s *fakeAttach) Close() error      { s.closed = true; return nil }
+func (s *fakeAttach) Close() error      { s.closed = true; return s.closeErr }
 func (s *fakeAttach) Multiplexed() bool { return s.multiplexed }
 
 func TestExecuteToolStreamsMultiplexedIOAndPropagatesExitCode(t *testing.T) {
@@ -225,7 +226,10 @@ func TestExecuteToolPreservesExitAcrossQueuedControlEvents(t *testing.T) {
 func TestExecuteToolForceStopsOwnedContainerAfterStreamFailure(t *testing.T) {
 	malformed := rawFrame(1, "bad")
 	malformed[1] = 1
-	stream := &fakeAttach{reader: bytes.NewReader(malformed), multiplexed: true, writeDone: make(chan struct{})}
+	stream := &fakeAttach{
+		reader: bytes.NewReader(malformed), multiplexed: true,
+		writeDone: make(chan struct{}), closeErr: errors.New("close failed"),
+	}
 	var stdout, stderr bytes.Buffer
 	var calls []string
 	deps := successfulRunDependencies(t, stream, &stdout, &stderr, &calls)
@@ -252,7 +256,7 @@ func TestExecuteToolForceStopsOwnedContainerAfterStreamFailure(t *testing.T) {
 		Tool: "demo", Namespace: testNamespace, Image: "demo:1", WorkingDirectory: "/root", RetainUntilCleanup: true,
 	}}
 	_, err := executeTool(context.Background(), plan, deps)
-	if err == nil || !strings.Contains(err.Error(), "raw-stream frame") {
+	if err == nil || !strings.Contains(err.Error(), "raw-stream frame") || !strings.Contains(err.Error(), "close native WSL attach stream: close failed") {
 		t.Fatalf("stream failure = %v", err)
 	}
 	if !reflect.DeepEqual(signals, []int{9}) {

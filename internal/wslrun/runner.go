@@ -96,8 +96,8 @@ func executeTool(ctx context.Context, plan toolPlan, deps runDependencies) (code
 	defer func() {
 		cancelRun()
 		if stream != nil {
-			if err := stream.Close(); retErr == nil && err != nil {
-				retErr = fmt.Errorf("close native WSL attach stream: %w", err)
+			if err := stream.Close(); err != nil {
+				retErr = errors.Join(retErr, fmt.Errorf("close native WSL attach stream: %w", err))
 			}
 		}
 		if term.restore != nil {
