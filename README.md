@@ -71,7 +71,7 @@ real Linux CLI/runtime in an ephemeral container
 |---|---|
 | Windows 10/11 x64 + Docker Desktop (Linux containers) + PowerShell | **Supported** — this is the validated configuration |
 | cmd.exe invocation of shims | Works for the common cases; less battle-tested than PowerShell |
-| WSL2 | **v2 runtime wired; activation gated.** The native Linux runtime uses the fixed private WSL layout and Docker Desktop's WSL integration directly, including proof-bound retained-container orphan recovery, but production dispatch remains fail-closed until native state commands, integration coverage and real WSL2 qualification land. See [docs/wsl.md](docs/wsl.md) |
+| WSL2 | **v2 runtime and state lifecycle wired; activation gated.** The native Linux runtime uses the fixed private WSL layout and Docker Desktop's WSL integration directly, including proof-bound retained-container and volume cleanup, but managed-tool dispatch remains fail-closed until integration coverage and real WSL2 qualification land. See [docs/wsl.md](docs/wsl.md) |
 | Windows 11 ARM64 | **CI/release-artifact/update-path qualified only, not supported yet.** Native tests/build/dispatch run on GitHub-hosted ARM64 hardware, the release workflow produces a reproducible ARM64 archive, and self-update selects and verifies that archive by `GOARCH`; real Docker Desktop ARM64 E2E qualification remains |
 | Linux / macOS hosts | **Not supported.** The program is Go and cross-compiles, but shim installation, path mapping and doctor checks are Windows-specific |
 | Windows containers | Not supported; images are Linux images |
@@ -904,6 +904,9 @@ cb wsl prepare --check             # native WSL2 only; read-only fixed-layout va
 cb wsl prepare --apply             # create missing fixed-layout directories, then revalidate
 cb wsl install --check             # read-only native install/config/shim plan
 cb wsl install --apply             # install this native binary, registry and fixed symlinks
+cb state                           # native WSL: list only exactly proven namespace volumes
+cb gc [TOOL|STATE_GROUP]           # native WSL: dry-run current project cleanup
+cb gc [TOOL|STATE_GROUP] --orphans # native WSL: dry-run missing-project cleanup
 ```
 
 `cb bugreport` assembles `cb version`, the Windows and PowerShell versions
@@ -949,8 +952,8 @@ creation/upgrades and requires an already provisioned authenticated registry.
 The bootstrap executable must itself be a bounded, current-user-owned regular
 non-symlink file with safe executable permissions. This command still does not
 contact Docker itself. Install reports the wired-but-gated runtime state;
-managed tool dispatch remains fail-closed until native state commands,
-integration coverage and real WSL2 qualification land. See
+managed tool dispatch remains fail-closed until integration coverage and real
+WSL2 qualification land. See
 [docs/wsl.md](docs/wsl.md).
 
 `cb wsl cleanup --check` reports exact namespace-owned retained runtime
@@ -961,6 +964,19 @@ namespace coordinator remains held across container creation and lease
 publication so cleanup cannot guess across that race. Unlocked lease evidence
 whose exact namespace no longer contains a matching retained container is
 reported and reaped by `--apply`; locked leases are always preserved.
+
+`cb state` and `cb gc` are also available natively in WSL before general tool
+activation. They validate the fixed installation and authenticated registry,
+discover only the current distribution/machine/user namespace, then reconstruct
+and exactly prove every candidate before producing output or mutation. `cb gc`
+is a dry run unless `--apply` is explicit, never selects shared volumes, and
+uses non-force deletion with an absence check. `--orphans` requires the recorded
+canonical Linux project path to be missing below a currently proven supported
+storage boundary; a vanished `/mnt/<drive>` mount, symlinked ancestry and
+non-directory objects are unsafe rather than guessed to be orphans. Apply
+re-proves absence immediately before each removal. Native state
+backup/restore remains separate future work and is not part of this v2 runtime
+activation gate.
 
 ### Self-update release selection
 
@@ -1123,9 +1139,9 @@ benchmark methodology and the disposable-container tradeoff are in
 - Windows x64 + Docker Desktop (Linux containers) is the currently qualified
   release target. The native WSL2 runtime, fixed-layout installation, project
   mapping, managed volumes, Engine lifecycle, stdio/TTY, resize, signal and exit
-  propagation plus retained-container orphan reconciliation are wired, but
-  activation still requires native state commands, integration coverage and
-  real WSL2 + Docker Desktop qualification. Windows
+  propagation plus retained-container and volume cleanup are wired, but
+  activation still requires integration coverage and real WSL2 + Docker
+  Desktop qualification. Windows
   ARM64 has native non-Docker CI
   coverage and published release artifacts, but no Docker support claim.
 - First invocation of a tool after `cb lock` may still need images present

@@ -24,7 +24,6 @@ import (
 const (
 	projectWorkspace  = "/workspace/project"
 	isolatedWorkspace = "/root"
-	pythonStateGroup  = "python313"
 	pythonBootstrap   = `if [ ! -x /venv/bin/python ]; then python -m venv /venv || exit $?; fi; if [ "$1" = "__CB_PIP__" ]; then shift; exec /venv/bin/python -m pip "$@"; else exec /venv/bin/python "$@"; fi`
 )
 
@@ -35,15 +34,15 @@ type toolPlan struct {
 }
 
 type planDependencies struct {
-	resolveImage       func(registry.Tool, policy.Policy, string) (string, error)
-	selectProject      func(string, registry.Tool) (wslproject.Project, bool, error)
-	classifyDescendant func(wslproject.Project, string) (wslproject.Descendant, error)
-	mapArgs            func(registry.Tool, wslproject.Project, string, string, []string) ([]string, string, error)
-	planVolumes        func(wslvolume.Scope, registry.Tool, wslproject.Project, string) ([]wslvolume.Binding, error)
+	resolveImage  func(registry.Tool, policy.Policy, string) (string, error)
+	selectProject func(string, registry.Tool) (wslproject.Project, bool, error)
+	mapArgs       func(registry.Tool, wslproject.Project, string, string, []string) ([]string, string, error)
+	planVolumes   func(wslvolume.Scope, registry.Tool, wslproject.Project, string) ([]wslvolume.Binding, error)
+	planPython    func(wslvolume.Scope, wslproject.Project, bool) (wslvolume.PythonState, error)
 }
 
 func buildToolPlan(tool registry.Tool, userArgs []string, machinePolicy policy.Policy, layout hostenv.WSLLayout, cwd string, tty bool, environ []string, deps planDependencies) (toolPlan, error) {
-	if deps.resolveImage == nil || deps.selectProject == nil || deps.classifyDescendant == nil || deps.mapArgs == nil || deps.planVolumes == nil {
+	if deps.resolveImage == nil || deps.selectProject == nil || deps.mapArgs == nil || deps.planVolumes == nil || deps.planPython == nil {
 		return toolPlan{}, errors.New("native WSL runtime planning dependencies are incomplete")
 	}
 	if len(tool.HostMounts) != 0 {
@@ -120,30 +119,14 @@ func buildToolPlan(tool registry.Tool, userArgs []string, machinePolicy policy.P
 		if tool.CwdMode == "isolated" {
 			return toolPlan{}, errors.New("native WSL Python provider cannot use isolated cwd mode")
 		}
-		var venv wslvolume.Volume
-		if found {
-			root, proofErr := deps.classifyDescendant(project, project.Root)
-			if proofErr != nil {
-				return toolPlan{}, fmt.Errorf("prove native WSL Python project root: %w", proofErr)
-			}
-			if !root.Exists || root.Path != project.Root || root.Relative != "." || root.NearestExisting != project.Root {
-				return toolPlan{}, errors.New("native WSL Python project proof did not identify the exact existing root")
-			}
-			venv, err = scope.Project(pythonStateGroup, "venv", project.Root)
-		} else {
-			venv, err = scope.Shared(pythonStateGroup, "compat-venv")
-		}
+		pythonState, err := deps.planPython(scope, project, found)
 		if err != nil {
 			return toolPlan{}, err
 		}
-		pipCache, err := scope.Shared(pythonStateGroup, "pip-cache")
-		if err != nil {
+		if err := appendVolume(pythonState.Venv, "/venv"); err != nil {
 			return toolPlan{}, err
 		}
-		if err := appendVolume(venv, "/venv"); err != nil {
-			return toolPlan{}, err
-		}
-		if err := appendVolume(pipCache, "/root/.cache/pip"); err != nil {
+		if err := appendVolume(pythonState.PipCache, "/root/.cache/pip"); err != nil {
 			return toolPlan{}, err
 		}
 		plan.spec.Environment, err = mergeLiteralEnvironment(plan.spec.Environment,
@@ -263,10 +246,10 @@ func validEnvironmentName(name string) bool {
 
 func productionPlanDependencies() planDependencies {
 	return planDependencies{
-		resolveImage:       lockfile.RuntimeImageForToolAt,
-		selectProject:      wslproject.SelectForTool,
-		classifyDescendant: wslproject.ClassifyDescendant,
-		mapArgs:            wslpathmap.MapToolArgs,
-		planVolumes:        wslvolume.PlanStatefulToolVolumes,
+		resolveImage:  lockfile.RuntimeImageForToolAt,
+		selectProject: wslproject.SelectForTool,
+		mapArgs:       wslpathmap.MapToolArgs,
+		planVolumes:   wslvolume.PlanStatefulToolVolumes,
+		planPython:    wslvolume.PlanPythonVolumes,
 	}
 }

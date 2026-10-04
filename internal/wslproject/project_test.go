@@ -203,6 +203,85 @@ func TestResolveDescendantRejectsInvalidInputsAndChangedProjectIdentity(t *testi
 	}
 }
 
+func TestProveMissingProjectRequiresLiveSupportedStorageBoundary(t *testing.T) {
+	driveMounts := rootMount + "25 24 0:45 / /mnt/c rw - 9p drvfsa rw,aname=drvfs;path=C:\\134;uid=1000\n"
+	tests := map[string]struct {
+		root   string
+		mounts string
+		infos  map[string]pathInfo
+		want   string
+	}{
+		"distribution": {
+			root: "/home/alice/gone", mounts: rootMount,
+			infos: map[string]pathInfo{
+				"/": {Mode: os.ModeDir | 0o755, Dev: linuxDevice(8, 1)}, "/home": {Mode: os.ModeDir | 0o755, Dev: linuxDevice(8, 1)}, "/home/alice": {Mode: os.ModeDir | 0o755, Dev: linuxDevice(8, 1)},
+			},
+		},
+		"live default drive": {
+			root: "/mnt/c/Work/gone", mounts: driveMounts,
+			infos: map[string]pathInfo{
+				"/": {Mode: os.ModeDir | 0o755, Dev: linuxDevice(8, 1)}, "/mnt": {Mode: os.ModeDir | 0o755, Dev: linuxDevice(8, 1)}, "/mnt/c": {Mode: os.ModeDir | 0o755, Dev: linuxDevice(0, 45)}, "/mnt/c/Work": {Mode: os.ModeDir | 0o755, Dev: linuxDevice(0, 45)},
+			},
+		},
+		"vanished default drive": {
+			root: "/mnt/c/Work/gone", mounts: rootMount,
+			infos: map[string]pathInfo{
+				"/": {Mode: os.ModeDir | 0o755, Dev: linuxDevice(8, 1)}, "/mnt": {Mode: os.ModeDir | 0o755, Dev: linuxDevice(8, 1)},
+			},
+			want: "mount /mnt/c is unavailable",
+		},
+		"symlinked ancestor": {
+			root: "/work/link/gone", mounts: rootMount,
+			infos: map[string]pathInfo{
+				"/": {Mode: os.ModeDir | 0o755, Dev: linuxDevice(8, 1)}, "/work": {Mode: os.ModeDir | 0o755, Dev: linuxDevice(8, 1)}, "/work/link": {Mode: os.ModeSymlink | 0o777, Dev: linuxDevice(8, 1)},
+			},
+			want: "non-symlink directory",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			deps := dependencies{
+				currentRuntime: func() (hostenv.Runtime, error) { return hostenv.Runtime{Kind: hostenv.WSL2Native}, nil },
+				lstat: func(candidate string) (pathInfo, error) {
+					if info, ok := tc.infos[candidate]; ok {
+						return info, nil
+					}
+					return pathInfo{}, fs.ErrNotExist
+				},
+				readMountInfo: func() ([]byte, error) { return []byte(tc.mounts), nil },
+			}
+			err := proveMissingProject(tc.root, deps)
+			if tc.want == "" && err != nil {
+				t.Fatal(err)
+			}
+			if tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)) {
+				t.Fatalf("proveMissingProject() error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestProveMissingProjectRejectsRecreatedPathDuringProof(t *testing.T) {
+	root := "/home/alice/gone"
+	rootChecks := 0
+	deps := dependencies{
+		currentRuntime: func() (hostenv.Runtime, error) { return hostenv.Runtime{Kind: hostenv.WSL2Native}, nil },
+		lstat: func(candidate string) (pathInfo, error) {
+			if candidate == root {
+				rootChecks++
+				if rootChecks == 1 {
+					return pathInfo{}, fs.ErrNotExist
+				}
+			}
+			return pathInfo{Mode: os.ModeDir | 0o755, Dev: linuxDevice(8, 1)}, nil
+		},
+		readMountInfo: func() ([]byte, error) { return []byte(rootMount), nil },
+	}
+	if err := proveMissingProject(root, deps); err == nil || !strings.Contains(err.Error(), "exists and is not orphaned") {
+		t.Fatalf("recreated path error = %v", err)
+	}
+}
+
 func TestClassifyRejectsMountHiddenAtAncestor(t *testing.T) {
 	root := "/mnt/c/Users/Alice/Project"
 	mounts := rootMount +

@@ -40,6 +40,16 @@ func ClassifyDescendant(project Project, candidate string) (Descendant, error) {
 	})
 }
 
+// ProveMissingProject proves that an absent recorded project path still lies
+// below the same supported distribution or default Windows-drive boundary.
+func ProveMissingProject(root string) error {
+	return proveMissingProject(root, dependencies{
+		currentRuntime: hostenv.Current,
+		lstat:          statPath,
+		readMountInfo:  readMountInfo,
+	})
+}
+
 // SelectForTool applies a profile's marker policy and classifies the selected
 // native-WSL project root. The boolean reports whether a marker or trusted
 // overlay root was found; otherwise the proven working directory is the root.

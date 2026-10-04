@@ -2,7 +2,7 @@
 // native WSL2 distribution, machine and user namespace and binds exact
 // inspect/create/remove/discovery operations to the proven Docker Desktop WSL
 // control transport. It can preflight and ensure a stateful profile's complete
-// binding set; container creation and state-command wiring remain separate.
+// binding set; container creation and state commands compose this boundary.
 package wslvolume
 
 import (

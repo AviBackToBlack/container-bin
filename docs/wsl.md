@@ -7,9 +7,10 @@ WSL frontend, and standalone Linux remains a separate, demand-gated product.
 
 The implementation establishes the runtime boundary, fixed native-WSL layout,
 explicit install/config lifecycle and the complete managed-tool composition
-through Docker Desktop's Engine socket. Production dispatch remains fail-closed
-until the remaining native management state lifecycle, integration corpus and
-real WSL2 + Docker Desktop qualification land.
+through Docker Desktop's Engine socket. Managed-tool dispatch remains
+fail-closed until the integration corpus and real WSL2 + Docker Desktop
+qualification land. The v2-required native state inventory and cleanup
+lifecycle is wired and available independently of that gate.
 
 ## Runtime classification
 
@@ -29,8 +30,9 @@ real WSL2 + Docker Desktop qualification land.
   became consistent. Other Linux kernels are standalone Linux and rejected.
 - `cb version`, `cb help` and `cb config` remain bootstrap-safe for diagnosis;
   they perform no Docker or registry mutation and return before host enforcement.
-- `cb wsl prepare --check|--apply`, `cb wsl install --check|--apply` and
-  `cb wsl cleanup --check|--apply` are the native-WSL management surface.
+- `cb wsl prepare --check|--apply`, `cb wsl install --check|--apply`,
+  `cb wsl cleanup --check|--apply`, `cb state` and `cb gc` are the native-WSL
+  management surface.
   Managed tool shims are installed, but their runtime dispatch remains gated;
   other `cb` management commands remain explicitly unavailable rather than
   falling through to Windows-oriented Docker CLI, path or state behavior.
@@ -115,7 +117,7 @@ created only when missing and fully revalidated. Foreign files, owners, targets
 or unsafe modes stop the transaction instead of being repaired or replaced.
 The install command itself performs no Docker request. After a successful
 apply and revalidation, its managed tool shims remain activation-gated by the
-host boundary until state-command integration and qualification land.
+host boundary until integration coverage and real qualification land.
 An interruption before the final binary rename can leave a current-user-owned
 `.cb-install-<random>.tmp` regular file in the private binary directory.
 ContainerBin does not sweep filename lookalikes without stronger provenance;
@@ -348,19 +350,36 @@ collision. The wired tool path plans the complete state set before mutation,
 ensures each exact volume, and passes its complete labels into container
 creation. Stateful project/shared profiles and the Python provider's
 per-project venv, namespace-shared compatibility venv and pip cache are wired.
-`cb state`/`cb gc` and backup/restore remain separate native management work.
+`cb state` validates the fixed installation and authenticated registry, derives
+the exact distribution/machine/user namespace, constructs the current project
+and configured shared identities, and proves every discovered Docker volume
+before writing its report. It classifies exact current, shared and Python
+compatibility state separately from stale managed state. A project volume is
+`ORPHAN` only when its exact recorded canonical Linux path is absent below a
+currently proven supported storage boundary. A vanished default Windows-drive
+mount, symlinked ancestry or non-directory object is `UNSAFE` and never
+deletion input.
+
+`cb gc [TOOL|STATE_GROUP] [--orphans] [--apply]` uses the same complete proof
+set. The default is a dry run. Current-project mode selects only identities
+constructed from the current registry and freshly selected project. Orphan
+mode selects only exactly proven project volumes whose recorded path is missing.
+Shared volumes are never candidates. Apply mode removes without force through
+the proof-bound lifecycle and verifies exact absence after deletion. All
+discovery, ownership proof, path classification and planning finish before the
+first mutation. Apply also re-proves orphan status immediately before each
+removal, so a restored project invalidates the stale plan. Native backup/restore
+remains separate future management work; it is not required for v2 runtime
+activation.
 
 ## Remaining before the v2 WSL support claim
 
 The ordinary managed tool path is implemented behind the host gate. Activation
 and release qualification still require all of the following:
 
-1. complete the native state-management subset required for safe supported
-   cleanup and diagnostics; every consumer must construct and match the complete
-   distribution/machine/user identity;
-2. Windows-filesystem and WSL-filesystem project tests plus mixed-invocation
+1. Windows-filesystem and WSL-filesystem project tests plus mixed-invocation
    rejection; and
-3. real WSL2 + Docker Desktop end-to-end qualification before any support claim.
+2. real WSL2 + Docker Desktop end-to-end qualification before any support claim.
 
 The WSL runtime deliberately rejects `host_mounts`: that registry field uses a
 Windows drive-path grammar and silently reinterpreting it as Linux would violate

@@ -246,7 +246,7 @@ func TestApplyComposesRegistryBinaryAndShimLifecycle(t *testing.T) {
 	if !prepared || !locked || !registryExists || !binaryReady || !managementReady || !shimsReady {
 		t.Fatalf("incomplete lifecycle: prepared=%t locked=%t registry=%t binary=%t management=%t shims=%t", prepared, locked, registryExists, binaryReady, managementReady, shimsReady)
 	}
-	for _, want := range []string{"applied and revalidated", "INSTALLATION READY", "frontend:      INSTALLED; RUNTIME WIRED; ACTIVATION GATED"} {
+	for _, want := range []string{"applied and revalidated", "INSTALLATION READY", "frontend:      INSTALLED; RUNTIME/STATE WIRED; ACTIVATION GATED"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("output missing %q:\n%s", want, out.String())
 		}
