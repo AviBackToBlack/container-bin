@@ -303,7 +303,7 @@ func printPlan(out io.Writer, plan Plan, applied bool) error {
 	}
 	if plan.ready() {
 		fmt.Fprintln(&report, "status:        INSTALLATION READY")
-		fmt.Fprintln(&report, "frontend:      INSTALLED; RUNTIME WIRED; ACTIVATION GATED (orphan reconciliation and real WSL qualification remain)")
+		fmt.Fprintln(&report, "frontend:      INSTALLED; RUNTIME WIRED; ACTIVATION GATED (state commands, integration coverage and real WSL qualification remain)")
 	} else {
 		fmt.Fprintln(&report, "status:        APPLY REQUIRED")
 		fmt.Fprintln(&report, "apply:         cb wsl install --apply")

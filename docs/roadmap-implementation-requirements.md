@@ -79,7 +79,7 @@ The minimum delivery gate for a code change is:
 | Enterprise policy | **Foundation and signed registry shipped / image trust remains** | PRs #75 and #84 shipped the machine-owned constraint layer and authenticated registry; image trust remains |
 | Image trust | **Online/offline production and runtime authorization implemented / private-registry work remains** | Add an explicit private-registry credential bridge |
 | Plugin/provider architecture | **Intentionally deferred** | Reopen only after at least two real integrations cannot fit the declarative model |
-| WSL2 | **Native tool runtime wired / activation remaining** | The fixed install/config/shim lifecycle, project proof/mapping, namespaced tool-time volumes, direct Docker Desktop Engine lifecycle, stdin/output framing, raw TTY, resize, signal forwarding, retained-container cleanup and exit propagation are composed behind the fail-closed host gate. Retained-container orphan reconciliation, native state-management commands, integration corpus and real WSL2 + Docker Desktop qualification remain before activation. |
+| WSL2 | **Native tool runtime wired / activation remaining** | The fixed install/config/shim lifecycle, project proof/mapping, namespaced tool-time volumes, direct Docker Desktop Engine lifecycle, stdin/output framing, raw TTY, resize, signal forwarding, retained-container cleanup, orphan reconciliation and exit propagation are composed behind the fail-closed host gate. Native state-management commands, integration corpus and real WSL2 + Docker Desktop qualification remain before activation. |
 | Per-project overlays | **Completed in PR #80** | Add-only digest-bound trust model shipped on the merged enterprise-policy foundation |
 | Release SBOM | **Conditionally deferred** | Trigger on shipped third-party/runtime dependencies or concrete compliance/consumer demand |
 | Snyk | **Conditionally deferred** | Trigger only for a real coverage gap plus owner/account/token and triage/outage policy |
@@ -612,9 +612,10 @@ Docker Desktop WSL integration proof, create/attach/start/wait/resize/signal/
 cleanup, strict non-TTY output decoding, raw TTY mode, terminal resize events,
 host-signal forwarding and exact exit-code propagation. Containers are retained
 until wait records the exit status and are then removed through the proof-bound
-cleanup path, avoiding an auto-remove race for fast tools. Because uncatchable
-host-shim death can bypass that in-process cleanup, production activation waits
-for proof-bound orphan reconciliation. Native state-command integration,
+cleanup path, avoiding an auto-remove race for fast tools. Process-held run
+leases and a namespace coordinator close the create-before-lease race; automatic
+startup and explicit `cb wsl cleanup --check|--apply` re-prove and recover only
+exact unlocked or lease-less retained runs. Native state-command integration,
 project/cross-boundary integration coverage and real WSL qualification remain.
 
 Implementation must define native config/shim location, Docker endpoint,
@@ -726,8 +727,7 @@ in PR #91.
 2. Signed-registry enterprise policy.
 3. Image trust at lock time, after signed-registry policy merges.
 4. Remaining RM-31 real published-release/self-test E2E qualification.
-5. Native WSL retained-container orphan reconciliation, remaining state
-   commands, integration corpus and real E2E.
+5. Native WSL remaining state commands, integration corpus and real E2E.
 6. RM-30 Authenticode only after certificate/protected-signing prerequisites exist.
 7. RM-29 real Windows-on-Arm + Docker Desktop qualification last; do not delay
    higher-value work for it.

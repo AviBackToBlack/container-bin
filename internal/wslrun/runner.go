@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/AviBackToBlack/container-bin/internal/hostenv"
 	"github.com/AviBackToBlack/container-bin/internal/wsldocker"
 	"github.com/AviBackToBlack/container-bin/internal/wslvolume"
 )
@@ -25,7 +26,13 @@ type attachStream interface {
 
 type containerHandle struct {
 	id     string
+	runID  string
 	native any
+}
+
+type runGuard interface {
+	Adopt(string) error
+	Close(bool) error
 }
 
 type hostEvent struct {
@@ -49,6 +56,7 @@ type waitResult struct {
 
 type runDependencies struct {
 	ensureVolume    func(context.Context, wslvolume.Volume) error
+	beginRun        func(context.Context, hostenv.WSLLayout) (runGuard, error)
 	create          func(context.Context, wsldocker.ContainerCreateSpec) (containerHandle, error)
 	attach          func(context.Context, wsldocker.AttachRequest) (attachStream, error)
 	start           func(context.Context, string) error
@@ -67,7 +75,7 @@ func executeTool(ctx context.Context, plan toolPlan, deps runDependencies) (code
 	if ctx == nil {
 		return 0, errors.New("native WSL tool execution requires a context")
 	}
-	if deps.ensureVolume == nil || deps.create == nil || deps.attach == nil || deps.start == nil || deps.wait == nil ||
+	if deps.ensureVolume == nil || deps.beginRun == nil || deps.create == nil || deps.attach == nil || deps.start == nil || deps.wait == nil ||
 		deps.resize == nil || deps.signal == nil || deps.remove == nil || deps.prepareTerminal == nil || deps.startEvents == nil ||
 		deps.stdin == nil || deps.stdout == nil || deps.stderr == nil {
 		return 0, errors.New("native WSL tool execution dependencies are incomplete")
@@ -79,12 +87,22 @@ func executeTool(ctx context.Context, plan toolPlan, deps runDependencies) (code
 			return 0, fmt.Errorf("ensure native WSL volume %s: %w", volume.Name(), err)
 		}
 	}
+	guard, err := deps.beginRun(runCtx, plan.layout)
+	if err != nil {
+		return 0, fmt.Errorf("prepare native WSL runtime lease: %w", err)
+	}
+	containerGone := false
+	defer func() {
+		if err := guard.Close(containerGone); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("close native WSL runtime lease: %w", err))
+		}
+	}()
 	container, err := deps.create(runCtx, plan.spec)
 	if err != nil {
 		return 0, fmt.Errorf("create native WSL tool container: %w", err)
 	}
-	if container.id == "" {
-		return 0, errors.New("native WSL container creation returned an empty identity")
+	if container.id == "" || container.runID == "" {
+		return 0, errors.New("native WSL container creation returned an incomplete identity")
 	}
 
 	var (
@@ -126,12 +144,15 @@ func executeTool(ctx context.Context, plan toolPlan, deps runDependencies) (code
 				retErr = errors.Join(retErr, fmt.Errorf("clean up ambiguously running native WSL tool container: %w", err))
 			} else {
 				removed = true
+				containerGone = true
 				running = false
 			}
 		}
 		if !running && !removed {
 			if err := deps.remove(cleanupCtx, container); err != nil {
 				retErr = errors.Join(retErr, fmt.Errorf("clean up native WSL tool container: %w", err))
+			} else {
+				containerGone = true
 			}
 		}
 		retErr = errors.Join(retErr, lifecycleErr)
@@ -142,6 +163,9 @@ func executeTool(ctx context.Context, plan toolPlan, deps runDependencies) (code
 			stopEvents()
 		}
 	}()
+	if err := guard.Adopt(container.runID); err != nil {
+		return 0, fmt.Errorf("publish native WSL runtime lease: %w", err)
+	}
 
 	events, stop, err := deps.startEvents(plan.spec.TTY)
 	if err != nil {

@@ -29,6 +29,7 @@ const (
 )
 
 type toolPlan struct {
+	layout  hostenv.WSLLayout
 	spec    wsldocker.ContainerCreateSpec
 	volumes []wslvolume.Volume
 }
@@ -61,7 +62,7 @@ func buildToolPlan(tool registry.Tool, userArgs []string, machinePolicy policy.P
 		return toolPlan{}, err
 	}
 
-	plan := toolPlan{spec: wsldocker.ContainerCreateSpec{
+	plan := toolPlan{layout: layout, spec: wsldocker.ContainerCreateSpec{
 		Tool: tool.Name, Namespace: scope.Namespace(), Image: image,
 		TTY: tty, Environment: environment, RetainUntilCleanup: true,
 	}}

@@ -22,6 +22,7 @@ import (
 	"github.com/AviBackToBlack/container-bin/internal/state"
 	"github.com/AviBackToBlack/container-bin/internal/wslfs"
 	"github.com/AviBackToBlack/container-bin/internal/wslinstall"
+	"github.com/AviBackToBlack/container-bin/internal/wslreconcile"
 	"github.com/AviBackToBlack/container-bin/internal/wslrun"
 )
 
@@ -61,6 +62,9 @@ var runSelfUpdateHelper = selfupdate.RunHelper
 // The dispatcher remains ahead of the Windows frontend gate; wslinstall loads
 // only the fixed native policy/registry paths for commands that require them.
 var runWSL = func(args []string, out io.Writer) error {
+	if len(args) != 0 && args[0] == "cleanup" {
+		return wslreconcile.Run(context.Background(), args[1:], out)
+	}
 	return wslinstall.Run(args, out, version, withMutationLock)
 }
 
@@ -86,7 +90,7 @@ func main() {
 	}
 	if hostRuntime.Kind == hostenv.WSL2Native {
 		if isManagementInvocation(invoked) {
-			fatalf("native WSL management command %q is unavailable; use `cb wsl install --check|--apply`, `cb version`, `cb help`, or a managed tool shim", strings.Join(os.Args[1:], " "))
+			fatalf("native WSL management command %q is unavailable; use `cb wsl install --check|--apply`, `cb wsl cleanup --check|--apply`, `cb version`, `cb help`, or a managed tool shim", strings.Join(os.Args[1:], " "))
 			return
 		}
 		code, err := runWSLTool(context.Background(), invoked, os.Args[1:])
@@ -457,6 +461,8 @@ Commands:
                 report a plan, or verify and transactionally apply it
   cb wsl prepare (--check | --apply)
                  validate or create the fixed native-WSL filesystem layout
+  cb wsl cleanup (--check | --apply)
+                 inspect or reconcile retained native-WSL runtime containers
   cb wsl install (--check | --apply)
                  inspect or reconcile the fixed native-WSL installation
   cb list      list configured tool profiles

@@ -2,8 +2,9 @@
 
 This document defines the process semantics implemented by ContainerBin's
 native-Linux frontend inside WSL2. The runtime is composed and covered in this
-tree, but production dispatch remains activation-gated until retained-container
-orphan reconciliation and real WSL2 + Docker Desktop qualification land.
+tree, but production dispatch remains activation-gated until the required
+native state commands, integration corpus and real WSL2 + Docker Desktop
+qualification land.
 The corresponding Windows behavior is documented separately in
 [the Windows shell/process contract](shell-contract.md).
 
@@ -57,6 +58,25 @@ collected. ContainerBin attaches before start, starts exactly once, begins an
 Engine wait, captures the `0..255` status, drains output, and removes the stopped
 container through the proof-bound non-force cleanup path. Every control or
 stream connection repeats the Docker Desktop WSL socket and peer proof.
+
+Before creating a runtime container, ContainerBin holds a namespace coordinator
+lock, discovers exact namespace-labeled retained runs, and re-inspects every
+candidate before mutation. Each live run owns a private `0600` lease file keyed
+by its cryptographic run ID and keeps an exclusive lock on that file for the
+process lifetime. The coordinator remains locked across container creation and
+lease publication, so reconciliation cannot observe a newly created container
+without its liveness decision. Locked leases are active and are never touched.
+Missing or unlockable leases identify an orphan only while the coordinator is
+held. Running orphans are sent SIGKILL, waited, and then removed; stopped
+orphans are removed directly. Every removal reuses the exact proof-bound,
+non-force container lifecycle.
+
+`cb wsl cleanup --check` reports active and orphaned retained runs without
+mutation. Explicit `--apply` performs the same proof-bound reconciliation used
+automatically before ordinary execution. Malformed labels, changed container
+configuration, unsafe lease files or incomplete proofs stop the whole preflight
+before its first mutation. A lease path is removed only after exact container
+absence is established; otherwise it remains as recovery evidence.
 
 ## Streams and TTY
 
@@ -113,8 +133,9 @@ joined to the original diagnostic. The top level maps infrastructure failures
 to ContainerBin's documented exit code 120. Catchable host signals remain
 intercepted until that cleanup finishes, so their default disposition cannot
 terminate the shim inside the bounded cleanup window and strand a retained
-container. SIGKILL remains uncatchable and is covered by the activation gate's
-orphan-reconciliation requirement.
+container. SIGKILL remains uncatchable; the process-held lease is automatically
+unlocked by the kernel and the next automatic or explicit reconciliation pass
+recovers the retained container.
 
 A failed start response is treated as transport-ambiguous: the Engine may have
 accepted the request before the connection failed. Cleanup therefore attempts

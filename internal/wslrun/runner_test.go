@@ -32,6 +32,14 @@ type fakeAttach struct {
 	closeWriteErr error
 }
 
+type fakeRunGuard struct {
+	adopt func(string) error
+	close func(bool) error
+}
+
+func (g fakeRunGuard) Adopt(runID string) error { return g.adopt(runID) }
+func (g fakeRunGuard) Close(gone bool) error    { return g.close(gone) }
+
 func (s *fakeAttach) Read(p []byte) (int, error) { return s.reader.Read(p) }
 func (s *fakeAttach) Write(p []byte) (int, error) {
 	s.mu.Lock()
@@ -83,6 +91,46 @@ func TestExecuteToolStreamsMultiplexedIOAndPropagatesExitCode(t *testing.T) {
 	wantCalls := []string{"ensure:" + volume.Name(), "create", "events", "attach", "start", "wait", "remove"}
 	if !reflect.DeepEqual(calls, wantCalls) {
 		t.Fatalf("calls = %#v, want %#v", calls, wantCalls)
+	}
+}
+
+func TestExecuteToolPublishesLeaseBeforeRuntimeAndRemovesItAfterContainer(t *testing.T) {
+	stream := &fakeAttach{reader: bytes.NewReader([]byte("done")), writeDone: make(chan struct{})}
+	var stdout, stderr bytes.Buffer
+	var calls []string
+	deps := successfulRunDependencies(t, stream, &stdout, &stderr, &calls)
+	deps.beginRun = func(_ context.Context, layout hostenv.WSLLayout) (runGuard, error) {
+		calls = append(calls, "begin")
+		if layout.StateNamespace != testNamespace {
+			t.Fatalf("runtime lease layout = %#v", layout)
+		}
+		return fakeRunGuard{
+			adopt: func(runID string) error {
+				calls = append(calls, "adopt:"+runID)
+				return nil
+			},
+			close: func(gone bool) error {
+				calls = append(calls, "close-lease")
+				if !gone {
+					t.Fatal("lease path removed without proven container removal")
+				}
+				return nil
+			},
+		}, nil
+	}
+	plan := toolPlan{
+		layout: hostenv.WSLLayout{StateNamespace: testNamespace},
+		spec:   wsldocker.ContainerCreateSpec{Tool: "demo", Namespace: testNamespace, Image: "demo:1", WorkingDirectory: "/root"},
+	}
+	if _, err := executeTool(context.Background(), plan, deps); err != nil {
+		t.Fatal(err)
+	}
+	createAt := callIndex(calls, "create")
+	adoptAt := callIndex(calls, "adopt:"+strings.Repeat("b", 32))
+	removeAt := callIndex(calls, "remove")
+	closeAt := callIndex(calls, "close-lease")
+	if beginAt := callIndex(calls, "begin"); beginAt < 0 || createAt <= beginAt || adoptAt <= createAt || removeAt <= adoptAt || closeAt <= removeAt {
+		t.Fatalf("unsafe runtime lease ordering: %#v", calls)
 	}
 }
 
@@ -365,9 +413,15 @@ func successfulRunDependencies(t *testing.T, stream *fakeAttach, stdout, stderr 
 			*calls = append(*calls, "ensure:"+volume.Name())
 			return nil
 		},
+		beginRun: func(context.Context, hostenv.WSLLayout) (runGuard, error) {
+			return fakeRunGuard{
+				adopt: func(string) error { return nil },
+				close: func(bool) error { return nil },
+			}, nil
+		},
 		create: func(context.Context, wsldocker.ContainerCreateSpec) (containerHandle, error) {
 			*calls = append(*calls, "create")
-			return containerHandle{id: strings.Repeat("a", 64), native: "owned"}, nil
+			return containerHandle{id: strings.Repeat("a", 64), runID: strings.Repeat("b", 32), native: "owned"}, nil
 		},
 		attach: func(context.Context, wsldocker.AttachRequest) (attachStream, error) {
 			*calls = append(*calls, "attach")

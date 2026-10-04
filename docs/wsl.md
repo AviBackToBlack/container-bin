@@ -8,8 +8,8 @@ WSL frontend, and standalone Linux remains a separate, demand-gated product.
 The implementation establishes the runtime boundary, fixed native-WSL layout,
 explicit install/config lifecycle and the complete managed-tool composition
 through Docker Desktop's Engine socket. Production dispatch remains fail-closed
-until retained-container orphan reconciliation, the remaining native management
-state lifecycle and real WSL2 + Docker Desktop qualification land.
+until the remaining native management state lifecycle, integration corpus and
+real WSL2 + Docker Desktop qualification land.
 
 ## Runtime classification
 
@@ -29,11 +29,11 @@ state lifecycle and real WSL2 + Docker Desktop qualification land.
   became consistent. Other Linux kernels are standalone Linux and rejected.
 - `cb version`, `cb help` and `cb config` remain bootstrap-safe for diagnosis;
   they perform no Docker or registry mutation and return before host enforcement.
-- `cb wsl prepare --check|--apply` and `cb wsl install --check|--apply` are the
-  native-WSL management surface. Managed tool shims are installed, but their
-  runtime dispatch remains gated; other `cb` management commands remain
-  explicitly unavailable rather than falling through to Windows-oriented
-  Docker CLI, path or state behavior.
+- `cb wsl prepare --check|--apply`, `cb wsl install --check|--apply` and
+  `cb wsl cleanup --check|--apply` are the native-WSL management surface.
+  Managed tool shims are installed, but their runtime dispatch remains gated;
+  other `cb` management commands remain explicitly unavailable rather than
+  falling through to Windows-oriented Docker CLI, path or state behavior.
 
 Environment variables alone never promote an ordinary Linux kernel to WSL2.
 Custom kernels that remove the Microsoft WSL2 identity markers fail closed;
@@ -115,7 +115,7 @@ created only when missing and fully revalidated. Foreign files, owners, targets
 or unsafe modes stop the transaction instead of being repaired or replaced.
 The install command itself performs no Docker request. After a successful
 apply and revalidation, its managed tool shims remain activation-gated by the
-host boundary until orphan reconciliation and qualification land.
+host boundary until state-command integration and qualification land.
 An interruption before the final binary rename can leave a current-user-owned
 `.cb-install-<random>.tmp` regular file in the private binary directory.
 ContainerBin does not sweep filename lookalikes without stronger provenance;
@@ -301,6 +301,22 @@ Infrastructure or stream failure cancels the live wait, sends SIGKILL through
 the same proof-bound transport, waits for stop and then cleans up. Real WSL2 +
 Docker Desktop qualification remains mandatory before release support.
 
+Every ordinary run first acquires the private state-directory namespace lock,
+applies orphan reconciliation, creates the retained container while still holding that
+coordinator, publishes a private process-held lease keyed by the generated run
+ID, and only then releases the coordinator. This closes the create-before-lease
+race. Reconciliation treats a locked lease as active; an absent or unlockable
+lease is orphaned. It re-proves every discovered container's full ID, labels,
+retention mode and stream configuration before the first mutation. Running
+orphans are SIGKILLed and waited; stopped orphans go directly through the same
+proof-bound non-force removal. Lease paths are removed only after exact
+container absence is established.
+
+`cb wsl cleanup --check` exposes the classification without changing Docker or
+lease state. `cb wsl cleanup --apply` performs explicit recovery. Both require
+the complete fixed layout and fail closed on unsafe or replaced `0600` lease
+files, ambiguous Docker candidates or any ownership/configuration mismatch.
+
 ## Native WSL volume identity and control lifecycle
 
 The implemented volume contract names every object
@@ -337,14 +353,12 @@ per-project venv, namespace-shared compatibility venv and pip cache are wired.
 The ordinary managed tool path is implemented behind the host gate. Activation
 and release qualification still require all of the following:
 
-1. add proof-bound retained-container orphan reconciliation so an uncatchable
-   host-shim death cannot strand a running or stopped tool container;
-2. complete the native state-management subset required for safe supported
+1. complete the native state-management subset required for safe supported
    cleanup and diagnostics; every consumer must construct and match the complete
    distribution/machine/user identity;
-3. Windows-filesystem and WSL-filesystem project tests plus mixed-invocation
+2. Windows-filesystem and WSL-filesystem project tests plus mixed-invocation
    rejection; and
-4. real WSL2 + Docker Desktop end-to-end qualification before any support claim.
+3. real WSL2 + Docker Desktop end-to-end qualification before any support claim.
 
 The WSL runtime deliberately rejects `host_mounts`: that registry field uses a
 Windows drive-path grammar and silently reinterpreting it as Linux would violate

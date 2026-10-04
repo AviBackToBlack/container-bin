@@ -8,10 +8,12 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/AviBackToBlack/container-bin/internal/hostenv"
 	"github.com/AviBackToBlack/container-bin/internal/policy"
 	"github.com/AviBackToBlack/container-bin/internal/registry"
 	"github.com/AviBackToBlack/container-bin/internal/wsldocker"
 	"github.com/AviBackToBlack/container-bin/internal/wslfs"
+	"github.com/AviBackToBlack/container-bin/internal/wslreconcile"
 	"github.com/AviBackToBlack/container-bin/internal/wslshim"
 	"github.com/AviBackToBlack/container-bin/internal/wslvolume"
 )
@@ -40,9 +42,12 @@ func productionFrontendDependencies() frontendDependencies {
 		plan:                  productionPlanDependencies(),
 		run: runDependencies{
 			ensureVolume: wslvolume.Ensure,
+			beginRun: func(ctx context.Context, layout hostenv.WSLLayout) (runGuard, error) {
+				return wslreconcile.BeginRun(ctx, layout)
+			},
 			create: func(ctx context.Context, spec wsldocker.ContainerCreateSpec) (containerHandle, error) {
 				container, err := wsldocker.CreateContainer(ctx, spec)
-				return containerHandle{id: container.ID(), native: container}, err
+				return containerHandle{id: container.ID(), runID: container.RunID(), native: container}, err
 			},
 			attach: func(ctx context.Context, request wsldocker.AttachRequest) (attachStream, error) {
 				return wsldocker.OpenAttach(ctx, request)
