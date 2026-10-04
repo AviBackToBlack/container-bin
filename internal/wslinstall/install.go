@@ -95,7 +95,7 @@ func (c command) run(args []string, out io.Writer, version string) error {
 		return c.prepareCommand(args, out)
 	}
 	if len(args) != 2 || args[0] != "install" || (args[1] != "--check" && args[1] != "--apply") {
-		return errors.New("usage: cb wsl prepare (--check | --apply) | cb wsl install (--check | --apply)")
+		return errors.New("usage: cb wsl prepare (--check | --apply) | cb wsl cleanup (--check | --apply) | cb wsl install (--check | --apply)")
 	}
 	if c.currentLayout == nil || c.checkLayout == nil || c.checkRegistryRecovery == nil || c.loadPolicy == nil || c.loadRegistryReadOnly == nil || c.executable == nil || c.lstat == nil || c.binaryState == nil || c.inspectNames == nil {
 		return errors.New("native WSL install command is incomplete")
@@ -303,7 +303,7 @@ func printPlan(out io.Writer, plan Plan, applied bool) error {
 	}
 	if plan.ready() {
 		fmt.Fprintln(&report, "status:        INSTALLATION READY")
-		fmt.Fprintln(&report, "frontend:      INSTALLED; RUNTIME WIRED; ACTIVATION GATED (orphan reconciliation and real WSL qualification remain)")
+		fmt.Fprintln(&report, "frontend:      INSTALLED; RUNTIME WIRED; ACTIVATION GATED (state commands, integration coverage and real WSL qualification remain)")
 	} else {
 		fmt.Fprintln(&report, "status:        APPLY REQUIRED")
 		fmt.Fprintln(&report, "apply:         cb wsl install --apply")

@@ -492,7 +492,7 @@ driver/scope. The package also preflights an entire stateful profile's
 project/shared binding set, re-proves the exact project root before deriving
 project identities, and ensures each distinct identity only after the complete
 plan validates. Tool-time composition is wired but the host boundary keeps it
-activation-gated until orphan reconciliation lands; native state commands remain.
+activation-gated while native state commands and qualification remain.
 
 `internal/wslrun` is the native WSL vertical orchestrator. It requires the
 fixed layout, private registry, managed binary and exact invoked shim; resolves
@@ -504,10 +504,18 @@ exit status, so daemon auto-remove cannot race fast tools. Non-TTY streams use
 strict Docker framing; TTY sessions use raw terminal mode, resize events and an
 explicit Linux signal-forwarding set. Any runtime failure cancels live I/O,
 proof-bound kills the container, waits for stop and performs non-force cleanup.
-The production host boundary does not yet dispatch into this orchestrator:
-SIGKILL of the host shim can bypass every in-process defer and strand a retained
-container, so activation waits for proof-bound orphan reconciliation rather
-than making an unsafe partial support claim.
+Before creation it holds a namespace coordinator and reconciles retained runs.
+Each created run publishes a private process-held lease before the coordinator
+is released. Reconciliation preserves locked active leases and mutates only an
+unlocked or lease-less candidate whose complete labels, retention and stream
+configuration were freshly re-proven. A running orphan is killed and waited;
+all orphan removal uses the same proof-bound non-force lifecycle. Explicit
+`cb wsl cleanup --check|--apply` exposes that recovery path. The same
+coordinator-held pass enumerates managed lease names and reaps an unlocked
+lease only when complete namespace discovery contains no matching run; locked
+lease-only records remain untouched. The production host
+boundary still does not dispatch into this orchestrator until native state
+commands, integration coverage and real WSL qualification complete.
 
 After the host runtime boundary is enforced, `cb self-update` is dispatched
 before machine policy and registry loading. Release selection therefore remains

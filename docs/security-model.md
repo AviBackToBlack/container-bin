@@ -103,7 +103,7 @@ readable, and dangerous to let others edit.
   authenticates signed registries when required, and reconciles only the fixed
   managed binary and provenance-checked symlinks. The ordinary managed-tool
   runtime is composed and tested but remains behind this host gate until
-  retained-container orphan reconciliation and real qualification land;
+  native state commands, integration coverage and real qualification land;
   unsupported native management commands remain rejected.
 - **Native WSL installation does not adopt ambient files.** The bootstrap
   executable is the exact OS-reported running image and must be a bounded,
@@ -174,8 +174,17 @@ readable, and dangerous to let others edit.
   container, waits under a fresh bound and then invokes the same non-force
   proof-bound removal. Cleanup errors are never hidden by the original failure.
   An uncatchable host-shim SIGKILL can bypass every in-process cleanup path, so
-  production activation remains gated until a separate proof-bound orphan
-  reconciliation mechanism handles both running and stopped retained objects.
+  each run owns a private process-held lease and container creation is serialized
+  with lease publication by a namespace coordinator. Automatic startup and
+  explicit `cb wsl cleanup --apply` discover only exact namespace labels, then
+  re-prove the full immutable container contract before mutation. Locked leases
+  preserve active runs. Missing or unlockable leases identify recoverable
+  orphans while the coordinator is held; running orphans are killed and waited,
+  stopped orphans are removed directly, and all deletion remains proof-bound
+  and non-force. Unlocked lease evidence is reaped only when complete namespace
+  discovery has no matching retained container; locked leases are preserved.
+  Unsafe lease files or any ambiguous candidate stop the complete
+  preflight before its first mutation.
 - **Machine policy cannot be redirected or weakened.** A present enterprise
   policy is loaded only from the fixed OS path, requires administrator/root
   ownership and restrictive permissions, and authorizes the already-resolved

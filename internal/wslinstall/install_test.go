@@ -17,6 +17,13 @@ import (
 	"github.com/AviBackToBlack/container-bin/internal/wslshim"
 )
 
+func TestUsageIncludesCleanupCommand(t *testing.T) {
+	err := (command{}).run([]string{"unknown"}, io.Discard, "dev")
+	if err == nil || !strings.Contains(err.Error(), "cb wsl cleanup (--check | --apply)") {
+		t.Fatalf("usage error = %v", err)
+	}
+}
+
 func TestCheckIsReadOnlyAndReportsRequiredActions(t *testing.T) {
 	layout := installTestLayout()
 	reg := registry.Default()
