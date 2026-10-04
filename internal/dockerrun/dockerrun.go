@@ -32,6 +32,10 @@ import (
 // external /cb/mounts/N path, exactly as the design requires.
 const IsolatedRoot = "?:\\no-project"
 
+// PythonBootstrap is exported within the internal tree so the native WSL
+// frontend can pin exact command parity without depending on dockerrun at run time.
+const PythonBootstrap = `if [ ! -x /venv/bin/python ]; then python -m venv /venv || exit $?; fi; if [ "$1" = "__CB_PIP__" ]; then shift; exec /venv/bin/python -m pip "$@"; else exec /venv/bin/python "$@"; fi`
+
 type runContext struct {
 	cwd           string
 	root          string
@@ -263,8 +267,7 @@ func buildDockerArgs(t registry.Tool, userArgs []string, ctx runContext, imageRe
 			"-e", "PATH=/venv/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin",
 		)
 		args = append(args, imageRef)
-		bootstrap := `if [ ! -x /venv/bin/python ]; then python -m venv /venv || exit $?; fi; if [ "$1" = "__CB_PIP__" ]; then shift; exec /venv/bin/python -m pip "$@"; else exec /venv/bin/python "$@"; fi`
-		args = append(args, "sh", "-c", bootstrap, "cb")
+		args = append(args, "sh", "-c", PythonBootstrap, "cb")
 		if t.Role == "pip" {
 			args = append(args, "__CB_PIP__")
 		}

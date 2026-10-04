@@ -605,6 +605,20 @@ func RuntimeImageForTool(t registry.Tool, machinePolicy policy.Policy) (string, 
 	return runtimeImageForTool(t, machinePolicy, lf, path)
 }
 
+// RuntimeImageForToolAt resolves one tool against an explicit frontend-owned
+// lockfile path. Native WSL uses this entry point so its fixed private layout
+// can never fall back to the executable-relative Windows registry identity.
+func RuntimeImageForToolAt(t registry.Tool, machinePolicy policy.Policy, path string) (string, error) {
+	if path == "" || !filepath.IsAbs(path) {
+		return "", errors.New("lockfile path must be absolute")
+	}
+	lf, err := Load(path)
+	if err != nil {
+		return "", fmt.Errorf("lockfile: %w", err)
+	}
+	return runtimeImageForTool(t, machinePolicy, lf, path)
+}
+
 func runtimeImageForTool(t registry.Tool, machinePolicy policy.Policy, lf *LockFile, path string) (string, error) {
 	if lf == nil {
 		if err := machinePolicy.AuthorizeImage(t.Image, false, false); err != nil {

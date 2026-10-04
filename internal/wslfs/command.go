@@ -28,9 +28,9 @@ func CurrentLayout() (hostenv.WSLLayout, error) {
 	return currentLayout()
 }
 
-// Run exposes only the fixed native-WSL filesystem preflight. It deliberately
-// does not enable tool execution, install a binary, create shims or contact
-// Docker; those remain separate qualification-gated slices.
+// Run exposes only the fixed native-WSL filesystem preflight. This command
+// does not execute tools, install a binary, create shims or contact Docker;
+// installation and ordinary tool execution compose this preflight separately.
 func Run(args []string, out io.Writer) error {
 	return (command{
 		currentLayout: currentLayout,
