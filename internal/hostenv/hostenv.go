@@ -50,9 +50,10 @@ func Current() (Runtime, error) {
 }
 
 // RequireFrontend enforces the supported host boundary. Native Windows is
-// enabled. Native WSL2 is classified precisely but remains activation-gated
-// until state-command integration, the integration corpus and real
-// qualification land.
+// enabled. Native WSL2 is classified precisely but managed-tool dispatch
+// remains activation-gated until the integration corpus and real qualification
+// land. Its bootstrap/install and state-management commands are dispatched
+// separately before this general gate.
 func RequireFrontend() error {
 	return requireFrontend(Current())
 }
@@ -77,7 +78,7 @@ func requireFrontend(info Runtime, probeErr error) error {
 		if err := validateDistroIdentity(info.Distro); err != nil {
 			return fmt.Errorf("native WSL2 distribution identity cannot be proven: %w", err)
 		}
-		return fmt.Errorf("native WSL2 distribution %q was detected; the tool runtime is wired but activation is gated until native state commands, integration coverage and real Docker Desktop qualification land", info.Distro)
+		return fmt.Errorf("native WSL2 distribution %q was detected; the tool runtime and state lifecycle are wired but activation is gated until integration coverage and real Docker Desktop qualification land", info.Distro)
 	case WSL1Native:
 		return errors.New("WSL1 is unsupported; the native frontend requires WSL2 and Docker Desktop WSL integration")
 	case WSLUnrecognized:

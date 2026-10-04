@@ -103,7 +103,7 @@ readable, and dangerous to let others edit.
   authenticates signed registries when required, and reconciles only the fixed
   managed binary and provenance-checked symlinks. The ordinary managed-tool
   runtime is composed and tested but remains behind this host gate until
-  native state commands, integration coverage and real qualification land;
+  integration coverage and real qualification land;
   unsupported native management commands remain rejected.
 - **Native WSL installation does not adopt ambient files.** The bootstrap
   executable is the exact OS-reported running image and must be a bounded,
@@ -151,6 +151,14 @@ readable, and dangerous to let others edit.
   requires that same proof immediately before deletion and verifies absence
   afterward. Prefix/label filters are discovery-only and cannot authorize
   adoption or mutation. Windows and other WSL scopes remain foreign state.
+- **Native WSL state cleanup proves before it classifies or mutates.** `cb state`
+  and `cb gc` require the fixed layout and authenticated registry, reconstruct
+  every namespace discovery result into an exact immutable volume identity,
+  and complete the whole plan before the first deletion. Shared volumes are
+  never GC candidates. A project volume is orphaned only when its recorded
+  canonical Linux path is absent; symlinks, non-directories and inspection
+  errors are preserved and fail closed. Apply deletes without force and proves
+  absence afterward.
 - **Native WSL run containers are transaction-bound.** The create
   primitive accepts no raw Engine body, endpoint, privilege or Docker-socket
   mount controls. It admits at most one existing, symlink-free canonical project

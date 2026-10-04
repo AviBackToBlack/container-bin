@@ -352,6 +352,7 @@ internal/wsldocker     native WSL Docker Desktop integration proof
 internal/wslvolume     native WSL namespaced volume identity/lifecycle and
                        stateful-tool binding planning
 internal/wslrun        native WSL fixed-layout tool runtime orchestration
+internal/wslstate      native WSL proof-bound state inventory and cleanup
 internal/selfupdate    release selection, staging, verification and replacement
 ```
 
@@ -359,7 +360,7 @@ The exact import edges, from `go list -f '{{.ImportPath}} {{.Imports}}' ./...`,
 project-internal imports only:
 
 ```
-main         -> cli, diag, dockerrun, hostenv, mutationlock, policy, projectconfig, registry, selfupdate, state, wslfs, wslinstall, wslrun
+main         -> cli, diag, dockerrun, hostenv, mutationlock, policy, projectconfig, registry, selfupdate, state, wslfs, wslinstall, wslrun, wslstate
 cli          -> atomicio, diag, dockerrun, dockervol, lockfile, pathmap, policy, registry, statearchive, toml
 projectconfig -> atomicio, pathmap, policy, registry, toml
 diag         -> dockerrun, dockervol, lockfile, pathmap, policy, registry
@@ -378,6 +379,7 @@ wslpathmap  -> registry, wslproject
 wsldocker   -> hostenv
 wslvolume   -> hostenv, registry, wsldocker, wslproject
 wslrun      -> hostenv, lockfile, policy, registry, wsldocker, wslfs, wslpathmap, wslproject, wslshim, wslvolume
+wslstate    -> hostenv, policy, registry, wslfs, wslproject, wslvolume
 selfupdate  -> mutationlock, registry
 atomicio, dockervol, hostenv, mutationlock, terminal, toml -> (leaves)
 ```
@@ -491,8 +493,9 @@ identity constructed by this package and its complete labels plus local
 driver/scope. The package also preflights an entire stateful profile's
 project/shared binding set, re-proves the exact project root before deriving
 project identities, and ensures each distinct identity only after the complete
-plan validates. Tool-time composition is wired but the host boundary keeps it
-activation-gated while native state commands and qualification remain.
+plan validates. Tool-time composition and the v2 state/GC lifecycle are wired,
+but the host boundary keeps managed tools activation-gated while integration
+coverage and real qualification remain.
 
 `internal/wslrun` is the native WSL vertical orchestrator. It requires the
 fixed layout, private registry, managed binary and exact invoked shim; resolves
@@ -514,8 +517,11 @@ all orphan removal uses the same proof-bound non-force lifecycle. Explicit
 coordinator-held pass enumerates managed lease names and reaps an unlocked
 lease only when complete namespace discovery contains no matching run; locked
 lease-only records remain untouched. The production host
-boundary still does not dispatch into this orchestrator until native state
-commands, integration coverage and real WSL qualification complete.
+boundary still does not dispatch into this orchestrator until integration
+coverage and real WSL qualification complete. `internal/wslstate` is dispatched
+separately before that gate; it plans current project/shared identities from
+the fixed registry, consumes only exactly proven namespace volumes, and offers
+dry-run-by-default non-force project cleanup without selecting shared state.
 
 After the host runtime boundary is enforced, `cb self-update` is dispatched
 before machine policy and registry loading. Release selection therefore remains

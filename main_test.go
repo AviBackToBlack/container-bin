@@ -200,6 +200,46 @@ func TestNativeWSLToolDispatchSkipsWindowsRegistryAndRuntime(t *testing.T) {
 	main()
 }
 
+func TestNativeWSLStateDispatchSkipsGeneralGateAndWindowsRegistry(t *testing.T) {
+	oldArgs := os.Args
+	oldRunWSLState := runWSLState
+	oldCurrentHostRuntime := currentHostRuntime
+	oldRequireHostFrontend := requireHostFrontend
+	oldLoadRegistry := loadRegistry
+	oldLoadPolicy := loadPolicy
+	defer func() {
+		os.Args = oldArgs
+		runWSLState = oldRunWSLState
+		currentHostRuntime = oldCurrentHostRuntime
+		requireHostFrontend = oldRequireHostFrontend
+		loadRegistry = oldLoadRegistry
+		loadPolicy = oldLoadPolicy
+	}()
+
+	currentHostRuntime = func() (hostenv.Runtime, error) {
+		return hostenv.Runtime{Kind: hostenv.WSL2Native, Distro: "Ubuntu-24.04"}, nil
+	}
+	requireHostFrontend = func() error { panic("native WSL state command attempted general host enforcement") }
+	loadRegistry = func(registry.Authenticator) (registry.Registry, string, error) {
+		panic("native WSL state command attempted the Windows registry loader")
+	}
+	loadPolicy = func() (policy.Policy, error) {
+		panic("native WSL state command attempted the Windows policy loader")
+	}
+	var got []string
+	runWSLState = func(_ context.Context, args []string, out io.Writer) error {
+		got = append([]string(nil), args...)
+		_, err := io.WriteString(out, "native WSL state reached\n")
+		return err
+	}
+	os.Args = []string{"cb", "gc", "node24", "--orphans"}
+
+	out := captureMainStdout(t, main)
+	if strings.Join(got, " ") != "gc node24 --orphans" || out != "native WSL state reached\n" {
+		t.Fatalf("state args=%q output=%q", got, out)
+	}
+}
+
 func TestHostBoundaryPrecedesPolicyAndRegistryLoad(t *testing.T) {
 	oldArgs := os.Args
 	oldLoadRegistry := loadRegistry

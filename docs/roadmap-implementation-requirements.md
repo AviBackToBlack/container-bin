@@ -79,7 +79,7 @@ The minimum delivery gate for a code change is:
 | Enterprise policy | **Foundation and signed registry shipped / image trust remains** | PRs #75 and #84 shipped the machine-owned constraint layer and authenticated registry; image trust remains |
 | Image trust | **Online/offline production and runtime authorization implemented / private-registry work remains** | Add an explicit private-registry credential bridge |
 | Plugin/provider architecture | **Intentionally deferred** | Reopen only after at least two real integrations cannot fit the declarative model |
-| WSL2 | **Native tool runtime wired / activation remaining** | The fixed install/config/shim lifecycle, project proof/mapping, namespaced tool-time volumes, direct Docker Desktop Engine lifecycle, stdin/output framing, raw TTY, resize, signal forwarding, retained-container cleanup, orphan reconciliation and exit propagation are composed behind the fail-closed host gate. Native state-management commands, integration corpus and real WSL2 + Docker Desktop qualification remain before activation. |
+| WSL2 | **Native runtime/state wired / activation remaining** | The fixed install/config/shim lifecycle, project proof/mapping, namespaced tool-time volumes, direct Docker Desktop Engine lifecycle, stdin/output framing, raw TTY, resize, signal forwarding, retained-container cleanup, proof-bound state/GC, orphan reconciliation and exit propagation are composed. Integration corpus and real WSL2 + Docker Desktop qualification remain before activation. |
 | Per-project overlays | **Completed in PR #80** | Add-only digest-bound trust model shipped on the merged enterprise-policy foundation |
 | Release SBOM | **Conditionally deferred** | Trigger on shipped third-party/runtime dependencies or concrete compliance/consumer demand |
 | Snyk | **Conditionally deferred** | Trigger only for a real coverage gap plus owner/account/token and triage/outage policy |
@@ -617,8 +617,11 @@ until wait records the exit status and are then removed through the proof-bound
 cleanup path, avoiding an auto-remove race for fast tools. Process-held run
 leases and a namespace coordinator close the create-before-lease race; automatic
 startup and explicit `cb wsl cleanup --check|--apply` re-prove and recover only
-exact unlocked or lease-less retained runs. Native state-command integration,
-project/cross-boundary integration coverage and real WSL qualification remain.
+exact unlocked or lease-less retained runs. Native `cb state`/`cb gc` now
+reconcile only completely proven namespace volumes, never delete shared state,
+and require an absent recorded Linux path before orphan deletion. Native state
+backup/restore remains deferred; project/cross-boundary integration coverage
+and real WSL qualification remain for v2 activation.
 
 Implementation must define native config/shim location, Docker endpoint,
 project identity, named-volume behavior, file permissions, case sensitivity,
@@ -646,6 +649,15 @@ and hashes canonical Linux project roots case-sensitively under a versioned WSL
 domain. Later Docker lifecycle wiring may use the exact prefix and namespace
 label for discovery, but adoption, backup, restore, GC or deletion must match
 the complete constructed name and label identity.
+
+The v2-required native state subset is now composed. `cb state` and `cb gc`
+consume only the fixed layout and authenticated registry, prove the complete
+discovered namespace before output or mutation, never select shared volumes for
+deletion, and classify an orphan only when the recorded canonical Linux project
+path is missing. Existing symlinks and non-directory objects are unsafe rather
+than orphan evidence. Apply uses proof-bound non-force removal and verifies
+absence. Native state backup/restore remains deferred and is not an activation
+prerequisite for the supported runtime contract.
 
 Qualification must include both Windows-filesystem and WSL-filesystem projects
 plus mixed invocation rejection cases.
@@ -729,7 +741,7 @@ in PR #91.
 2. Signed-registry enterprise policy.
 3. Image trust at lock time, after signed-registry policy merges.
 4. Remaining RM-31 real published-release/self-test E2E qualification.
-5. Native WSL remaining state commands, integration corpus and real E2E.
+5. Native WSL integration corpus and real E2E.
 6. RM-30 Authenticode only after certificate/protected-signing prerequisites exist.
 7. RM-29 real Windows-on-Arm + Docker Desktop qualification last; do not delay
    higher-value work for it.

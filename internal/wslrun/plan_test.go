@@ -128,13 +128,6 @@ func testPlanDependencies(found bool) planDependencies {
 	return planDependencies{
 		resolveImage:  func(registry.Tool, policy.Policy, string) (string, error) { return "demo@sha256:locked", nil },
 		selectProject: func(string, registry.Tool) (wslproject.Project, bool, error) { return project, found, nil },
-		classifyDescendant: func(_ wslproject.Project, candidate string) (wslproject.Descendant, error) {
-			relative := "."
-			if candidate != "/project" {
-				relative = strings.TrimPrefix(candidate, "/project/")
-			}
-			return wslproject.Descendant{Path: candidate, Relative: relative, Exists: true, NearestExisting: candidate}, nil
-		},
 		mapArgs: func(_ registry.Tool, _ wslproject.Project, _ string, workspace string, args []string) ([]string, string, error) {
 			mapped := append([]string(nil), args...)
 			for index, argument := range mapped {
@@ -146,6 +139,17 @@ func testPlanDependencies(found bool) planDependencies {
 		},
 		planVolumes: func(wslvolume.Scope, registry.Tool, wslproject.Project, string) ([]wslvolume.Binding, error) {
 			return nil, nil
+		},
+		planPython: func(scope wslvolume.Scope, project wslproject.Project, found bool) (wslvolume.PythonState, error) {
+			venv, err := scope.Shared(wslvolume.PythonStateGroup, "compat-venv")
+			if found {
+				venv, err = scope.Project(wslvolume.PythonStateGroup, "venv", project.Root)
+			}
+			if err != nil {
+				return wslvolume.PythonState{}, err
+			}
+			cache, err := scope.Shared(wslvolume.PythonStateGroup, "pip-cache")
+			return wslvolume.PythonState{Venv: venv, PipCache: cache}, err
 		},
 	}
 }

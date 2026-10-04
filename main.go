@@ -24,6 +24,7 @@ import (
 	"github.com/AviBackToBlack/container-bin/internal/wslinstall"
 	"github.com/AviBackToBlack/container-bin/internal/wslreconcile"
 	"github.com/AviBackToBlack/container-bin/internal/wslrun"
+	"github.com/AviBackToBlack/container-bin/internal/wslstate"
 )
 
 // version is injected at release time via:
@@ -47,6 +48,11 @@ var currentHostRuntime = hostenv.Current
 // runWSLTool is the ordinary native-WSL tool-dispatch seam. The implementation
 // owns fixed-layout, registry, project, Docker and process validation.
 var runWSLTool = wslrun.Run
+
+// runWSLState owns the fixed-layout, proof-bound native-WSL state inventory
+// and cleanup surface. It is dispatched before the intentionally closed
+// general WSL frontend gate, just like cb wsl bootstrap/install commands.
+var runWSLState = wslstate.Run
 
 // runSelfUpdate is a test seam for proving the complete explicit self-update
 // command remains available before policy or registry I/O. Production always
@@ -79,6 +85,19 @@ func main() {
 		}
 		return
 	}
+	if isManagementInvocation(invoked) && len(os.Args) > 1 && (os.Args[1] == "state" || os.Args[1] == "gc") {
+		hostRuntime, err := currentHostRuntime()
+		if err != nil {
+			fatalf("host runtime: %v", err)
+			return
+		}
+		if hostRuntime.Kind == hostenv.WSL2Native {
+			if err := runWSLState(context.Background(), os.Args[1:], os.Stdout); err != nil {
+				fatalf("%s: %v", os.Args[1], err)
+			}
+			return
+		}
+	}
 	if err := requireHostFrontend(); err != nil {
 		fatalf("host runtime: %v", err)
 		return
@@ -90,7 +109,7 @@ func main() {
 	}
 	if hostRuntime.Kind == hostenv.WSL2Native {
 		if isManagementInvocation(invoked) {
-			fatalf("native WSL management command %q is unavailable; use `cb wsl install --check|--apply`, `cb wsl cleanup --check|--apply`, `cb version`, `cb help`, or a managed tool shim", strings.Join(os.Args[1:], " "))
+			fatalf("native WSL management command %q is unavailable; use `cb state`, `cb gc`, `cb wsl install --check|--apply`, `cb wsl cleanup --check|--apply`, `cb version`, `cb help`, or a managed tool shim", strings.Join(os.Args[1:], " "))
 			return
 		}
 		code, err := runWSLTool(context.Background(), invoked, os.Args[1:])
@@ -485,9 +504,9 @@ Commands:
   cb help      print this help without loading the registry
 
 Native WSL2:
-  Bootstrap and cb wsl ... are enabled. The managed-tool runtime is wired but
-  activation awaits native state commands, integration coverage and real
-  Docker Desktop qualification.
+  Bootstrap, cb wsl ..., cb state and cb gc are enabled. The managed-tool
+  runtime is wired but activation awaits integration coverage and real Docker
+  Desktop qualification.
 
 Registry:
   %s
