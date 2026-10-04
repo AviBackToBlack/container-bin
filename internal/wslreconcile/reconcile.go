@@ -154,12 +154,10 @@ func (g *RunGuard) Adopt(runID string) error {
 	g.lease = created
 	if err := g.coordinator.Close(); err != nil {
 		g.coordinator = nil
-		// Leave the path as recovery evidence. Removing it after a failed
-		// coordinator release could expose a replacement pathname to another
-		// reconciler before this lock is closed.
-		cleanupErr := created.Close()
-		g.lease = nil
-		return errors.Join(fmt.Errorf("release native WSL runtime coordinator: %w", err), cleanupErr)
+		// Keep the locked lease attached to the guard. Deferred container
+		// cleanup can then remove it only after proving absence; otherwise Close
+		// unlocks it but deliberately leaves the pathname as recovery evidence.
+		return fmt.Errorf("release native WSL runtime coordinator: %w", err)
 	}
 	g.coordinator = nil
 	return nil

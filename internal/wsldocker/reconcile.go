@@ -87,16 +87,21 @@ func discoverRetainedContainers(ctx context.Context, namespace string, execute c
 		return nil, fmt.Errorf("decode native WSL retained-container list: %w", err)
 	}
 	candidates := make([]ContainerCandidate, 0, len(listed))
-	seen := make(map[string]bool, len(listed))
+	seenIDs := make(map[string]bool, len(listed))
+	seenRunIDs := make(map[string]bool, len(listed))
 	for index, listedContainer := range listed {
 		candidate, err := decodeContainerCandidate(listedContainer.ID, listedContainer.Labels, namespace)
 		if err != nil {
 			return nil, fmt.Errorf("validate native WSL retained-container candidate %d: %w", index, err)
 		}
-		if seen[candidate.id] {
+		if seenIDs[candidate.id] {
 			return nil, fmt.Errorf("Docker container list returned duplicate ID %s", candidate.id)
 		}
-		seen[candidate.id] = true
+		if seenRunIDs[candidate.runID] {
+			return nil, fmt.Errorf("Docker container list returned duplicate run ID %s", candidate.runID)
+		}
+		seenIDs[candidate.id] = true
+		seenRunIDs[candidate.runID] = true
 		candidates = append(candidates, candidate)
 	}
 	sort.Slice(candidates, func(i, j int) bool { return candidates[i].id < candidates[j].id })

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -66,6 +67,23 @@ func TestDiscoverRetainedContainersRejectsUntrustedShapes(t *testing.T) {
 				t.Fatal("unsafe discovery candidate was accepted")
 			}
 		})
+	}
+}
+
+func TestDiscoverRetainedContainersRejectsDuplicateRunIdentity(t *testing.T) {
+	labels := containerLabels(Container{namespace: testWSLNamespace, runID: testRunID, tool: "node24"})
+	raw, err := json.Marshal([]map[string]any{
+		{"Id": "a" + testContainerID[1:], "Labels": labels},
+		{"Id": "b" + testContainerID[1:], "Labels": labels},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = discoverRetainedContainers(context.Background(), testWSLNamespace, func(context.Context, Request) (Response, error) {
+		return Response{StatusCode: http.StatusOK, Body: raw}, nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "duplicate run ID") {
+		t.Fatalf("duplicate run identity error = %v", err)
 	}
 }
 

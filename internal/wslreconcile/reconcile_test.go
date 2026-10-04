@@ -246,7 +246,7 @@ func TestRunGuardSerializesLeaseRemovalAndUnlock(t *testing.T) {
 	}
 }
 
-func TestAdoptLeavesLeaseEvidenceWhenCoordinatorReleaseFails(t *testing.T) {
+func TestAdoptRetainsLeaseThroughCleanupWhenCoordinatorReleaseFails(t *testing.T) {
 	removed, closed, coordinatorClosed := 0, 0, 0
 	guard := &RunGuard{
 		layout:      testLayout(),
@@ -258,8 +258,39 @@ func TestAdoptLeavesLeaseEvidenceWhenCoordinatorReleaseFails(t *testing.T) {
 	if err := guard.Adopt(strings.Repeat("4", 32)); err == nil || !strings.Contains(err.Error(), "unlock failed") {
 		t.Fatalf("Adopt() error = %v", err)
 	}
+	if removed != 0 || closed != 0 || coordinatorClosed != 1 {
+		t.Fatalf("Adopt released its lease early: removed=%d closed=%d coordinator=%d", removed, closed, coordinatorClosed)
+	}
+	if err := guard.Close(false); err != nil {
+		t.Fatal(err)
+	}
 	if removed != 0 || closed != 1 || coordinatorClosed != 1 {
 		t.Fatalf("failed coordinator release cleanup removed=%d closed=%d coordinator=%d", removed, closed, coordinatorClosed)
+	}
+}
+
+func TestAdoptFailureRemovesLeaseOnlyAfterProvenCleanup(t *testing.T) {
+	removed, closed, initialClosed, cleanupClosed := 0, 0, 0, 0
+	guard := &RunGuard{
+		layout:      testLayout(),
+		coordinator: &fakeCoordinator{closed: &initialClosed, err: errors.New("unlock failed")},
+		deps: dependencies{
+			createLease: func(hostenv.WSLLayout, string) (lease, error) {
+				return &fakeLease{removed: &removed, closed: &closed}, nil
+			},
+			acquireCoordinator: func(context.Context, hostenv.WSLLayout) (coordinator, error) {
+				return &fakeCoordinator{closed: &cleanupClosed}, nil
+			},
+		},
+	}
+	if err := guard.Adopt(strings.Repeat("5", 32)); err == nil {
+		t.Fatal("Adopt unexpectedly succeeded")
+	}
+	if err := guard.Close(true); err != nil {
+		t.Fatal(err)
+	}
+	if removed != 1 || closed != 1 || initialClosed != 1 || cleanupClosed != 1 {
+		t.Fatalf("proven cleanup removed=%d closed=%d initial=%d cleanup=%d", removed, closed, initialClosed, cleanupClosed)
 	}
 }
 
