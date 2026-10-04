@@ -201,21 +201,28 @@ try {
 
     $deadline = [DateTime]::UtcNow.AddMinutes(2)
     $after = $null
+    $lastAttemptError = $null
     do {
         Start-Sleep -Milliseconds 250
         try {
             $candidate = Invoke-ExactProcess -Executable $installed -Arguments @('version') -WorkingDirectory $qualificationRoot -TimeoutSeconds 30 -OwnedProcessRoot $qualificationRoot
             if ($candidate.ExitCode -eq 0) {
                 $after = $candidate
+                $lastAttemptError = $null
+            }
+            else {
+                $lastAttemptError = "exit code $($candidate.ExitCode); stderr: $($candidate.Stderr.Trim())"
             }
         }
         catch {
             $after = $null
+            $lastAttemptError = $_.Exception.Message
         }
     } while (($null -eq $after -or $after.Stdout.Trim() -ne "container-bin $TargetVersion") -and [DateTime]::UtcNow -lt $deadline)
     if ($null -eq $after -or $after.Stdout.Trim() -ne "container-bin $TargetVersion") {
         $lastOutput = if ($null -eq $after) { '<unavailable>' } else { $after.Stdout.Trim() }
-        throw "Updated executable did not report $TargetVersion; last output: $lastOutput"
+        $lastError = if ([string]::IsNullOrWhiteSpace($lastAttemptError)) { '<none>' } else { $lastAttemptError }
+        throw "Updated executable did not report $TargetVersion; last output: $lastOutput; last error: $lastError"
     }
 
     $deadline = [DateTime]::UtcNow.AddMinutes(1)
@@ -266,6 +273,11 @@ finally {
             -not [IO.Path]::GetFileName($resolved).StartsWith('container-bin-self-update-e2e-', [StringComparison]::Ordinal)) {
             throw "Refusing to remove unsafe qualification directory: $resolved"
         }
-        Remove-Item -LiteralPath $resolved -Recurse -Force
+        try {
+            Remove-Item -LiteralPath $resolved -Recurse -Force -ErrorAction Stop
+        }
+        catch {
+            Write-Warning "Unable to remove qualification directory '$resolved': $($_.Exception.Message)"
+        }
     }
 }
