@@ -198,7 +198,7 @@ real Windows 11 + Docker Desktop host before a release.
 The repository includes a Windows/amd64 harness that builds the current source
 with an injected earlier version, installs isolated hardlink and byte-identical
 managed shims, and updates that private installation to an exact canonical
-published release:
+published release.
 
 For a release candidate, set the source version to the previous supported
 release and the target to the exact already-published candidate tag, then retain
