@@ -12,6 +12,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/AviBackToBlack/container-bin/internal/hostenv"
 	"github.com/AviBackToBlack/container-bin/internal/policy"
@@ -366,6 +367,9 @@ func inspectProjectPath(recorded string, lstat func(string) (os.FileInfo, error)
 			return "UNSAFE", nil
 		}
 		return "MANAGED", nil
+	}
+	if errors.Is(err, syscall.ENOTDIR) {
+		return "UNSAFE", nil
 	}
 	if !errors.Is(err, fs.ErrNotExist) {
 		return "", fmt.Errorf("inspect recorded native WSL project path %s: %w", recorded, err)
