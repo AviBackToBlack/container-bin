@@ -22,3 +22,7 @@ func createFileLease(hostenv.WSLLayout, string) (lease, error) {
 func probeFileLease(hostenv.WSLLayout, string) (leaseStatus, lease, error) {
 	return leaseMissing, nil, errLinuxLeaseRequired
 }
+
+func discoverFileLeases(hostenv.WSLLayout) ([]string, error) {
+	return nil, errLinuxLeaseRequired
+}

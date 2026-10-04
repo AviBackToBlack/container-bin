@@ -310,7 +310,9 @@ lease is orphaned. It re-proves every discovered container's full ID, labels,
 retention mode and stream configuration before the first mutation. Running
 orphans are SIGKILLed and waited; stopped orphans go directly through the same
 proof-bound non-force removal. Lease paths are removed only after exact
-container absence is established.
+container absence is established. A later coordinator-held pass reports and
+reaps unlocked lease evidence only when the complete namespace discovery has
+no matching retained container; locked lease-only records are preserved.
 
 `cb wsl cleanup --check` exposes the classification without changing Docker or
 lease state. `cb wsl cleanup --apply` performs explicit recovery. Both require

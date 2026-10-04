@@ -52,6 +52,7 @@ type dependencies struct {
 	acquireCoordinator func(context.Context, hostenv.WSLLayout) (coordinator, error)
 	createLease        func(hostenv.WSLLayout, string) (lease, error)
 	probeLease         func(hostenv.WSLLayout, string) (leaseStatus, lease, error)
+	discoverLeases     func(hostenv.WSLLayout) ([]string, error)
 	discover           func(context.Context, string) ([]candidate, error)
 	prove              func(context.Context, candidate, string) (retainedContainer, bool, error)
 	signal             func(context.Context, retainedContainer, int) error
@@ -69,11 +70,50 @@ type Entry struct {
 	Removed     bool
 }
 
+// LeaseEntry is one managed run lease whose container is proven absent from
+// the complete namespace discovery result.
+type LeaseEntry struct {
+	RunID   string
+	Active  bool
+	Removed bool
+}
+
 // Report is the deterministic result of one namespace reconciliation pass.
 type Report struct {
 	Namespace string
 	Applied   bool
 	Entries   []Entry
+	Leases    []LeaseEntry
+}
+
+// ActiveLeaseOnlyCount returns the number of locked leases with no retained
+// container. They are preserved because another process still owns the lock.
+func (r Report) ActiveLeaseOnlyCount() int {
+	count := 0
+	for _, entry := range r.Leases {
+		if entry.Active {
+			count++
+		}
+	}
+	return count
+}
+
+// OrphanedLeaseCount returns the number of unlocked lease paths whose retained
+// container is absent.
+func (r Report) OrphanedLeaseCount() int {
+	return len(r.Leases) - r.ActiveLeaseOnlyCount()
+}
+
+// ReapedLeaseCount returns the number of orphaned lease paths removed by this
+// pass.
+func (r Report) ReapedLeaseCount() int {
+	count := 0
+	for _, entry := range r.Leases {
+		if entry.Removed {
+			count++
+		}
+	}
+	return count
 }
 
 // ActiveCount returns the number of retained containers with a locked lease.
@@ -219,15 +259,42 @@ type classified struct {
 	lease     lease
 }
 
+type classifiedLease struct {
+	runID  string
+	active bool
+	lease  lease
+}
+
 func reconcileLocked(ctx context.Context, layout hostenv.WSLLayout, apply bool, deps dependencies) (report Report, err error) {
 	report = Report{Namespace: layout.StateNamespace, Applied: apply}
 	candidates, err := deps.discover(ctx, layout.StateNamespace)
 	if err != nil {
 		return report, fmt.Errorf("discover retained native WSL containers: %w", err)
 	}
+	leaseRunIDs, err := deps.discoverLeases(layout)
+	if err != nil {
+		return report, fmt.Errorf("discover native WSL runtime leases: %w", err)
+	}
+	leaseRunIDSet := make(map[string]struct{}, len(leaseRunIDs))
+	for _, runID := range leaseRunIDs {
+		if err := validateRunID(runID); err != nil {
+			return report, fmt.Errorf("discover native WSL runtime lease: %w", err)
+		}
+		if _, duplicate := leaseRunIDSet[runID]; duplicate {
+			return report, fmt.Errorf("discover native WSL runtime leases: duplicate run identity %s", runID)
+		}
+		leaseRunIDSet[runID] = struct{}{}
+	}
+	sort.Strings(leaseRunIDs)
 	classifiedContainers := make([]classified, 0, len(candidates))
+	classifiedLeases := make([]classifiedLease, 0, len(leaseRunIDs))
 	defer func() {
 		for _, item := range classifiedContainers {
+			if item.lease != nil {
+				err = errors.Join(err, item.lease.Close())
+			}
+		}
+		for _, item := range classifiedLeases {
 			if item.lease != nil {
 				err = errors.Join(err, item.lease.Close())
 			}
@@ -235,6 +302,7 @@ func reconcileLocked(ctx context.Context, layout hostenv.WSLLayout, apply bool, 
 	}()
 
 	// Complete every ownership and lease proof before the first mutation.
+	containerRunIDs := make(map[string]struct{}, len(candidates))
 	for _, discovered := range candidates {
 		container, exists, proveErr := deps.prove(ctx, discovered, layout.StateNamespace)
 		if proveErr != nil {
@@ -243,6 +311,10 @@ func reconcileLocked(ctx context.Context, layout hostenv.WSLLayout, apply bool, 
 		if !exists {
 			continue
 		}
+		if _, duplicate := containerRunIDs[container.runID]; duplicate {
+			return report, fmt.Errorf("prove retained native WSL containers: duplicate run identity %s", container.runID)
+		}
+		containerRunIDs[container.runID] = struct{}{}
 		status, heldLease, probeErr := deps.probeLease(layout, container.runID)
 		if probeErr != nil {
 			return report, fmt.Errorf("probe native WSL runtime lease %s: %w", container.runID, probeErr)
@@ -263,6 +335,34 @@ func reconcileLocked(ctx context.Context, layout hostenv.WSLLayout, apply bool, 
 		}
 		if status == leaseOrphaned && heldLease == nil {
 			return report, errors.New("orphaned native WSL runtime lease did not return its lock")
+		}
+		classified.active = status == leaseActive
+	}
+	for _, runID := range leaseRunIDs {
+		if _, hasContainer := containerRunIDs[runID]; hasContainer {
+			continue
+		}
+		status, heldLease, probeErr := deps.probeLease(layout, runID)
+		if probeErr != nil {
+			return report, fmt.Errorf("probe detached native WSL runtime lease %s: %w", runID, probeErr)
+		}
+		classifiedLeases = append(classifiedLeases, classifiedLease{runID: runID, lease: heldLease})
+		classified := &classifiedLeases[len(classifiedLeases)-1]
+		if status != leaseMissing && status != leaseActive && status != leaseOrphaned {
+			return report, errors.New("detached native WSL runtime lease probe returned an invalid status")
+		}
+		if status == leaseMissing && heldLease != nil {
+			return report, errors.New("missing detached native WSL runtime lease unexpectedly returned a handle")
+		}
+		if status == leaseActive && heldLease != nil {
+			return report, errors.New("active detached native WSL runtime lease unexpectedly returned a handle")
+		}
+		if status == leaseOrphaned && heldLease == nil {
+			return report, errors.New("orphaned detached native WSL runtime lease did not return its lock")
+		}
+		if status == leaseMissing {
+			classifiedLeases = classifiedLeases[:len(classifiedLeases)-1]
+			continue
 		}
 		classified.active = status == leaseActive
 	}
@@ -296,6 +396,17 @@ func reconcileLocked(ctx context.Context, layout hostenv.WSLLayout, apply bool, 
 		}
 		report.Entries = append(report.Entries, entry)
 	}
+	for i := range classifiedLeases {
+		item := &classifiedLeases[i]
+		entry := LeaseEntry{RunID: item.runID, Active: item.active}
+		if apply && !item.active {
+			if removeErr := item.lease.Remove(); removeErr != nil {
+				return report, fmt.Errorf("remove detached native WSL runtime lease %s: %w", item.runID, removeErr)
+			}
+			entry.Removed = true
+		}
+		report.Leases = append(report.Leases, entry)
+	}
 	return report, nil
 }
 
@@ -323,8 +434,20 @@ func reconcileOrphan(ctx context.Context, container retainedContainer, deps depe
 
 func validateDependencies(deps dependencies) error {
 	if deps.acquireCoordinator == nil || deps.createLease == nil || deps.probeLease == nil ||
-		deps.discover == nil || deps.prove == nil || deps.signal == nil || deps.wait == nil || deps.remove == nil {
+		deps.discoverLeases == nil || deps.discover == nil || deps.prove == nil || deps.signal == nil || deps.wait == nil || deps.remove == nil {
 		return errors.New("native WSL runtime reconciliation dependencies are incomplete")
+	}
+	return nil
+}
+
+func validateRunID(runID string) error {
+	if len(runID) != 32 {
+		return errors.New("native WSL runtime lease requires a 32-character run identity")
+	}
+	for _, char := range runID {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return errors.New("native WSL runtime lease requires a lowercase hexadecimal run identity")
+		}
 	}
 	return nil
 }

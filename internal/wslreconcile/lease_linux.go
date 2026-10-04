@@ -94,6 +94,31 @@ func probeFileLease(layout hostenv.WSLLayout, runID string) (leaseStatus, lease,
 	return leaseOrphaned, &fileLease{file: file, dir: dir, name: name, dev: uint64(stat.Dev), ino: stat.Ino}, nil
 }
 
+func discoverFileLeases(layout hostenv.WSLLayout) (runIDs []string, err error) {
+	dir, _, err := openStateDirectory(layout)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, dir.Close()) }()
+	entries, err := dir.ReadDir(-1)
+	if err != nil {
+		return nil, fmt.Errorf("enumerate native WSL runtime state directory: %w", err)
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasPrefix(name, "run-") || !strings.HasSuffix(name, ".lease") {
+			continue
+		}
+		runID := strings.TrimSuffix(strings.TrimPrefix(name, "run-"), ".lease")
+		expected, nameErr := leaseName(runID)
+		if nameErr != nil || expected != name {
+			return nil, fmt.Errorf("invalid native WSL runtime lease filename %q", name)
+		}
+		runIDs = append(runIDs, runID)
+	}
+	return runIDs, nil
+}
+
 func openStateDirectory(layout hostenv.WSLLayout) (*os.File, *syscall.Stat_t, error) {
 	if layout.StateDir == "" || !strings.HasPrefix(layout.StateDir, "/") || layout.UID != uint32(os.Geteuid()) {
 		return nil, nil, errors.New("native WSL runtime state identity is invalid for the current user")
@@ -161,13 +186,8 @@ func lockContext(ctx context.Context, file *os.File) error {
 }
 
 func leaseName(runID string) (string, error) {
-	if len(runID) != 32 {
-		return "", errors.New("native WSL runtime lease requires a 32-character run identity")
-	}
-	for _, char := range runID {
-		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
-			return "", errors.New("native WSL runtime lease requires a lowercase hexadecimal run identity")
-		}
+	if err := validateRunID(runID); err != nil {
+		return "", err
 	}
 	return "run-" + runID + ".lease", nil
 }

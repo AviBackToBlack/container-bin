@@ -181,7 +181,9 @@ readable, and dangerous to let others edit.
   preserve active runs. Missing or unlockable leases identify recoverable
   orphans while the coordinator is held; running orphans are killed and waited,
   stopped orphans are removed directly, and all deletion remains proof-bound
-  and non-force. Unsafe lease files or any ambiguous candidate stop the complete
+  and non-force. Unlocked lease evidence is reaped only when complete namespace
+  discovery has no matching retained container; locked leases are preserved.
+  Unsafe lease files or any ambiguous candidate stop the complete
   preflight before its first mutation.
 - **Machine policy cannot be redirected or weakened.** A present enterprise
   policy is loaded only from the fixed OS path, requires administrator/root

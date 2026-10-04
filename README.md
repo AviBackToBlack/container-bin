@@ -958,7 +958,9 @@ containers as active or orphaned without mutation. `--apply` stops, waits and
 removes only re-proven orphans; ordinary tool startup performs the same pass
 automatically. A process-held private lease protects active runs, and the
 namespace coordinator remains held across container creation and lease
-publication so cleanup cannot guess across that race.
+publication so cleanup cannot guess across that race. Unlocked lease evidence
+whose exact namespace no longer contains a matching retained container is
+reported and reaped by `--apply`; locked leases are always preserved.
 
 ### Self-update release selection
 

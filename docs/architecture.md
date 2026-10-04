@@ -510,7 +510,10 @@ is released. Reconciliation preserves locked active leases and mutates only an
 unlocked or lease-less candidate whose complete labels, retention and stream
 configuration were freshly re-proven. A running orphan is killed and waited;
 all orphan removal uses the same proof-bound non-force lifecycle. Explicit
-`cb wsl cleanup --check|--apply` exposes that recovery path. The production host
+`cb wsl cleanup --check|--apply` exposes that recovery path. The same
+coordinator-held pass enumerates managed lease names and reaps an unlocked
+lease only when complete namespace discovery contains no matching run; locked
+lease-only records remain untouched. The production host
 boundary still does not dispatch into this orchestrator until native state
 commands, integration coverage and real WSL qualification complete.
 

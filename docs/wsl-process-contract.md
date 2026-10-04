@@ -76,7 +76,10 @@ mutation. Explicit `--apply` performs the same proof-bound reconciliation used
 automatically before ordinary execution. Malformed labels, changed container
 configuration, unsafe lease files or incomplete proofs stop the whole preflight
 before its first mutation. A lease path is removed only after exact container
-absence is established; otherwise it remains as recovery evidence.
+absence is established; otherwise it remains as recovery evidence. A later
+coordinator-held pass enumerates managed lease names, preserves every locked
+lease, and reaps an unlocked lease only when complete namespace discovery has
+no matching run identity.
 
 ## Streams and TTY
 

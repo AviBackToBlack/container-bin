@@ -85,7 +85,8 @@ func testDependencies(items []candidate, containers map[string]retainedContainer
 			}
 			return status, nil, nil
 		},
-		discover: func(context.Context, string) ([]candidate, error) { return items, nil },
+		discoverLeases: func(hostenv.WSLLayout) ([]string, error) { return nil, nil },
+		discover:       func(context.Context, string) ([]candidate, error) { return items, nil },
 		prove: func(_ context.Context, item candidate, _ string) (retainedContainer, bool, error) {
 			container, ok := containers[item.id]
 			return container, ok, nil
@@ -146,6 +147,128 @@ func TestReconcileCheckIsReadOnly(t *testing.T) {
 	}
 	if report.RemovedCount() != 0 || strings.Contains(strings.Join(events, ","), "signal:") || strings.Contains(strings.Join(events, ","), "remove:") {
 		t.Fatalf("check mode mutated state: report=%+v events=%v", report, events)
+	}
+}
+
+func TestReconcileReportsAndReapsDetachedLeaseEvidence(t *testing.T) {
+	orphanedRunID := strings.Repeat("7", 32)
+	activeRunID := strings.Repeat("8", 32)
+	for _, apply := range []bool{false, true} {
+		t.Run(map[bool]string{false: "check", true: "apply"}[apply], func(t *testing.T) {
+			removed, closed := 0, 0
+			var events []string
+			deps := testDependencies(nil, nil, nil, &events)
+			deps.discoverLeases = func(hostenv.WSLLayout) ([]string, error) {
+				return []string{activeRunID, orphanedRunID}, nil
+			}
+			deps.probeLease = func(_ hostenv.WSLLayout, runID string) (leaseStatus, lease, error) {
+				events = append(events, "probe:"+runID)
+				if runID == activeRunID {
+					return leaseActive, nil, nil
+				}
+				return leaseOrphaned, &fakeLease{removed: &removed, closed: &closed}, nil
+			}
+			report, err := reconcile(context.Background(), testLayout(), apply, deps)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if report.ActiveLeaseOnlyCount() != 1 || report.OrphanedLeaseCount() != 1 {
+				t.Fatalf("unexpected detached lease report: %+v", report)
+			}
+			wantRemoved := 0
+			if apply {
+				wantRemoved = 1
+			}
+			if report.ReapedLeaseCount() != wantRemoved || removed != wantRemoved || closed != 1 {
+				t.Fatalf("apply=%t report=%+v removed=%d closed=%d", apply, report, removed, closed)
+			}
+		})
+	}
+}
+
+func TestReconcileProvesDetachedLeasesBeforeContainerMutation(t *testing.T) {
+	item, container := testCandidate("9", false)
+	var events []string
+	deps := testDependencies([]candidate{item}, map[string]retainedContainer{item.id: container}, map[string]leaseStatus{item.runID: leaseMissing}, &events)
+	deps.discoverLeases = func(hostenv.WSLLayout) ([]string, error) {
+		return []string{strings.Repeat("a", 32)}, nil
+	}
+	deps.probeLease = func(_ hostenv.WSLLayout, runID string) (leaseStatus, lease, error) {
+		events = append(events, "probe:"+runID)
+		if runID != item.runID {
+			return leaseMissing, nil, errors.New("ambiguous detached lease")
+		}
+		return leaseMissing, nil, nil
+	}
+	if _, err := reconcile(context.Background(), testLayout(), true, deps); err == nil || !strings.Contains(err.Error(), "ambiguous detached lease") {
+		t.Fatalf("expected detached lease proof error, got %v", err)
+	}
+	if strings.Contains(strings.Join(events, ","), "remove:") {
+		t.Fatalf("container mutation occurred before detached lease proof: %v", events)
+	}
+}
+
+func TestReconcileRejectsInvalidDetachedLeaseProbeContracts(t *testing.T) {
+	runID := strings.Repeat("b", 32)
+	tests := []struct {
+		name       string
+		status     leaseStatus
+		withHandle bool
+		want       string
+	}{
+		{name: "invalid status", status: leaseStatus(99), withHandle: true, want: "invalid status"},
+		{name: "missing with handle", status: leaseMissing, withHandle: true, want: "missing detached"},
+		{name: "active with handle", status: leaseActive, withHandle: true, want: "active detached"},
+		{name: "orphaned without handle", status: leaseOrphaned, want: "did not return its lock"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			removed, closed := 0, 0
+			var events []string
+			deps := testDependencies(nil, nil, nil, &events)
+			deps.discoverLeases = func(hostenv.WSLLayout) ([]string, error) { return []string{runID}, nil }
+			deps.probeLease = func(hostenv.WSLLayout, string) (leaseStatus, lease, error) {
+				if tc.withHandle {
+					return tc.status, &fakeLease{removed: &removed, closed: &closed}, nil
+				}
+				return tc.status, nil, nil
+			}
+			if _, err := reconcile(context.Background(), testLayout(), true, deps); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("unexpected detached lease probe result: %v", err)
+			}
+			wantClosed := 0
+			if tc.withHandle {
+				wantClosed = 1
+			}
+			if removed != 0 || closed != wantClosed {
+				t.Fatalf("invalid probe mutated lease: removed=%d closed=%d", removed, closed)
+			}
+		})
+	}
+}
+
+func TestReconcileRejectsInvalidDetachedLeaseDiscovery(t *testing.T) {
+	valid := strings.Repeat("c", 32)
+	tests := []struct {
+		name   string
+		runIDs []string
+		want   string
+	}{
+		{name: "invalid", runIDs: []string{"invalid"}, want: "32-character run identity"},
+		{name: "duplicate", runIDs: []string{valid, valid}, want: "duplicate run identity"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var events []string
+			deps := testDependencies(nil, nil, nil, &events)
+			deps.discoverLeases = func(hostenv.WSLLayout) ([]string, error) { return tc.runIDs, nil }
+			if _, err := reconcile(context.Background(), testLayout(), true, deps); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("invalid detached lease discovery result: %v", err)
+			}
+			if strings.Contains(strings.Join(events, ","), "remove:") {
+				t.Fatalf("invalid discovery mutated state: %v", events)
+			}
+		})
 	}
 }
 
@@ -318,14 +441,14 @@ func TestCommandRequiresExactLayoutAndPrintsReport(t *testing.T) {
 		reconcile: func(_ context.Context, _ hostenv.WSLLayout, apply bool) (Report, error) {
 			return Report{Namespace: layout.StateNamespace, Applied: apply, Entries: []Entry{{
 				ContainerID: strings.Repeat("3", 64), RunID: strings.Repeat("3", 32), Tool: "go", Running: true,
-			}}}, nil
+			}}, Leases: []LeaseEntry{{RunID: strings.Repeat("7", 32)}}}, nil
 		},
 	}
 	var out bytes.Buffer
 	if err := cmd.run(context.Background(), []string{"--check"}, &out); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"read-only check", "orphan-running:", "active=0 orphaned=1 reconciled=0", "cb wsl cleanup --apply"} {
+	for _, want := range []string{"read-only check", "orphan-running:", "lease-residue:", "active=0 orphaned=1 reconciled=0 lease_active=0 lease_residue=1 lease_reaped=0", "cb wsl cleanup --apply"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("output missing %q:\n%s", want, out.String())
 		}

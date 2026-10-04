@@ -80,8 +80,19 @@ func printReport(out io.Writer, report Report) error {
 		}
 		fmt.Fprintf(&text, "%s: container=%s run=%s tool=%s\n", status, entry.ContainerID, entry.RunID, entry.Tool)
 	}
-	fmt.Fprintf(&text, "totals: active=%d orphaned=%d reconciled=%d\n", report.ActiveCount(), report.OrphanCount(), report.RemovedCount())
-	if !report.Applied && report.OrphanCount() != 0 {
+	for _, entry := range report.Leases {
+		status := "lease-residue"
+		if entry.Active {
+			status = "lease-active"
+		} else if entry.Removed {
+			status = "lease-reaped"
+		}
+		fmt.Fprintf(&text, "%s: run=%s\n", status, entry.RunID)
+	}
+	fmt.Fprintf(&text, "totals: active=%d orphaned=%d reconciled=%d lease_active=%d lease_residue=%d lease_reaped=%d\n",
+		report.ActiveCount(), report.OrphanCount(), report.RemovedCount(),
+		report.ActiveLeaseOnlyCount(), report.OrphanedLeaseCount(), report.ReapedLeaseCount())
+	if !report.Applied && (report.OrphanCount() != 0 || report.OrphanedLeaseCount() != 0) {
 		fmt.Fprintln(&text, "apply: cb wsl cleanup --apply")
 	}
 	if _, err := io.WriteString(out, text.String()); err != nil {

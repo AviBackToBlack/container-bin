@@ -13,6 +13,7 @@ func productionDependencies() dependencies {
 		acquireCoordinator: acquireFileCoordinator,
 		createLease:        createFileLease,
 		probeLease:         probeFileLease,
+		discoverLeases:     discoverFileLeases,
 		discover: func(ctx context.Context, namespace string) ([]candidate, error) {
 			discovered, err := wsldocker.DiscoverRetainedContainers(ctx, namespace)
 			if err != nil {

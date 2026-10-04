@@ -51,6 +51,34 @@ func TestFileLeaseLifecycle(t *testing.T) {
 	}
 }
 
+func TestDiscoverFileLeases(t *testing.T) {
+	layout := leaseTestLayout(t)
+	runID := strings.Repeat("c", 32)
+	held, err := createFileLease(layout, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := held.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(layout.StateDir, "unrelated-state"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runIDs, err := discoverFileLeases(layout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runIDs) != 1 || runIDs[0] != runID {
+		t.Fatalf("discovered lease run IDs = %v, want %s", runIDs, runID)
+	}
+	if err := os.WriteFile(filepath.Join(layout.StateDir, "run-invalid.lease"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := discoverFileLeases(layout); err == nil || !strings.Contains(err.Error(), "invalid native WSL runtime lease filename") {
+		t.Fatalf("malformed managed lease filename was accepted: %v", err)
+	}
+}
+
 func TestFileLeaseRejectsUnsafePaths(t *testing.T) {
 	layout := leaseTestLayout(t)
 	runID := strings.Repeat("b", 32)
