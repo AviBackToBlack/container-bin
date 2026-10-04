@@ -247,8 +247,16 @@ func reconcileLocked(ctx context.Context, layout hostenv.WSLLayout, apply bool, 
 		if probeErr != nil {
 			return report, fmt.Errorf("probe native WSL runtime lease %s: %w", container.runID, probeErr)
 		}
+		classifiedContainers = append(classifiedContainers, classified{
+			container: container,
+			lease:     heldLease,
+		})
+		classified := &classifiedContainers[len(classifiedContainers)-1]
 		if status != leaseMissing && status != leaseActive && status != leaseOrphaned {
 			return report, errors.New("native WSL runtime lease probe returned an invalid status")
+		}
+		if status == leaseMissing && heldLease != nil {
+			return report, errors.New("missing native WSL runtime lease unexpectedly returned a handle")
 		}
 		if status == leaseActive && heldLease != nil {
 			return report, errors.New("active native WSL runtime lease unexpectedly returned a handle")
@@ -256,11 +264,7 @@ func reconcileLocked(ctx context.Context, layout hostenv.WSLLayout, apply bool, 
 		if status == leaseOrphaned && heldLease == nil {
 			return report, errors.New("orphaned native WSL runtime lease did not return its lock")
 		}
-		classifiedContainers = append(classifiedContainers, classified{
-			container: container,
-			active:    status == leaseActive,
-			lease:     heldLease,
-		})
+		classified.active = status == leaseActive
 	}
 
 	sort.Slice(classifiedContainers, func(i, j int) bool {

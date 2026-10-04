@@ -168,6 +168,22 @@ func TestReconcileCompletesAllProofsBeforeMutation(t *testing.T) {
 	}
 }
 
+func TestReconcileRejectsMissingLeaseWithHandle(t *testing.T) {
+	item, container := testCandidate("6", false)
+	removed, closed := 0, 0
+	var events []string
+	deps := testDependencies([]candidate{item}, map[string]retainedContainer{item.id: container}, nil, &events)
+	deps.probeLease = func(hostenv.WSLLayout, string) (leaseStatus, lease, error) {
+		return leaseMissing, &fakeLease{removed: &removed, closed: &closed}, nil
+	}
+	if _, err := reconcile(context.Background(), testLayout(), true, deps); err == nil || !strings.Contains(err.Error(), "missing native WSL runtime lease unexpectedly returned a handle") {
+		t.Fatalf("unexpected probe-contract result: %v", err)
+	}
+	if removed != 0 || closed != 1 || strings.Contains(strings.Join(events, ","), "remove:") {
+		t.Fatalf("invalid probe result mutated state: removed=%d closed=%d events=%v", removed, closed, events)
+	}
+}
+
 func TestReconcileToleratesRunningCompletionRaces(t *testing.T) {
 	item, container := testCandidate("1", true)
 	for _, status := range []int{http.StatusNotFound, http.StatusConflict} {
