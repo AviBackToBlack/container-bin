@@ -185,6 +185,9 @@ func (c *fileCoordinator) Close() error {
 }
 
 func (l *fileLease) Remove() error {
+	// The caller must hold the namespace coordinator until both Remove and
+	// Close complete, preventing a cooperating reconciler from observing a
+	// replacement pathname while this inode remains locked.
 	if l == nil || l.removed {
 		return nil
 	}

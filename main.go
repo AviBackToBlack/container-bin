@@ -486,7 +486,8 @@ Commands:
 
 Native WSL2:
   Bootstrap and cb wsl ... are enabled. The managed-tool runtime is wired but
-  activation awaits orphan reconciliation and real Docker Desktop qualification.
+  activation awaits native state commands, integration coverage and real
+  Docker Desktop qualification.
 
 Registry:
   %s

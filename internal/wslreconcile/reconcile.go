@@ -154,7 +154,10 @@ func (g *RunGuard) Adopt(runID string) error {
 	g.lease = created
 	if err := g.coordinator.Close(); err != nil {
 		g.coordinator = nil
-		cleanupErr := errors.Join(created.Remove(), created.Close())
+		// Leave the path as recovery evidence. Removing it after a failed
+		// coordinator release could expose a replacement pathname to another
+		// reconciler before this lock is closed.
+		cleanupErr := created.Close()
 		g.lease = nil
 		return errors.Join(fmt.Errorf("release native WSL runtime coordinator: %w", err), cleanupErr)
 	}
@@ -172,10 +175,23 @@ func (g *RunGuard) Close(containerGone bool) error {
 	var errs []error
 	if g.lease != nil {
 		if containerGone {
-			errs = append(errs, g.lease.Remove())
+			ctx, cancel := context.WithTimeout(context.Background(), reconcileTimeout)
+			coordinator, err := g.deps.acquireCoordinator(ctx, g.layout)
+			cancel()
+			if err != nil {
+				errs = append(errs, fmt.Errorf("reacquire native WSL runtime coordinator before lease removal: %w", err))
+			} else {
+				removeErr := g.lease.Remove()
+				leaseCloseErr := g.lease.Close()
+				coordinatorCloseErr := coordinator.Close()
+				errs = append(errs, removeErr, leaseCloseErr, coordinatorCloseErr)
+				g.lease = nil
+			}
 		}
-		errs = append(errs, g.lease.Close())
-		g.lease = nil
+		if g.lease != nil {
+			errs = append(errs, g.lease.Close())
+			g.lease = nil
+		}
 	}
 	if g.coordinator != nil {
 		errs = append(errs, g.coordinator.Close())

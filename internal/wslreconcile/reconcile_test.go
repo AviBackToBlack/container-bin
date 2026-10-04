@@ -15,10 +15,30 @@ import (
 
 type fakeCoordinator struct {
 	closed *int
+	err    error
 }
 
 func (f *fakeCoordinator) Close() error {
 	*f.closed++
+	return f.err
+}
+
+type orderedCoordinator struct{ events *[]string }
+
+func (c orderedCoordinator) Close() error {
+	*c.events = append(*c.events, "coordinator-close")
+	return nil
+}
+
+type orderedLease struct{ events *[]string }
+
+func (l orderedLease) Remove() error {
+	*l.events = append(*l.events, "lease-remove")
+	return nil
+}
+
+func (l orderedLease) Close() error {
+	*l.events = append(*l.events, "lease-close")
 	return nil
 }
 
@@ -204,6 +224,42 @@ func TestBeginRunHoldsCoordinatorUntilLeasePublication(t *testing.T) {
 	}
 	if removed != 0 || leaseClosed != 1 {
 		t.Fatalf("failed container cleanup should leave lease path: removed=%d closed=%d", removed, leaseClosed)
+	}
+}
+
+func TestRunGuardSerializesLeaseRemovalAndUnlock(t *testing.T) {
+	var events []string
+	guard := &RunGuard{
+		layout: testLayout(),
+		deps: dependencies{acquireCoordinator: func(context.Context, hostenv.WSLLayout) (coordinator, error) {
+			events = append(events, "coordinator-acquire")
+			return orderedCoordinator{events: &events}, nil
+		}},
+		lease: orderedLease{events: &events},
+	}
+	if err := guard.Close(true); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"coordinator-acquire", "lease-remove", "lease-close", "coordinator-close"}
+	if strings.Join(events, ",") != strings.Join(want, ",") {
+		t.Fatalf("lease removal ordering = %v, want %v", events, want)
+	}
+}
+
+func TestAdoptLeavesLeaseEvidenceWhenCoordinatorReleaseFails(t *testing.T) {
+	removed, closed, coordinatorClosed := 0, 0, 0
+	guard := &RunGuard{
+		layout:      testLayout(),
+		coordinator: &fakeCoordinator{closed: &coordinatorClosed, err: errors.New("unlock failed")},
+		deps: dependencies{createLease: func(hostenv.WSLLayout, string) (lease, error) {
+			return &fakeLease{removed: &removed, closed: &closed}, nil
+		}},
+	}
+	if err := guard.Adopt(strings.Repeat("4", 32)); err == nil || !strings.Contains(err.Error(), "unlock failed") {
+		t.Fatalf("Adopt() error = %v", err)
+	}
+	if removed != 0 || closed != 1 || coordinatorClosed != 1 {
+		t.Fatalf("failed coordinator release cleanup removed=%d closed=%d coordinator=%d", removed, closed, coordinatorClosed)
 	}
 }
 

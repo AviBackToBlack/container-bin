@@ -33,7 +33,7 @@ type containerInspectFunc func(context.Context, string) (ContainerSnapshot, erro
 // exact managed-run namespace labels. The Docker list response is never treated
 // as ownership proof.
 func DiscoverRetainedContainers(ctx context.Context, namespace string) ([]ContainerCandidate, error) {
-	return discoverRetainedContainers(ctx, namespace, Execute)
+	return discoverRetainedContainers(ctx, namespace, executeRetainedContainerDiscovery)
 }
 
 // ProveRetainedContainer re-inspects one discovery candidate and returns an
