@@ -211,6 +211,7 @@ try {
                 $lastAttemptError = $null
             }
             else {
+                $after = $null
                 $lastAttemptError = "exit code $($candidate.ExitCode); stderr: $($candidate.Stderr.Trim())"
             }
         }
