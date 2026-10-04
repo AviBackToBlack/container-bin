@@ -30,6 +30,12 @@ function Invoke-ExactProcess {
         [Parameter(Mandatory = $true)]
         [string]$WorkingDirectory,
 
+        [Parameter(Mandatory = $true)]
+        [ValidateRange(1, 3600)]
+        [int]$TimeoutSeconds,
+
+        [string]$OwnedProcessRoot,
+
         [hashtable]$Environment = @{}
     )
 
@@ -55,7 +61,47 @@ function Invoke-ExactProcess {
         }
         $stdoutTask = $process.StandardOutput.ReadToEndAsync()
         $stderrTask = $process.StandardError.ReadToEndAsync()
-        $process.WaitForExit()
+        $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+        $timedOut = -not $process.WaitForExit($TimeoutSeconds * 1000)
+        if (-not $timedOut) {
+            $remaining = [Math]::Max(1, [int](($deadline - [DateTime]::UtcNow).TotalMilliseconds))
+            $outputTasks = [Threading.Tasks.Task]::WhenAll([Threading.Tasks.Task[]]@($stdoutTask, $stderrTask))
+            $timedOut = -not $outputTasks.Wait($remaining)
+        }
+        if ($timedOut) {
+            if (-not $process.HasExited) {
+                try {
+                    $process.Kill($true)
+                }
+                catch {
+                    # The process may have exited between HasExited and Kill.
+                }
+            }
+            if (-not [string]::IsNullOrWhiteSpace($OwnedProcessRoot)) {
+                $ownedRoot = [IO.Path]::GetFullPath($OwnedProcessRoot).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+                $ownedPrefix = $ownedRoot + [IO.Path]::DirectorySeparatorChar
+                foreach ($candidate in Get-Process) {
+                    try {
+                        $candidatePath = $candidate.Path
+                    }
+                    catch {
+                        continue
+                    }
+                    if (-not [string]::IsNullOrWhiteSpace($candidatePath) -and
+                        ([string]::Equals($candidatePath, $ownedRoot, [StringComparison]::OrdinalIgnoreCase) -or
+                        $candidatePath.StartsWith($ownedPrefix, [StringComparison]::OrdinalIgnoreCase))) {
+                        Stop-Process -Id $candidate.Id -Force -ErrorAction SilentlyContinue
+                    }
+                }
+            }
+            try {
+                [void][Threading.Tasks.Task]::WhenAll([Threading.Tasks.Task[]]@($stdoutTask, $stderrTask)).Wait(10000)
+            }
+            catch {
+                # Preserve the timeout as the primary qualification failure.
+            }
+            throw "Process timed out after $TimeoutSeconds seconds: $Executable"
+        }
         $stdout = $stdoutTask.GetAwaiter().GetResult()
         $stderr = $stderrTask.GetAwaiter().GetResult()
         return [pscustomobject]@{
@@ -132,13 +178,14 @@ try {
         -Executable $GoExecutable `
         -Arguments @('build', '-trimpath', '-buildvcs=false', '-ldflags', "-s -w -X main.version=$FromVersion", '-o', $installed, '.') `
         -WorkingDirectory $repositoryRoot `
+        -TimeoutSeconds 300 `
         -Environment @{ GOOS = 'windows'; GOARCH = 'amd64' }
     Assert-Succeeded -Result $build -Operation 'Build qualification executable'
 
     New-Item -ItemType HardLink -Path $hardlinkShim -Target $installed | Out-Null
     Copy-Item -LiteralPath $installed -Destination $copyShim
 
-    $before = Invoke-ExactProcess -Executable $installed -Arguments @('version') -WorkingDirectory $qualificationRoot
+    $before = Invoke-ExactProcess -Executable $installed -Arguments @('version') -WorkingDirectory $qualificationRoot -TimeoutSeconds 30 -OwnedProcessRoot $qualificationRoot
     Assert-Succeeded -Result $before -Operation 'Read pre-update version'
     if ($before.Stdout.Trim() -ne "container-bin $FromVersion") {
         throw "Unexpected pre-update version output: $($before.Stdout.Trim())"
@@ -147,7 +194,9 @@ try {
     $apply = Invoke-ExactProcess `
         -Executable $installed `
         -Arguments @('self-update', '--apply', '--version', $TargetVersion, '--gh-executable', $GitHubCLI) `
-        -WorkingDirectory $qualificationRoot
+        -WorkingDirectory $qualificationRoot `
+        -TimeoutSeconds 900 `
+        -OwnedProcessRoot $qualificationRoot
     Assert-Succeeded -Result $apply -Operation 'Apply published self-update'
 
     $deadline = [DateTime]::UtcNow.AddMinutes(2)
@@ -155,7 +204,7 @@ try {
     do {
         Start-Sleep -Milliseconds 250
         try {
-            $candidate = Invoke-ExactProcess -Executable $installed -Arguments @('version') -WorkingDirectory $qualificationRoot
+            $candidate = Invoke-ExactProcess -Executable $installed -Arguments @('version') -WorkingDirectory $qualificationRoot -TimeoutSeconds 30 -OwnedProcessRoot $qualificationRoot
             if ($candidate.ExitCode -eq 0) {
                 $after = $candidate
             }
@@ -170,15 +219,16 @@ try {
     }
 
     $deadline = [DateTime]::UtcNow.AddMinutes(1)
+    $expectedSurvivors = @('cb.exe', 'go.exe', 'gofmt.exe')
     do {
-        $privateArtifacts = @(Get-ChildItem -LiteralPath $qualificationRoot -Force | Where-Object { $_.Name -like '.container-bin-update-*' })
-        if ($privateArtifacts.Count -eq 0) {
+        $unexpectedArtifacts = @(Get-ChildItem -LiteralPath $qualificationRoot -Force | Where-Object { $_.Name -notin $expectedSurvivors })
+        if ($unexpectedArtifacts.Count -eq 0) {
             break
         }
         Start-Sleep -Milliseconds 250
     } while ([DateTime]::UtcNow -lt $deadline)
-    if ($privateArtifacts.Count -ne 0) {
-        throw "Private self-update artifacts remain: $($privateArtifacts.Name -join ', ')"
+    if ($unexpectedArtifacts.Count -ne 0) {
+        throw "Unexpected self-update artifacts remain: $($unexpectedArtifacts.Name -join ', ')"
     }
 
     $installedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $installed).Hash
@@ -189,7 +239,7 @@ try {
     }
 
     $fsutil = Join-Path $env:SystemRoot 'System32\fsutil.exe'
-    $links = Invoke-ExactProcess -Executable $fsutil -Arguments @('hardlink', 'list', $installed) -WorkingDirectory $qualificationRoot
+    $links = Invoke-ExactProcess -Executable $fsutil -Arguments @('hardlink', 'list', $installed) -WorkingDirectory $qualificationRoot -TimeoutSeconds 30
     Assert-Succeeded -Result $links -Operation 'Inspect managed hardlinks'
     $hardlinkPaths = @($links.Stdout -split "`r?`n")
     foreach ($leaf in @('go.exe', 'gofmt.exe')) {

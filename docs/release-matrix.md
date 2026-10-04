@@ -200,11 +200,17 @@ with an injected earlier version, installs isolated hardlink and byte-identical
 managed shims, and updates that private installation to an exact canonical
 published release:
 
+For a release candidate, set the source version to the previous supported
+release and the target to the exact already-published candidate tag, then retain
+the emitted JSON in the release-qualification issue:
+
 ```powershell
+$previousVersion = 'v1.1.0'
+$candidateVersion = 'v2.0.0-rc.1'
 $env:GH_TOKEN = gh auth token --hostname github.com
 pwsh -NoProfile -File .\scripts\qualify-self-update-published.ps1 `
-  -FromVersion v1.0.0 `
-  -TargetVersion v1.1.0 `
+  -FromVersion $previousVersion `
+  -TargetVersion $candidateVersion `
   -GitHubCLI (Get-Command gh.exe).Source
 ```
 
@@ -218,8 +224,10 @@ This exercises release selection, canonical bounded downloads, checksum and
 GitHub build-provenance verification, the private helper handoff, repeated
 verification after the parent exits, transactional replacement, bootstrap
 version smoke testing, hardlink reconciliation for both originally hardlinked
-and byte-identical shims, and cleanup of staging/helper/rollback artifacts. It
-uses a unique system-temp installation and removes only that validated path.
+and byte-identical shims, bounded child-process execution, and an exact
+post-transaction survivor allowlist that catches staging/helper/rollback
+directories, replacement temporary files and mutation-lock residue. It uses a
+unique system-temp installation and removes only that validated path.
 
 Qualification evidence on 2026-10-04: current `main` at `e625ab6` was built as
 `v1.0.0` and updated to the canonical published `v1.1.0` release on native

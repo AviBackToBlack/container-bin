@@ -22,6 +22,14 @@ body:
     validations:
       required: true
   - type: textarea
+    id: self-update-published-e2e
+    attributes:
+      label: Published-release self-update E2E
+      description: Record the previous release, exact published candidate tag, source commit, signed GitHub CLI version/publisher, command, and complete sanitized JSON result from scripts/qualify-self-update-published.ps1.
+      render: text
+    validations:
+      required: true
+  - type: textarea
     id: cell-powershell51-current
     attributes:
       label: Windows PowerShell 5.1 — current stable Docker Desktop
