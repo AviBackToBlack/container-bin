@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -192,6 +193,18 @@ func TestMissingProjectWithUnsafeBoundaryProofIsNeverOrphaned(t *testing.T) {
 	})
 	if err != nil || status != "UNSAFE" {
 		t.Fatalf("unsafe ancestor classification = (%q, %v)", status, err)
+	}
+}
+
+func TestProjectPathWithNonDirectoryAncestorIsUnsafe(t *testing.T) {
+	status, err := inspectProjectPath("/work/file/gone", func(string) (os.FileInfo, error) {
+		return nil, &os.PathError{Op: "lstat", Path: "/work/file/gone", Err: syscall.ENOTDIR}
+	}, func(string) error {
+		t.Fatal("boundary proof ran after a non-directory ancestor was already proven")
+		return nil
+	})
+	if err != nil || status != "UNSAFE" {
+		t.Fatalf("non-directory ancestor classification = (%q, %v)", status, err)
 	}
 }
 
