@@ -66,6 +66,7 @@ type checksumLayout uint8
 const (
 	checksumLayoutLegacyAMD64 checksumLayout = iota + 1
 	checksumLayoutDualArch
+	checksumLayoutV2WSL
 )
 
 type downgradeAuthorization struct {
@@ -399,10 +400,12 @@ func validateRelease(selected release, goarch string) (Asset, Asset, Asset, chec
 	}
 	amd64Archive := fmt.Sprintf("container-bin-%s-windows-amd64.zip", tag.raw)
 	arm64Archive := fmt.Sprintf("container-bin-%s-windows-arm64.zip", tag.raw)
+	wslArchive := fmt.Sprintf("container-bin-%s-linux-amd64.tar.gz", tag.raw)
 	wanted := map[string]int64{
 		"cb.exe":     maxBinarySize,
 		amd64Archive: maxArchiveSize,
 		arm64Archive: maxArchiveSize,
+		wslArchive:   maxArchiveSize,
 		"SHA256SUMS": maxChecksumSize,
 	}
 	found := map[string]Asset{}
@@ -428,11 +431,25 @@ func validateRelease(selected release, goarch string) (Asset, Asset, Asset, chec
 			return Asset{}, Asset{}, Asset{}, 0, fmt.Errorf("release is missing required asset %q", name)
 		}
 	}
+	if tag.major >= 2 {
+		for _, name := range []string{arm64Archive, wslArchive} {
+			if _, ok := found[name]; !ok {
+				return Asset{}, Asset{}, Asset{}, 0, fmt.Errorf("release is missing required asset %q", name)
+			}
+		}
+	}
 	layout := checksumLayoutLegacyAMD64
-	if _, ok := found[arm64Archive]; ok {
+	_, hasARM64 := found[arm64Archive]
+	_, hasWSL := found[wslArchive]
+	if hasWSL && !hasARM64 {
+		return Asset{}, Asset{}, Asset{}, 0, fmt.Errorf("release is missing required asset %q", arm64Archive)
+	}
+	if hasARM64 && hasWSL {
+		layout = checksumLayoutV2WSL
+	} else if hasARM64 {
 		layout = checksumLayoutDualArch
 	}
-	if goarch == "arm64" && layout != checksumLayoutDualArch {
+	if goarch == "arm64" && !hasARM64 {
 		return Asset{}, Asset{}, Asset{}, 0, fmt.Errorf("release is missing required asset %q", arm64Archive)
 	}
 	if goarch == "arm64" {

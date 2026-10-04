@@ -135,6 +135,30 @@ func TestPlanSelectsARM64ArchiveFromGOARCH(t *testing.T) {
 	}
 }
 
+func TestPlanRequiresCanonicalWSLArtifactForV2(t *testing.T) {
+	selected := canonicalDualArchRelease("v2.0.0", false)
+	_, err := (checker{doer: releaseDoer(t, apiRoot+"/releases/latest", selected)}).Plan(context.Background(), "v1.1.0", "windows", "amd64", Options{Check: true})
+	if err == nil || !strings.Contains(err.Error(), "container-bin-v2.0.0-linux-amd64.tar.gz") {
+		t.Fatalf("v2 release without WSL artifact error = %v", err)
+	}
+
+	selected = canonicalV2Release("v2.0.0", false)
+	plan, err := (checker{doer: releaseDoer(t, apiRoot+"/releases/latest", selected)}).Plan(context.Background(), "v1.1.0", "windows", "amd64", Options{Check: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Binary.Name != "cb.exe" || plan.checksumLayout != checksumLayoutV2WSL {
+		t.Fatalf("unexpected v2 release plan: %+v", plan)
+	}
+	arm64Plan, err := (checker{doer: releaseDoer(t, apiRoot+"/releases/latest", selected)}).Plan(context.Background(), "v1.1.0", "windows", "arm64", Options{Check: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if arm64Plan.Binary.Name != "container-bin-v2.0.0-windows-arm64.zip" || arm64Plan.checksumLayout != checksumLayoutV2WSL {
+		t.Fatalf("unexpected v2 ARM64 release plan: %+v", arm64Plan)
+	}
+}
+
 func TestPlanExactAndDowngradePolicy(t *testing.T) {
 	selected := canonicalRelease("v1.0.0", false)
 	c := checker{doer: releaseDoer(t, apiRoot+"/releases/tags/v1.0.0", selected)}
@@ -240,6 +264,15 @@ func TestPlanRejectsUnsafeCompanionARM64MetadataOnAMD64(t *testing.T) {
 	}
 }
 
+func TestPlanRejectsUnsafeCompanionWSLMetadataOnAMD64(t *testing.T) {
+	selected := canonicalV2Release("v2.0.0", false)
+	selected.Assets[len(selected.Assets)-1].BrowserDownloadURL = "https://evil.example/wsl.tar.gz"
+	_, err := (checker{doer: releaseDoer(t, apiRoot+"/releases/latest", selected)}).Plan(context.Background(), "v1.1.0", "windows", "amd64", Options{Check: true})
+	if err == nil || !strings.Contains(err.Error(), "non-canonical download URL") {
+		t.Fatalf("unsafe companion WSL metadata error = %v", err)
+	}
+}
+
 func TestGetJSONBoundsAndTransportFailures(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -299,6 +332,17 @@ func canonicalRelease(tag string, prerelease bool) release {
 func canonicalDualArchRelease(tag string, prerelease bool) release {
 	release := canonicalRelease(tag, prerelease)
 	name := "container-bin-" + tag + "-windows-arm64.zip"
+	release.Assets = append(release.Assets, releaseAsset{
+		Name:               name,
+		Size:               2 << 20,
+		BrowserDownloadURL: releaseWebRoot + "/download/" + tag + "/" + name,
+	})
+	return release
+}
+
+func canonicalV2Release(tag string, prerelease bool) release {
+	release := canonicalDualArchRelease(tag, prerelease)
+	name := "container-bin-" + tag + "-linux-amd64.tar.gz"
 	release.Assets = append(release.Assets, releaseAsset{
 		Name:               name,
 		Size:               2 << 20,

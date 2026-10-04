@@ -59,7 +59,8 @@ jobs:
           fi
           AMD64_ARCHIVE="container-bin-${VERSION}-windows-amd64.zip"
           ARM64_ARCHIVE="container-bin-${VERSION}-windows-arm64.zip"
-          mkdir -p dist/package-amd64 dist/package-arm64
+          WSL_AMD64_ARCHIVE="container-bin-${VERSION}-linux-amd64.tar.gz"
+          mkdir -p dist/package-amd64 dist/package-arm64 dist/package-linux-amd64
 
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
             go build -trimpath -buildvcs=false \
@@ -69,16 +70,23 @@ jobs:
             go build -trimpath -buildvcs=false \
               -ldflags "-s -w -X main.version=${VERSION}" \
               -o dist/package-arm64/cb.exe .
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
+            go build -trimpath -buildvcs=false \
+              -ldflags "-s -w -X main.version=${VERSION}" \
+              -o dist/package-linux-amd64/cb .
 
           cp dist/cb.exe dist/package-amd64/cb.exe
           cp LICENSE README.md dist/package-amd64/
           cp LICENSE README.md dist/package-arm64/
+          cp LICENSE README.md dist/package-linux-amd64/
+          test "$(dist/package-linux-amd64/cb version)" = "container-bin ${VERSION}"
           # ZIP stores DOS timestamps. Normalize them and strip extra metadata so
           # separate runners/checkouts produce byte-identical archives.
           touch -d '1980-01-01 00:00:00 UTC' \
             dist/cb.exe \
             dist/package-amd64/cb.exe dist/package-amd64/LICENSE dist/package-amd64/README.md \
-            dist/package-arm64/cb.exe dist/package-arm64/LICENSE dist/package-arm64/README.md
+            dist/package-arm64/cb.exe dist/package-arm64/LICENSE dist/package-arm64/README.md \
+            dist/package-linux-amd64/cb dist/package-linux-amd64/LICENSE dist/package-linux-amd64/README.md
           (
             cd dist/package-amd64
             zip -X "../${AMD64_ARCHIVE}" cb.exe LICENSE README.md
@@ -88,17 +96,27 @@ jobs:
             zip -X "../${ARM64_ARCHIVE}" cb.exe LICENSE README.md
           )
           (
+            cd dist/package-linux-amd64
+            tar --format=ustar --owner=0 --group=0 --numeric-owner --mtime='@0' \
+              -cf - cb LICENSE README.md | gzip -n > "../${WSL_AMD64_ARCHIVE}"
+          )
+          diff -u \
+            <(printf 'LICENSE\nREADME.md\ncb\n') \
+            <(tar -tzf "dist/${WSL_AMD64_ARCHIVE}" | sort)
+          (
             cd dist
             sha256sum \
               cb.exe \
               "${AMD64_ARCHIVE}" \
-              "${ARM64_ARCHIVE}" > SHA256SUMS
+              "${ARM64_ARCHIVE}" \
+              "${WSL_AMD64_ARCHIVE}" > SHA256SUMS
           )
-          rm -rf dist/package-amd64 dist/package-arm64
+          rm -rf dist/package-amd64 dist/package-arm64 dist/package-linux-amd64
           cat dist/SHA256SUMS
           echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
           echo "AMD64_ARCHIVE=${AMD64_ARCHIVE}" >> "$GITHUB_ENV"
           echo "ARM64_ARCHIVE=${ARM64_ARCHIVE}" >> "$GITHUB_ENV"
+          echo "WSL_AMD64_ARCHIVE=${WSL_AMD64_ARCHIVE}" >> "$GITHUB_ENV"
 
       - name: Verify checksums
         shell: bash
@@ -158,6 +176,7 @@ jobs:
           path: |
             dist/cb.exe
             dist/*.zip
+            dist/*.tar.gz
             dist/SHA256SUMS
           if-no-files-found: error
           retention-days: 14
@@ -197,7 +216,8 @@ jobs:
           fi
           AMD64_ARCHIVE="container-bin-${VERSION}-windows-amd64.zip"
           ARM64_ARCHIVE="container-bin-${VERSION}-windows-arm64.zip"
-          mkdir -p second/package-amd64 second/package-arm64
+          WSL_AMD64_ARCHIVE="container-bin-${VERSION}-linux-amd64.tar.gz"
+          mkdir -p second/package-amd64 second/package-arm64 second/package-linux-amd64
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
             go build -trimpath -buildvcs=false \
               -ldflags "-s -w -X main.version=${VERSION}" \
@@ -206,13 +226,19 @@ jobs:
             go build -trimpath -buildvcs=false \
               -ldflags "-s -w -X main.version=${VERSION}" \
               -o second/package-arm64/cb.exe .
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
+            go build -trimpath -buildvcs=false \
+              -ldflags "-s -w -X main.version=${VERSION}" \
+              -o second/package-linux-amd64/cb .
           cp second/cb.exe second/package-amd64/cb.exe
           cp LICENSE README.md second/package-amd64/
           cp LICENSE README.md second/package-arm64/
+          cp LICENSE README.md second/package-linux-amd64/
           touch -d '1980-01-01 00:00:00 UTC' \
             second/cb.exe \
             second/package-amd64/cb.exe second/package-amd64/LICENSE second/package-amd64/README.md \
-            second/package-arm64/cb.exe second/package-arm64/LICENSE second/package-arm64/README.md
+            second/package-arm64/cb.exe second/package-arm64/LICENSE second/package-arm64/README.md \
+            second/package-linux-amd64/cb second/package-linux-amd64/LICENSE second/package-linux-amd64/README.md
           (
             cd second/package-amd64
             zip -X "../${AMD64_ARCHIVE}" cb.exe LICENSE README.md >/dev/null
@@ -222,16 +248,22 @@ jobs:
             zip -X "../${ARM64_ARCHIVE}" cb.exe LICENSE README.md >/dev/null
           )
           (
+            cd second/package-linux-amd64
+            tar --format=ustar --owner=0 --group=0 --numeric-owner --mtime='@0' \
+              -cf - cb LICENSE README.md | gzip -n > "../${WSL_AMD64_ARCHIVE}"
+          )
+          (
             cd second
             sha256sum \
               cb.exe \
               "${AMD64_ARCHIVE}" \
-              "${ARM64_ARCHIVE}" > SHA256SUMS
+              "${ARM64_ARCHIVE}" \
+              "${WSL_AMD64_ARCHIVE}" > SHA256SUMS
           )
-          for artifact in cb.exe "${AMD64_ARCHIVE}" "${ARM64_ARCHIVE}" SHA256SUMS; do
+          for artifact in cb.exe "${AMD64_ARCHIVE}" "${ARM64_ARCHIVE}" "${WSL_AMD64_ARCHIVE}" SHA256SUMS; do
             cmp "first/${artifact}" "second/${artifact}"
           done
-          echo 'independent runner reproduced binaries, archives and checksum manifest byte-for-byte'
+          echo 'independent runner reproduced Windows and native WSL artifacts plus checksum manifest byte-for-byte'
 
   release:
     name: Draft release
@@ -255,10 +287,12 @@ jobs:
         run: |
           set -euo pipefail
           test "$(find dist -maxdepth 1 -type f -name '*.zip' | wc -l)" -eq 2
+          test "$(find dist -maxdepth 1 -type f -name '*.tar.gz' | wc -l)" -eq 1
           test "$(find dist -maxdepth 1 -type f -name '*.exe' | wc -l)" -eq 1
           test -f dist/cb.exe
           test -f "dist/container-bin-${GITHUB_REF_NAME}-windows-amd64.zip"
           test -f "dist/container-bin-${GITHUB_REF_NAME}-windows-arm64.zip"
+          test -f "dist/container-bin-${GITHUB_REF_NAME}-linux-amd64.tar.gz"
           test -f dist/SHA256SUMS
           (cd dist && sha256sum -c SHA256SUMS)
 
@@ -312,6 +346,7 @@ jobs:
           subject-path: |
             dist/cb.exe
             dist/*.zip
+            dist/*.tar.gz
 
       - name: Create immutable-ready draft release
         env:
@@ -354,4 +389,4 @@ jobs:
           fi
           gh release create "${GITHUB_REF_NAME}" \
             "${RELEASE_ARGS[@]}" \
-            dist/cb.exe dist/*.zip dist/SHA256SUMS
+            dist/cb.exe dist/*.zip dist/*.tar.gz dist/SHA256SUMS

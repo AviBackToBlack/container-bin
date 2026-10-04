@@ -326,6 +326,36 @@ func TestVerifyAMD64AcceptsCanonicalDualArchitectureManifest(t *testing.T) {
 	}
 }
 
+func TestVerifyAMD64RequiresCanonicalV2WSLManifest(t *testing.T) {
+	fixture := newVerificationFixture(t)
+	fixture.plan.Target = "v2.0.0"
+	fixture.plan.ReleaseURL = releaseWebRoot + "/tag/v2.0.0"
+	fixture.plan.Archive.Name = "container-bin-v2.0.0-windows-amd64.zip"
+	fixture.plan.Archive.URL = releaseWebRoot + "/download/v2.0.0/" + fixture.plan.Archive.Name
+	fixture.plan.Binary.URL = releaseWebRoot + "/download/v2.0.0/cb.exe"
+	fixture.plan.Checksums.URL = releaseWebRoot + "/download/v2.0.0/SHA256SUMS"
+	fixture.plan.ExpectedRef = "refs/tags/v2.0.0"
+	fixture.plan.checksumLayout = checksumLayoutV2WSL
+	manifest := fixture.digest + "  cb.exe\n" +
+		strings.Repeat("a", 64) + "  container-bin-v2.0.0-windows-amd64.zip\n" +
+		strings.Repeat("b", 64) + "  container-bin-v2.0.0-windows-arm64.zip\n" +
+		strings.Repeat("c", 64) + "  container-bin-v2.0.0-linux-amd64.tar.gz\n"
+	if err := os.WriteFile(fixture.checksums, []byte(manifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fixture.plan.Checksums.Size = int64(len(manifest))
+	if _, err := testVerifier(attestationRunnerFunc(func(context.Context, string, []string) ([]byte, []byte, error) {
+		return attestationJSON(fixture.digest), nil, nil
+	})).Verify(context.Background(), fixture.plan, fixture.binary, fixture.checksums, fixture.installed, fixture.gh); err != nil {
+		t.Fatal(err)
+	}
+
+	fixture.plan.checksumLayout = checksumLayoutDualArch
+	if _, err := validateVerificationPlan(fixture.plan); err == nil || !strings.Contains(err.Error(), "unexpected checksum layout") {
+		t.Fatalf("v2 dual-architecture-only layout error = %v", err)
+	}
+}
+
 func TestVerifyARM64RejectsUnexpectedArchiveEntryAfterAuthentication(t *testing.T) {
 	fixture := newARM64VerificationFixture(t, map[string][]byte{"unexpected.bin": []byte("unsafe")})
 	called := false
