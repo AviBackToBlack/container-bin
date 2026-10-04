@@ -180,15 +180,42 @@ func TestResolveFilterMapsDefaultAliasToStateGroup(t *testing.T) {
 	}
 }
 
-func TestMissingProjectBelowUnsafeAncestorIsNeverOrphaned(t *testing.T) {
-	status, err := inspectProjectPath("/work/link/gone", func(candidate string) (os.FileInfo, error) {
-		if candidate == "/work/link" {
-			return fakeInfo{mode: os.ModeSymlink}, nil
-		}
+func TestMissingProjectWithUnsafeBoundaryProofIsNeverOrphaned(t *testing.T) {
+	status, err := inspectProjectPath("/work/link/gone", func(string) (os.FileInfo, error) {
 		return nil, fs.ErrNotExist
+	}, func(string) error {
+		return errors.New("symlinked ancestor")
 	})
 	if err != nil || status != "UNSAFE" {
 		t.Fatalf("unsafe ancestor classification = (%q, %v)", status, err)
+	}
+}
+
+func TestGCRechecksOrphanImmediatelyBeforeRemoval(t *testing.T) {
+	deps, scope := testDependencies(t)
+	orphan, _ := scope.Project("node24", "modules", "/work/restored")
+	deps.discover = func(context.Context, wslvolume.Scope) ([]wslvolume.Volume, error) {
+		return []wslvolume.Volume{orphan}, nil
+	}
+	checks := 0
+	deps.lstat = func(path string) (os.FileInfo, error) {
+		if path == testLayout().RegistryPath {
+			return fakeInfo{mode: 0o600}, nil
+		}
+		checks++
+		if checks == 1 {
+			return nil, fs.ErrNotExist
+		}
+		return fakeInfo{mode: os.ModeDir | 0o755}, nil
+	}
+	deps.remove = func(context.Context, wslvolume.Volume) error {
+		t.Fatal("restored project volume was removed")
+		return nil
+	}
+	var out bytes.Buffer
+	err := run(context.Background(), []string{"gc", "--orphans", "--apply"}, &out, deps)
+	if err == nil || !strings.Contains(err.Error(), "refusing stale orphan plan") || out.Len() != 0 {
+		t.Fatalf("stale-plan result err=%v output=%q", err, out.String())
 	}
 }
 
@@ -227,8 +254,9 @@ func testDependencies(t *testing.T) (dependencies, wslvolume.Scope) {
 			cache, err := scope.Shared(wslvolume.PythonStateGroup, "pip-cache")
 			return wslvolume.PythonState{Venv: venv, PipCache: cache}, err
 		},
-		discover: func(context.Context, wslvolume.Scope) ([]wslvolume.Volume, error) { return nil, nil },
-		remove:   func(context.Context, wslvolume.Volume) error { return nil },
+		proveMissing: func(string) error { return nil },
+		discover:     func(context.Context, wslvolume.Scope) ([]wslvolume.Volume, error) { return nil, nil },
+		remove:       func(context.Context, wslvolume.Volume) error { return nil },
 	}, scope
 }
 

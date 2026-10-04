@@ -10,7 +10,6 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"path"
 	"sort"
 	"strings"
 
@@ -35,6 +34,7 @@ type dependencies struct {
 	selectProject         func(string, registry.Tool) (wslproject.Project, bool, error)
 	planStateful          func(wslvolume.Scope, registry.Tool, wslproject.Project, string) ([]wslvolume.Volume, error)
 	planPython            func(wslvolume.Scope, wslproject.Project, bool) (wslvolume.PythonState, error)
+	proveMissing          func(string) error
 	discover              func(context.Context, wslvolume.Scope) ([]wslvolume.Volume, error)
 	remove                func(context.Context, wslvolume.Volume) error
 }
@@ -71,9 +71,10 @@ func productionDependencies() dependencies {
 			}
 			return volumes, nil
 		},
-		planPython: wslvolume.PlanPythonVolumes,
-		discover:   discoverProven,
-		remove:     wslvolume.Remove,
+		planPython:   wslvolume.PlanPythonVolumes,
+		proveMissing: wslproject.ProveMissingProject,
+		discover:     discoverProven,
+		remove:       wslvolume.Remove,
 	}
 }
 
@@ -120,7 +121,7 @@ func run(ctx context.Context, args []string, out io.Writer, deps dependencies) e
 			return err
 		}
 	}
-	if deps.currentLayout == nil || deps.checkLayout == nil || deps.checkRegistryRecovery == nil || deps.loadPolicy == nil || deps.loadRegistry == nil || deps.lstat == nil || deps.getwd == nil || deps.selectProject == nil || deps.planStateful == nil || deps.planPython == nil || deps.discover == nil || deps.remove == nil {
+	if deps.currentLayout == nil || deps.checkLayout == nil || deps.checkRegistryRecovery == nil || deps.loadPolicy == nil || deps.loadRegistry == nil || deps.lstat == nil || deps.getwd == nil || deps.selectProject == nil || deps.planStateful == nil || deps.planPython == nil || deps.proveMissing == nil || deps.discover == nil || deps.remove == nil {
 		return errors.New("native WSL state command dependencies are incomplete")
 	}
 
@@ -214,7 +215,7 @@ func show(ctx context.Context, out io.Writer, layout hostenv.WSLLayout, scope ws
 	if err != nil {
 		return fmt.Errorf("discover and prove native WSL volumes: %w", err)
 	}
-	classified, err := classify(actual, current, shared, deps.lstat)
+	classified, err := classify(actual, current, shared, deps.lstat, deps.proveMissing)
 	if err != nil {
 		return err
 	}
@@ -239,7 +240,7 @@ func show(ctx context.Context, out io.Writer, layout hostenv.WSLLayout, scope ws
 	return nil
 }
 
-func classify(actual []wslvolume.Volume, current, shared map[string]wslvolume.Volume, lstat func(string) (os.FileInfo, error)) ([]classification, error) {
+func classify(actual []wslvolume.Volume, current, shared map[string]wslvolume.Volume, lstat func(string) (os.FileInfo, error), proveMissing func(string) error) ([]classification, error) {
 	result := make([]classification, 0, len(actual))
 	for _, volume := range actual {
 		labels := volume.Labels()
@@ -255,7 +256,7 @@ func classify(actual []wslvolume.Volume, current, shared map[string]wslvolume.Vo
 			item.status = "MANAGED"
 		} else {
 			item.path = labels["cb.project_path"]
-			status, err := inspectProjectPath(item.path, lstat)
+			status, err := inspectProjectPath(item.path, lstat, proveMissing)
 			if err != nil {
 				return nil, err
 			}
@@ -285,7 +286,7 @@ func gc(ctx context.Context, out io.Writer, scope wslvolume.Scope, reg registry.
 				continue
 			}
 			projectPath := labels["cb.project_path"]
-			status, statErr := inspectProjectPath(projectPath, deps.lstat)
+			status, statErr := inspectProjectPath(projectPath, deps.lstat, deps.proveMissing)
 			if statErr != nil {
 				return statErr
 			}
@@ -336,6 +337,16 @@ func gc(ctx context.Context, out io.Writer, scope wslvolume.Scope, reg registry.
 		return err
 	}
 	for _, volume := range candidates {
+		if options.orphans {
+			projectPath := volume.Labels()["cb.project_path"]
+			status, err := inspectProjectPath(projectPath, deps.lstat, deps.proveMissing)
+			if err != nil {
+				return err
+			}
+			if status != "ORPHAN" {
+				return fmt.Errorf("native WSL project path %s changed before removal; refusing stale orphan plan", projectPath)
+			}
+		}
 		if err := deps.remove(ctx, volume); err != nil {
 			return fmt.Errorf("remove native WSL volume %s: %w", volume.Name(), err)
 		}
@@ -348,28 +359,21 @@ func gc(ctx context.Context, out io.Writer, scope wslvolume.Scope, reg registry.
 	return err
 }
 
-func inspectProjectPath(recorded string, lstat func(string) (os.FileInfo, error)) (string, error) {
-	candidate := recorded
-	for {
-		info, err := lstat(candidate)
-		if err == nil {
-			if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-				return "UNSAFE", nil
-			}
-			if candidate == recorded {
-				return "MANAGED", nil
-			}
-			return "ORPHAN", nil
+func inspectProjectPath(recorded string, lstat func(string) (os.FileInfo, error), proveMissing func(string) error) (string, error) {
+	info, err := lstat(recorded)
+	if err == nil {
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return "UNSAFE", nil
 		}
-		if !errors.Is(err, fs.ErrNotExist) {
-			return "", fmt.Errorf("inspect recorded native WSL project path %s: %w", candidate, err)
-		}
-		parent := path.Dir(candidate)
-		if parent == candidate {
-			return "", fmt.Errorf("inspect recorded native WSL project path %s: no existing directory ancestor", recorded)
-		}
-		candidate = parent
+		return "MANAGED", nil
 	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		return "", fmt.Errorf("inspect recorded native WSL project path %s: %w", recorded, err)
+	}
+	if err := proveMissing(recorded); err != nil {
+		return "UNSAFE", nil
+	}
+	return "ORPHAN", nil
 }
 
 func expectedVolumes(scope wslvolume.Scope, reg registry.Registry, cwd, filter string, deps dependencies) (map[string]wslvolume.Volume, map[string]wslvolume.Volume, error) {

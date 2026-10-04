@@ -971,8 +971,10 @@ discover only the current distribution/machine/user namespace, then reconstruct
 and exactly prove every candidate before producing output or mutation. `cb gc`
 is a dry run unless `--apply` is explicit, never selects shared volumes, and
 uses non-force deletion with an absence check. `--orphans` requires the recorded
-canonical Linux project path to be missing; symlinks and non-directory objects
-are reported as unsafe state rather than guessed to be orphans. Native state
+canonical Linux project path to be missing below a currently proven supported
+storage boundary; a vanished `/mnt/<drive>` mount, symlinked ancestry and
+non-directory objects are unsafe rather than guessed to be orphans. Apply
+re-proves absence immediately before each removal. Native state
 backup/restore remains separate future work and is not part of this v2 runtime
 activation gate.
 

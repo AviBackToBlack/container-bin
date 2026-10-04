@@ -654,10 +654,12 @@ The v2-required native state subset is now composed. `cb state` and `cb gc`
 consume only the fixed layout and authenticated registry, prove the complete
 discovered namespace before output or mutation, never select shared volumes for
 deletion, and classify an orphan only when the recorded canonical Linux project
-path is missing. Existing symlinks and non-directory objects are unsafe rather
-than orphan evidence. Apply uses proof-bound non-force removal and verifies
-absence. Native state backup/restore remains deferred and is not an activation
-prerequisite for the supported runtime contract.
+path is missing below a currently live supported storage boundary. Vanished
+default drive mounts, symlinked ancestry and non-directory objects are unsafe
+rather than orphan evidence. Apply re-proves orphan status immediately before
+proof-bound non-force removal and verifies absence. Native state backup/restore
+remains deferred and is not an activation prerequisite for the supported
+runtime contract.
 
 Qualification must include both Windows-filesystem and WSL-filesystem projects
 plus mixed invocation rejection cases.

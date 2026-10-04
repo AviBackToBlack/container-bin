@@ -67,6 +67,12 @@ type mountInfo struct {
 	superOptions string
 }
 
+type missingBoundary struct {
+	nearest string
+	missing string
+	info    pathInfo
+}
+
 func classify(root string, d dependencies) (Project, error) {
 	if err := validateRoot(root); err != nil {
 		return Project{}, err
@@ -207,6 +213,110 @@ func resolveDescendant(project Project, candidate string, d dependencies) (Desce
 		relative = strings.TrimPrefix(relative, "/")
 	}
 	return Descendant{Path: candidate, Relative: relative, Exists: exists, NearestExisting: nearest}, nil
+}
+
+// proveMissingProject proves that root is absent below an unchanged supported
+// native-WSL storage boundary. It checks every existing lexical ancestor with
+// Lstat, so a symlink cannot be hidden above the nearest existing directory,
+// and repeats the ancestry proof after reading mountinfo to bound replacement
+// races. A vanished default /mnt/<drive> mount is never orphan evidence.
+func proveMissingProject(root string, d dependencies) error {
+	if err := validateRoot(root); err != nil {
+		return err
+	}
+	if d.currentRuntime == nil || d.lstat == nil || d.readMountInfo == nil {
+		return errors.New("missing WSL project proof dependencies are incomplete")
+	}
+	runtime, err := d.currentRuntime()
+	if err != nil {
+		return fmt.Errorf("classify native WSL runtime: %w", err)
+	}
+	if runtime.Kind != hostenv.WSL2Native {
+		return fmt.Errorf("missing WSL project proof requires runtime kind %q, got %q", hostenv.WSL2Native, runtime.Kind)
+	}
+	before, err := inspectMissingBoundary(root, d.lstat)
+	if err != nil {
+		return err
+	}
+	rawMounts, err := d.readMountInfo()
+	if err != nil {
+		return fmt.Errorf("read WSL mount table for missing project %s: %w", root, err)
+	}
+	mounts, err := parseMountInfo(rawMounts)
+	if err != nil {
+		return fmt.Errorf("parse WSL mount table for missing project %s: %w", root, err)
+	}
+
+	if drive, underDrive := defaultDriveRoot(root); underDrive {
+		mountPoint := "/mnt/" + drive
+		if before.nearest != mountPoint && !strings.HasPrefix(before.nearest, mountPoint+"/") {
+			return fmt.Errorf("Windows drive mount %s is unavailable; missing project %s is unsafe to orphan", mountPoint, root)
+		}
+		mount, err := containingMount(root, mounts)
+		if err != nil {
+			return fmt.Errorf("select mount for missing WSL project %s: %w", root, err)
+		}
+		if mount.point != mountPoint || !isDrvFS(mount, drive) || mount.device != before.info.Dev {
+			return fmt.Errorf("Windows drive mount %s is not the expected live DrvFs boundary", mountPoint)
+		}
+	} else {
+		distroRoot, err := d.lstat("/")
+		if err != nil {
+			return fmt.Errorf("inspect native WSL distribution root: %w", err)
+		}
+		mount, err := containingMount(before.nearest, mounts)
+		if err != nil {
+			return fmt.Errorf("select mount for missing WSL project %s: %w", root, err)
+		}
+		if before.info.Dev != distroRoot.Dev || mount.device != before.info.Dev {
+			return fmt.Errorf("missing WSL project %s is below an unqualified filesystem boundary", root)
+		}
+	}
+
+	after, err := inspectMissingBoundary(root, d.lstat)
+	if err != nil {
+		return err
+	}
+	if before.nearest != after.nearest || before.missing != after.missing || before.info != after.info {
+		return fmt.Errorf("missing WSL project %s ancestry changed during proof", root)
+	}
+	return nil
+}
+
+func inspectMissingBoundary(root string, lstat func(string) (pathInfo, error)) (missingBoundary, error) {
+	nearest := missingBoundary{}
+	current := ""
+	for _, element := range strings.Split(strings.TrimPrefix(root, "/"), "/") {
+		current += "/" + element
+		info, err := lstat(current)
+		if err == nil {
+			if info.Mode&os.ModeSymlink != 0 || !info.Mode.IsDir() {
+				return missingBoundary{}, fmt.Errorf("WSL project ancestor %s must be a non-symlink directory", current)
+			}
+			nearest = missingBoundary{nearest: current, info: info}
+			continue
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return missingBoundary{}, fmt.Errorf("inspect WSL project ancestor %s: %w", current, err)
+		}
+		nearest.missing = current
+		break
+	}
+	if nearest.missing == "" {
+		return missingBoundary{}, fmt.Errorf("WSL project path %s exists and is not orphaned", root)
+	}
+	if nearest.nearest == "" {
+		rootInfo, err := lstat("/")
+		if err != nil {
+			return missingBoundary{}, fmt.Errorf("inspect native WSL distribution root: %w", err)
+		}
+		if rootInfo.Mode&os.ModeSymlink != 0 || !rootInfo.Mode.IsDir() {
+			return missingBoundary{}, errors.New("native WSL distribution root must be a non-symlink directory")
+		}
+		nearest.nearest = "/"
+		nearest.info = rootInfo
+	}
+	return nearest, nil
 }
 
 func sameProjectIdentity(first, second Project) bool {

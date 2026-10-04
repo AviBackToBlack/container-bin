@@ -355,8 +355,10 @@ the exact distribution/machine/user namespace, constructs the current project
 and configured shared identities, and proves every discovered Docker volume
 before writing its report. It classifies exact current, shared and Python
 compatibility state separately from stale managed state. A project volume is
-`ORPHAN` only when its exact recorded canonical Linux path is absent; an
-existing symlink or non-directory object is `UNSAFE` and never deletion input.
+`ORPHAN` only when its exact recorded canonical Linux path is absent below a
+currently proven supported storage boundary. A vanished default Windows-drive
+mount, symlinked ancestry or non-directory object is `UNSAFE` and never
+deletion input.
 
 `cb gc [TOOL|STATE_GROUP] [--orphans] [--apply]` uses the same complete proof
 set. The default is a dry run. Current-project mode selects only identities
@@ -365,8 +367,10 @@ mode selects only exactly proven project volumes whose recorded path is missing.
 Shared volumes are never candidates. Apply mode removes without force through
 the proof-bound lifecycle and verifies exact absence after deletion. All
 discovery, ownership proof, path classification and planning finish before the
-first mutation. Native backup/restore remains separate future management work;
-it is not required for v2 runtime activation.
+first mutation. Apply also re-proves orphan status immediately before each
+removal, so a restored project invalidates the stale plan. Native backup/restore
+remains separate future management work; it is not required for v2 runtime
+activation.
 
 ## Remaining before the v2 WSL support claim
 

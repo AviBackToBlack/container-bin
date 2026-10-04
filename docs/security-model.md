@@ -156,9 +156,10 @@ readable, and dangerous to let others edit.
   every namespace discovery result into an exact immutable volume identity,
   and complete the whole plan before the first deletion. Shared volumes are
   never GC candidates. A project volume is orphaned only when its recorded
-  canonical Linux path is absent; symlinks, non-directories and inspection
-  errors are preserved and fail closed. Apply deletes without force and proves
-  absence afterward.
+  canonical Linux path is absent below a currently live supported storage
+  boundary; vanished default drive mounts, symlinked ancestry, non-directories
+  and inspection errors are preserved and fail closed. Apply re-proves orphan
+  status immediately before each non-force deletion and proves absence afterward.
 - **Native WSL run containers are transaction-bound.** The create
   primitive accepts no raw Engine body, endpoint, privilege or Docker-socket
   mount controls. It admits at most one existing, symlink-free canonical project
