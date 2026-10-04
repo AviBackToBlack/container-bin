@@ -188,13 +188,7 @@ func executeTool(ctx context.Context, plan toolPlan, deps runDependencies) (code
 	}()
 	inputDone := make(chan error, 1)
 	go func() {
-		_, copyErr := io.Copy(stream, deps.stdin)
-		closeErr := stream.CloseWrite()
-		if copyErr != nil {
-			inputDone <- copyErr
-			return
-		}
-		inputDone <- closeErr
+		inputDone <- copyToolInput(stream, deps.stdin)
 	}()
 	var outputResult *error
 	for {
@@ -256,6 +250,32 @@ func executeTool(ctx context.Context, plan toolPlan, deps runDependencies) (code
 			return 0, fmt.Errorf("native WSL tool execution canceled: %w", ctx.Err())
 		}
 	}
+}
+
+type inputSinkWriter struct {
+	destination io.Writer
+}
+
+func (w inputSinkWriter) Write(p []byte) (int, error) {
+	written, err := w.destination.Write(p)
+	// Only normalize errors observed at the attach sink. A source-side read
+	// failure returned by io.Copy bypasses this wrapper and remains fatal.
+	if inputPeerClosed(err) {
+		return written, io.ErrClosedPipe
+	}
+	return written, err
+}
+
+func copyToolInput(stream attachStream, source io.Reader) error {
+	_, copyErr := io.Copy(inputSinkWriter{destination: stream}, source)
+	closeErr := stream.CloseWrite()
+	if copyErr != nil {
+		return copyErr
+	}
+	if inputPeerClosed(closeErr) {
+		return io.ErrClosedPipe
+	}
+	return closeErr
 }
 
 func containerCompletionRace(err error) bool {

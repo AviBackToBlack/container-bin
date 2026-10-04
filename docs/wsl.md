@@ -290,11 +290,13 @@ decodes non-TTY stdout/stderr framing, selects TTY only when both stdin and
 stdout accept real termios queries, uses raw terminal mode, and applies a
 positive initial size from stdin when measurable. Zero-sized or unreadable
 dimensions skip that resize; an unmeasurable `SIGWINCH` is dropped rather than
-terminating the tool. The runtime forwards HUP, INT, QUIT, USR1, USR2, TERM,
-CONT, TSTP and PIPE numerically to the exact owned container. Completion-race
-404/409 responses from resize/signal are deferred to the authoritative Engine
-wait. It waits for the Engine exit status, drains output, restores the terminal
-and performs proof-bound cleanup; the tool's `0..255` exit code passes through.
+terminating the tool. A source-side stdin read failure remains fatal, while a
+closed attach sink after the tool stops defers to the authoritative Engine wait
+status. The runtime forwards HUP, INT, QUIT, USR1, USR2, TERM, CONT, TSTP and
+PIPE numerically to the exact owned container. Completion-race 404/409 responses
+from resize/signal are likewise deferred to the Engine wait. It waits for the
+Engine exit status, drains output, restores the terminal and performs proof-bound
+cleanup; the tool's `0..255` exit code passes through.
 Infrastructure or stream failure cancels the live wait, sends SIGKILL through
 the same proof-bound transport, waits for stop and then cleans up. Real WSL2 +
 Docker Desktop qualification remains mandatory before release support.

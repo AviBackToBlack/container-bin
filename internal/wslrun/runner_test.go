@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"reflect"
 	"strings"
@@ -18,21 +19,26 @@ import (
 )
 
 type fakeAttach struct {
-	mu          sync.Mutex
-	reader      *bytes.Reader
-	writes      bytes.Buffer
-	multiplexed bool
-	closedWrite bool
-	closed      bool
-	writeDone   chan struct{}
-	writeOnce   sync.Once
-	closeErr    error
+	mu            sync.Mutex
+	reader        *bytes.Reader
+	writes        bytes.Buffer
+	multiplexed   bool
+	closedWrite   bool
+	closed        bool
+	writeDone     chan struct{}
+	writeOnce     sync.Once
+	closeErr      error
+	writeErr      error
+	closeWriteErr error
 }
 
 func (s *fakeAttach) Read(p []byte) (int, error) { return s.reader.Read(p) }
 func (s *fakeAttach) Write(p []byte) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.writeErr != nil {
+		return 0, s.writeErr
+	}
 	return s.writes.Write(p)
 }
 func (s *fakeAttach) CloseWrite() error {
@@ -42,7 +48,7 @@ func (s *fakeAttach) CloseWrite() error {
 			close(s.writeDone)
 		}
 	})
-	return nil
+	return s.closeWriteErr
 }
 func (s *fakeAttach) Close() error      { s.closed = true; return s.closeErr }
 func (s *fakeAttach) Multiplexed() bool { return s.multiplexed }
@@ -304,6 +310,46 @@ func TestExecuteToolReportsCompletedInputFailureBeforeSuccessfulExit(t *testing.
 	}
 }
 
+func TestExecuteToolPreservesExitAcrossClosedInputSink(t *testing.T) {
+	stream := &fakeAttach{
+		reader: bytes.NewReader(rawFrame(1, "done")), multiplexed: true, writeDone: make(chan struct{}),
+		writeErr: &net.OpError{Op: "write", Net: "unix", Err: net.ErrClosed},
+	}
+	var stdout, stderr bytes.Buffer
+	var calls []string
+	deps := successfulRunDependencies(t, stream, &stdout, &stderr, &calls)
+	plan := toolPlan{spec: wsldocker.ContainerCreateSpec{
+		Tool: "demo", Namespace: testNamespace, Image: "demo:1", WorkingDirectory: "/root",
+	}}
+	code, err := executeTool(context.Background(), plan, deps)
+	if err != nil || code != 23 || stdout.String() != "done" {
+		t.Fatalf("closed-input result code=%d stdout=%q err=%v", code, stdout.String(), err)
+	}
+}
+
+func TestCopyToolInputPreservesSourceReadFailure(t *testing.T) {
+	sourceErr := errors.New("source read failed")
+	stream := &fakeAttach{reader: bytes.NewReader(nil), writeDone: make(chan struct{})}
+	err := copyToolInput(stream, errorReader{err: sourceErr})
+	if !errors.Is(err, sourceErr) {
+		t.Fatalf("copyToolInput() error = %v, want source failure", err)
+	}
+	if !stream.closedWrite {
+		t.Fatal("copyToolInput() did not half-close stdin after the source failure")
+	}
+}
+
+func TestCopyToolInputPreservesUnexpectedSinkFailure(t *testing.T) {
+	sinkErr := errors.New("unexpected sink failure")
+	stream := &fakeAttach{
+		reader: bytes.NewReader(nil), writeDone: make(chan struct{}), writeErr: sinkErr,
+	}
+	err := copyToolInput(stream, strings.NewReader("input"))
+	if !errors.Is(err, sinkErr) {
+		t.Fatalf("copyToolInput() error = %v, want unexpected sink failure", err)
+	}
+}
+
 func TestFinishToolResultDoesNotWaitForBlockedInput(t *testing.T) {
 	inputDone := make(chan error)
 	code, err := finishToolResult(23, inputDone)
@@ -379,4 +425,12 @@ func callIndex(calls []string, want string) int {
 		}
 	}
 	return -1
+}
+
+type errorReader struct {
+	err error
+}
+
+func (r errorReader) Read([]byte) (int, error) {
+	return 0, r.err
 }

@@ -65,10 +65,13 @@ byte-for-byte and half-closed at EOF while output remains open. Docker's strict
 raw-stream framing is decoded into the caller's separate stdout and stderr; a
 truncated or malformed frame is an infrastructure failure.
 
-If stdin copying has already completed with an error when the tool exits, that
-error wins over the tool status so truncated piped input is not reported as
-success. ContainerBin does not wait indefinitely for a terminal or pipe reader
-that remains blocked after the tool and output stream have both completed.
+If stdin's source reader has already completed with an error when the tool
+exits, that error wins over the tool status so genuinely truncated piped input
+is not reported as success. A closed attach sink (`EPIPE`, `ENOTCONN`, connection
+reset or the standard closed-network sentinels) means the tool no longer accepts
+input and defers to the authoritative Engine wait status instead. ContainerBin
+does not wait indefinitely for a terminal or pipe reader that remains blocked
+after the tool and output stream have both completed.
 
 TTY mode is selected only when both stdin and stdout accept real Linux termios
 queries; character-device mode alone is insufficient because `/dev/null` and
