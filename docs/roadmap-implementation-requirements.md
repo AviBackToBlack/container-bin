@@ -73,7 +73,7 @@ The minimum delivery gate for a code change is:
 | RM-26 Python global CLI exposure | **Completed in PR #74** | Stateful pipx + `cb expose pipx` shipped; plain pip `/venv/bin` remains intentionally unexposed |
 | RM-29 Windows ARM64 | **Native CI, release packaging and update selection shipped / hardware work remains** | PR #78 added native hosted ARM64 CI, PR #86 added reproducible release packaging and PR #91 added ARM64 self-update selection; real Windows-on-Arm + Docker Desktop E2E remains |
 | RM-30 Authenticode | **Design complete / externally blocked** | Provision real code-signing certificate and protected signing mechanism |
-| RM-31 self-update | **Core pipeline shipped / explicit apply implemented** | PRs #76, #81, #82 and #91 shipped the read-only plan, fail-closed staging, provenance verification and ARM64 artifact selection; this tree adds the rollback-safe replacement transaction, protected wait helper and explicit user-facing apply wiring. Real published-release E2E remains |
+| RM-31 self-update | **Core pipeline and repeatable published-release E2E implemented** | PRs #76, #81, #82 and #91 shipped the read-only plan, fail-closed staging, provenance verification and ARM64 artifact selection; this tree adds the rollback-safe replacement transaction, protected wait helper and explicit user-facing apply wiring. The Windows/amd64 harness qualifies the complete transaction against a canonical published release and must be rerun for each release candidate |
 | RM-34 Cargo expose enhancement | **Intentionally deferred** | Existing expose-all/explicit selection are sufficient; reopen only for concrete unmet use case |
 | Linux/macOS hosts | **Demand-gated** | WSL may factor reusable Linux host code; standalone support needs its own demand and qualification |
 | Enterprise policy | **Foundation and signed registry shipped / image trust remains** | PRs #75 and #84 shipped the machine-owned constraint layer and authenticated registry; image trust remains |
@@ -404,7 +404,8 @@ also selects, stages and verifies the Windows/arm64 archive from native
 `GOARCH`; unsupported architectures still fail closed. This tree also
 implements the rollback-safe Windows replacement transaction, complete
 proven-shim reconciliation, protected wait helper and explicit user-facing
-apply wiring. Real published-release E2E remains incomplete.
+apply wiring. A repeatable native-Windows/amd64 qualification harness now
+exercises the complete transaction against a canonical published release.
 
 ### Command and selection requirements
 
@@ -467,8 +468,9 @@ ABSOLUTE_GH_EXE` is now wired through private same-volume staging and a
 protected copy of the proven installed binary. The helper waits for the parent,
 re-verifies the staged artifact and bound identities, then enters the serialized
 rollback-safe transaction. Unit/native-Windows CI covers the process boundary;
-the remaining acceptance gate is real published-release E2E across the manual
-release matrix.
+the complete Windows/amd64 path passed against canonical v1.1.0 assets on
+2026-10-04. Release candidates must rerun the harness against their exact
+published target and retain the result with the manual release-matrix evidence.
 
 ## Linux and macOS hosts
 
