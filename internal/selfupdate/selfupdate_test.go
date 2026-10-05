@@ -135,27 +135,40 @@ func TestPlanSelectsARM64ArchiveFromGOARCH(t *testing.T) {
 	}
 }
 
-func TestPlanRequiresCanonicalWSLArtifactForV2(t *testing.T) {
+func TestPlanKeepsV1ToV2WindowsSelfUpdateCompatibleWithSeparateWSLAssets(t *testing.T) {
 	selected := canonicalDualArchRelease("v2.0.0", false)
-	_, err := (checker{doer: releaseDoer(t, apiRoot+"/releases/latest", selected)}).Plan(context.Background(), "v1.1.0", "windows", "amd64", Options{Check: true})
-	if err == nil || !strings.Contains(err.Error(), "container-bin-v2.0.0-linux-amd64.tar.gz") {
-		t.Fatalf("v2 release without WSL artifact error = %v", err)
+	for _, name := range []string{
+		"container-bin-v2.0.0-linux-amd64.tar.gz",
+		"SHA256SUMS-WSL",
+	} {
+		selected.Assets = append(selected.Assets, releaseAsset{
+			Name:               name,
+			Size:               2 << 20,
+			BrowserDownloadURL: releaseWebRoot + "/download/v2.0.0/" + name,
+		})
 	}
-
-	selected = canonicalV2Release("v2.0.0", false)
-	plan, err := (checker{doer: releaseDoer(t, apiRoot+"/releases/latest", selected)}).Plan(context.Background(), "v1.1.0", "windows", "amd64", Options{Check: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if plan.Binary.Name != "cb.exe" || plan.checksumLayout != checksumLayoutV2WSL {
-		t.Fatalf("unexpected v2 release plan: %+v", plan)
-	}
-	arm64Plan, err := (checker{doer: releaseDoer(t, apiRoot+"/releases/latest", selected)}).Plan(context.Background(), "v1.1.0", "windows", "arm64", Options{Check: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if arm64Plan.Binary.Name != "container-bin-v2.0.0-windows-arm64.zip" || arm64Plan.checksumLayout != checksumLayoutV2WSL {
-		t.Fatalf("unexpected v2 ARM64 release plan: %+v", arm64Plan)
+	for _, tc := range []struct {
+		arch       string
+		wantBinary string
+	}{
+		{arch: "amd64", wantBinary: "cb.exe"},
+		{arch: "arm64", wantBinary: "container-bin-v2.0.0-windows-arm64.zip"},
+	} {
+		t.Run(tc.arch, func(t *testing.T) {
+			plan, err := (checker{doer: releaseDoer(t, apiRoot+"/releases/latest", selected)}).Plan(context.Background(), "v1.1.0", "windows", tc.arch, Options{Check: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if plan.Binary.Name != tc.wantBinary || plan.checksumLayout != checksumLayoutDualArch {
+				t.Fatalf("unexpected v1 to v2 %s plan: %+v", tc.arch, plan)
+			}
+			if err := validateStagingPlan(plan); err != nil {
+				t.Fatalf("v1 to v2 %s staging validation: %v", tc.arch, err)
+			}
+			if _, err := validateVerificationPlan(plan); err != nil {
+				t.Fatalf("v1 to v2 %s verification validation: %v", tc.arch, err)
+			}
+		})
 	}
 }
 
@@ -264,15 +277,6 @@ func TestPlanRejectsUnsafeCompanionARM64MetadataOnAMD64(t *testing.T) {
 	}
 }
 
-func TestPlanRejectsUnsafeCompanionWSLMetadataOnAMD64(t *testing.T) {
-	selected := canonicalV2Release("v2.0.0", false)
-	selected.Assets[len(selected.Assets)-1].BrowserDownloadURL = "https://evil.example/wsl.tar.gz"
-	_, err := (checker{doer: releaseDoer(t, apiRoot+"/releases/latest", selected)}).Plan(context.Background(), "v1.1.0", "windows", "amd64", Options{Check: true})
-	if err == nil || !strings.Contains(err.Error(), "non-canonical download URL") {
-		t.Fatalf("unsafe companion WSL metadata error = %v", err)
-	}
-}
-
 func TestGetJSONBoundsAndTransportFailures(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -332,17 +336,6 @@ func canonicalRelease(tag string, prerelease bool) release {
 func canonicalDualArchRelease(tag string, prerelease bool) release {
 	release := canonicalRelease(tag, prerelease)
 	name := "container-bin-" + tag + "-windows-arm64.zip"
-	release.Assets = append(release.Assets, releaseAsset{
-		Name:               name,
-		Size:               2 << 20,
-		BrowserDownloadURL: releaseWebRoot + "/download/" + tag + "/" + name,
-	})
-	return release
-}
-
-func canonicalV2Release(tag string, prerelease bool) release {
-	release := canonicalDualArchRelease(tag, prerelease)
-	name := "container-bin-" + tag + "-linux-amd64.tar.gz"
 	release.Assets = append(release.Assets, releaseAsset{
 		Name:               name,
 		Size:               2 << 20,

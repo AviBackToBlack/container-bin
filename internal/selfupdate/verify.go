@@ -236,12 +236,16 @@ func validateVerificationPlan(plan Plan) (semanticVersion, error) {
 	binaryName := "cb.exe"
 	archiveName := amd64Archive
 	binaryLimit := int64(maxBinarySize)
+	wantLayout := checksumLayoutLegacyAMD64
 	if plan.Arch == "arm64" {
 		binaryName = arm64Archive
 		archiveName = arm64Archive
 		binaryLimit = maxArchiveSize
+		wantLayout = checksumLayoutDualArch
+	} else if plan.checksumLayout == checksumLayoutDualArch {
+		wantLayout = checksumLayoutDualArch
 	}
-	if !validChecksumLayout(target, plan.Arch, plan.checksumLayout) {
+	if plan.checksumLayout != wantLayout {
 		return semanticVersion{}, errors.New("self-update verification plan has an unexpected checksum layout")
 	}
 	if plan.Binary.Name != binaryName || plan.Archive.Name != archiveName || plan.Checksums.Name != "SHA256SUMS" {
@@ -265,16 +269,6 @@ func validateVerificationPlan(plan Plan) (semanticVersion, error) {
 		return semanticVersion{}, errors.New("self-update verification plan has inconsistent downgrade authorization")
 	}
 	return target, nil
-}
-
-func validChecksumLayout(target semanticVersion, arch string, layout checksumLayout) bool {
-	if target.major >= 2 {
-		return layout == checksumLayoutV2WSL
-	}
-	if arch == "arm64" {
-		return layout == checksumLayoutDualArch || layout == checksumLayoutV2WSL
-	}
-	return layout == checksumLayoutLegacyAMD64 || layout == checksumLayoutDualArch || layout == checksumLayoutV2WSL
 }
 
 func bindInstalledExecutable(ctx context.Context, path, version string) (installedIdentity, error) {
@@ -443,13 +437,6 @@ func checksumManifestNames(plan Plan) ([]string, error) {
 		return []string{"cb.exe", amd64Archive}, nil
 	case checksumLayoutDualArch:
 		return []string{"cb.exe", amd64Archive, fmt.Sprintf("container-bin-%s-windows-arm64.zip", target.raw)}, nil
-	case checksumLayoutV2WSL:
-		return []string{
-			"cb.exe",
-			amd64Archive,
-			fmt.Sprintf("container-bin-%s-windows-arm64.zip", target.raw),
-			fmt.Sprintf("container-bin-%s-linux-amd64.tar.gz", target.raw),
-		}, nil
 	default:
 		return nil, errors.New("checksum manifest plan has an unexpected layout")
 	}

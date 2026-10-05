@@ -206,8 +206,10 @@ and exactly one explicit `GH_TOKEN` or `GITHUB_TOKEN`. These host paths come
 from Windows APIs rather than inherited variables. GitHub host, config-directory,
 proxy, custom-CA and other inherited settings are not passed through. It
 accepts the legacy two-entry `SHA256SUMS` layout for pre-ARM64 amd64 releases
-and requires the canonical three-entry layout for dual-architecture releases,
-invokes
+and requires the canonical three-entry layout for dual-Windows-architecture
+releases. Native WSL bootstrap archives use the separate one-entry
+`SHA256SUMS-WSL` manifest so Windows self-update compatibility remains
+unchanged. The verifier invokes
 `gh attestation verify` with the repository, exact workflow-and-tag certificate
 identity, tag ref and SLSA provenance predicate fixed in argv, validates the
 reported subject digest and re-hashes the selected artifact after verification.

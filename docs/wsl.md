@@ -60,8 +60,8 @@ cd "${BOOTSTRAP_DIR}"
 curl --fail --location --remote-name \
   "https://github.com/AviBackToBlack/container-bin/releases/download/${VERSION}/${ARCHIVE}"
 curl --fail --location --remote-name \
-  "https://github.com/AviBackToBlack/container-bin/releases/download/${VERSION}/SHA256SUMS"
-grep -F "  ${ARCHIVE}" SHA256SUMS | sha256sum --check -
+  "https://github.com/AviBackToBlack/container-bin/releases/download/${VERSION}/SHA256SUMS-WSL"
+sha256sum --check SHA256SUMS-WSL
 gh attestation verify "${ARCHIVE}" --repo AviBackToBlack/container-bin
 tar -xzf "${ARCHIVE}"
 ./cb wsl prepare --apply

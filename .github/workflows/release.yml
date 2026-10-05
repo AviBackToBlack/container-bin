@@ -108,11 +108,15 @@ jobs:
             sha256sum \
               cb.exe \
               "${AMD64_ARCHIVE}" \
-              "${ARM64_ARCHIVE}" \
-              "${WSL_AMD64_ARCHIVE}" > SHA256SUMS
+              "${ARM64_ARCHIVE}" > SHA256SUMS
+            sha256sum "${WSL_AMD64_ARCHIVE}" > SHA256SUMS-WSL
+            test "$(wc -l < SHA256SUMS)" -eq 3
+            test "$(wc -l < SHA256SUMS-WSL)" -eq 1
+            test "$(awk '{print $2}' SHA256SUMS-WSL)" = "${WSL_AMD64_ARCHIVE}"
           )
           rm -rf dist/package-amd64 dist/package-arm64 dist/package-linux-amd64
           cat dist/SHA256SUMS
+          cat dist/SHA256SUMS-WSL
           echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
           echo "AMD64_ARCHIVE=${AMD64_ARCHIVE}" >> "$GITHUB_ENV"
           echo "ARM64_ARCHIVE=${ARM64_ARCHIVE}" >> "$GITHUB_ENV"
@@ -122,7 +126,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          (cd dist && sha256sum -c SHA256SUMS)
+          (
+            cd dist
+            sha256sum -c SHA256SUMS
+            sha256sum -c SHA256SUMS-WSL
+          )
 
       - name: Verify reproducibility
         shell: bash
@@ -177,10 +185,10 @@ jobs:
             sha256sum \
               cb.exe \
               "${AMD64_ARCHIVE}" \
-              "${ARM64_ARCHIVE}" \
-              "${WSL_AMD64_ARCHIVE}" > SHA256SUMS
+              "${ARM64_ARCHIVE}" > SHA256SUMS
+            sha256sum "${WSL_AMD64_ARCHIVE}" > SHA256SUMS-WSL
           )
-          for artifact in cb.exe "${AMD64_ARCHIVE}" "${ARM64_ARCHIVE}" "${WSL_AMD64_ARCHIVE}" SHA256SUMS; do
+          for artifact in cb.exe "${AMD64_ARCHIVE}" "${ARM64_ARCHIVE}" "${WSL_AMD64_ARCHIVE}" SHA256SUMS SHA256SUMS-WSL; do
             sha256sum "dist/${artifact}" "$RUNNER_TEMP/repro/${artifact}"
             cmp "dist/${artifact}" "$RUNNER_TEMP/repro/${artifact}"
           done
@@ -194,7 +202,7 @@ jobs:
             dist/cb.exe
             dist/*.zip
             dist/*.tar.gz
-            dist/SHA256SUMS
+            dist/SHA256SUMS*
           if-no-files-found: error
           retention-days: 14
 
@@ -274,10 +282,10 @@ jobs:
             sha256sum \
               cb.exe \
               "${AMD64_ARCHIVE}" \
-              "${ARM64_ARCHIVE}" \
-              "${WSL_AMD64_ARCHIVE}" > SHA256SUMS
+              "${ARM64_ARCHIVE}" > SHA256SUMS
+            sha256sum "${WSL_AMD64_ARCHIVE}" > SHA256SUMS-WSL
           )
-          for artifact in cb.exe "${AMD64_ARCHIVE}" "${ARM64_ARCHIVE}" "${WSL_AMD64_ARCHIVE}" SHA256SUMS; do
+          for artifact in cb.exe "${AMD64_ARCHIVE}" "${ARM64_ARCHIVE}" "${WSL_AMD64_ARCHIVE}" SHA256SUMS SHA256SUMS-WSL; do
             cmp "first/${artifact}" "second/${artifact}"
           done
           echo 'independent runner reproduced Windows and native WSL artifacts plus checksum manifest byte-for-byte'
@@ -311,7 +319,15 @@ jobs:
           test -f "dist/container-bin-${GITHUB_REF_NAME}-windows-arm64.zip"
           test -f "dist/container-bin-${GITHUB_REF_NAME}-linux-amd64.tar.gz"
           test -f dist/SHA256SUMS
-          (cd dist && sha256sum -c SHA256SUMS)
+          test -f dist/SHA256SUMS-WSL
+          (
+            cd dist
+            test "$(wc -l < SHA256SUMS)" -eq 3
+            test "$(wc -l < SHA256SUMS-WSL)" -eq 1
+            test "$(awk '{print $2}' SHA256SUMS-WSL)" = "container-bin-${GITHUB_REF_NAME}-linux-amd64.tar.gz"
+            sha256sum -c SHA256SUMS
+            sha256sum -c SHA256SUMS-WSL
+          )
 
       - name: Refuse to release an untrusted tag commit
         env:
@@ -406,4 +422,4 @@ jobs:
           fi
           gh release create "${GITHUB_REF_NAME}" \
             "${RELEASE_ARGS[@]}" \
-            dist/cb.exe dist/*.zip dist/*.tar.gz dist/SHA256SUMS
+            dist/cb.exe dist/*.zip dist/*.tar.gz dist/SHA256SUMS dist/SHA256SUMS-WSL

@@ -198,8 +198,11 @@ real Windows 11 + Docker Desktop host before a release.
 V2 release candidates add one deterministic
 `container-bin-VERSION-linux-amd64.tar.gz` archive containing exactly `cb`,
 `LICENSE` and `README.md`. The release workflow executes the contained binary,
-checks its injected version, includes the archive in `SHA256SUMS`, independently
-reproduces it byte-for-byte and attests it with the Windows assets.
+checks its injected version, binds it in the separate one-entry
+`SHA256SUMS-WSL` manifest, independently reproduces it byte-for-byte and attests
+it with the Windows assets. The existing three-entry Windows `SHA256SUMS`
+contract stays unchanged so released v1.x clients can self-update directly to
+v2.
 
 For the real WSL2 qualification cell, retain the archive checksum and
 `gh attestation verify` output, extract it only on the distribution-local Linux

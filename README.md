@@ -1227,6 +1227,7 @@ ARM64 archive on Windows arm64 directly from Go's native `GOARCH`; unsupported
 architectures fail explicitly. The verifier authenticates the selected asset
 before extracting the ARM64 `cb.exe`, accepts the legacy two-entry checksum
 manifest for pre-ARM64 amd64 releases, and requires the canonical three-entry
-manifest for dual-Windows-architecture releases. V2 releases require the
-canonical four-entry manifest that also binds the native WSL archive; this
-changes no Windows artifact selection or replacement behavior.
+`SHA256SUMS` manifest for dual-Windows-architecture releases. The WSL archive
+uses a separate one-entry `SHA256SUMS-WSL` manifest so already-released Windows
+clients retain direct self-update compatibility with v2; this changes no
+Windows artifact selection, verification or replacement behavior.
