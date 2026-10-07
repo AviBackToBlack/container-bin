@@ -65,6 +65,36 @@ func TestApplyPreauthorizesThenWritesOnePrivateCompleteLock(t *testing.T) {
 	}
 }
 
+func TestApplyAcceptsExplicitLocalImageIDWithoutRepositoryTrustLookup(t *testing.T) {
+	layout := testLayout()
+	id := "sha256:" + strings.Repeat("a", 64)
+	reg := registry.Registry{Tools: map[string]registry.Tool{
+		"local-id": {Name: "local-id", Image: id},
+	}}
+	deps := testCommand(layout, reg)
+	deps.pullImage = func(context.Context, string) error {
+		t.Fatal("explicit local image ID reached Docker pull")
+		return nil
+	}
+	deps.inspectImage = func(_ context.Context, image string) (imageIdentity, error) {
+		if image != id {
+			t.Fatalf("inspect image = %q, want %q", image, id)
+		}
+		return imageIdentity{id: id}, nil
+	}
+	var written *lockfile.LockFile
+	deps.writeLock = func(_ string, candidate *lockfile.LockFile, _ os.FileMode) error {
+		written = candidate
+		return nil
+	}
+	if err := deps.run(context.Background(), []string{"--apply", "--local", "local-id"}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if written == nil || written.Images[id].Resolved != id {
+		t.Fatalf("written lockfile = %#v, want explicit local ID", written)
+	}
+}
+
 func TestApplyRejectsAllPolicyTargetsBeforeDocker(t *testing.T) {
 	layout := testLayout()
 	reg := registry.Registry{Tools: map[string]registry.Tool{

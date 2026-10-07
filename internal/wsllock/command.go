@@ -122,8 +122,12 @@ func (c command) run(ctx context.Context, args []string, out io.Writer) error {
 		}
 		images := lockfile.ConfiguredImages(reg)
 		for _, image := range images {
-			if err := machinePolicy.AuthorizeLockTarget(image, localImages[image]); err != nil {
+			local := localImages[image]
+			if err := machinePolicy.AuthorizeLockTarget(image, local); err != nil {
 				return err
+			}
+			if local {
+				continue
 			}
 			_, trustRequired, err := machinePolicy.ImageTrustFor(image)
 			if err != nil {
