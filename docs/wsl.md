@@ -128,9 +128,11 @@ they are never adopted as the managed binary.
 same complete layout plus registry and lock recovery identities, loads policy
 and registry only from their fixed paths without promoting backups, authorizes
 every configured lock entry, then inspects only authorized exact resolved
-images through the proof-bound Docker Desktop Engine socket. Missing, denied or
-unavailable entries are all reported before failure. It does not pull images,
-write the lock or consult a Docker CLI/context.
+images through the proof-bound Docker Desktop Engine socket. Missing and denied
+entries are all reported and stop the check before any Engine I/O. Only a fully
+authorized set proceeds to inspection, where unavailable images are reported
+together before failure. Check does not pull images, write the lock or consult
+a Docker CLI/context.
 
 `cb wsl lock --apply [--local TOOL ...]` is the explicit complete refresh. It
 acquires the fixed registry mutation lock, revalidates the layout and any

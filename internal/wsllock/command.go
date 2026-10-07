@@ -227,7 +227,12 @@ func (c command) check(ctx context.Context, layout hostenv.WSLLayout, out io.Wri
 		}
 		candidates = append(candidates, candidate{image: image, entry: entry})
 	}
-	// Complete authorization before exposing any resolved reference to Docker.
+	// The complete configured set must pass lock and policy authorization before
+	// any accepted reference reaches Docker. A partial diagnostic must not turn
+	// a failed preflight into partial Engine activity.
+	if failures != 0 {
+		return fmt.Errorf("native WSL lock check failed: %d image(s) missing, unlocked, or denied", failures)
+	}
 	for _, candidate := range candidates {
 		if _, err := c.inspectImage(ctx, candidate.entry.Resolved); err != nil {
 			fmt.Fprintf(out, "ABSENT   %s -> %s\n", candidate.image, candidate.entry.Resolved)
@@ -237,7 +242,7 @@ func (c command) check(ctx context.Context, layout hostenv.WSLLayout, out io.Wri
 		}
 	}
 	if failures != 0 {
-		return fmt.Errorf("native WSL lock check failed: %d image(s) missing, unlocked, denied, or unavailable", failures)
+		return fmt.Errorf("native WSL lock check failed: %d authorized image(s) unavailable", failures)
 	}
 	fmt.Fprintf(out, "native WSL image lock OK (read-only; no files changed): %s\n", layout.LockPath)
 	return nil

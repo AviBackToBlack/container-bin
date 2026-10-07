@@ -149,6 +149,42 @@ func TestCheckDoesNotInspectDeniedOrMissingEntries(t *testing.T) {
 	}
 }
 
+func TestCheckMixedFailureStopsBeforeAnyDockerInspection(t *testing.T) {
+	layout := testLayout()
+	reg := registry.Registry{Tools: map[string]registry.Tool{
+		"allowed": {Name: "allowed", Image: "ghcr.io/acme/allowed:1"},
+		"denied":  {Name: "denied", Image: "ghcr.io/other/denied:1"},
+	}}
+	deps := testCommand(layout, reg)
+	deps.loadPolicy = func() (policy.Policy, error) {
+		return policy.Policy{SchemaVersion: 1, AllowedRepositories: []string{"ghcr.io/acme"}}, nil
+	}
+	digest := "sha256:" + strings.Repeat("b", 64)
+	deps.loadLockReadOnly = func(string) (*lockfile.LockFile, error) {
+		return &lockfile.LockFile{Version: 1, Images: map[string]lockfile.LockEntry{
+			"ghcr.io/acme/allowed:1": {
+				Configured: "ghcr.io/acme/allowed:1",
+				Resolved:   "ghcr.io/acme/allowed@" + digest,
+				Digest:     digest,
+			},
+			"ghcr.io/other/denied:1": {
+				Configured: "ghcr.io/other/denied:1",
+				Resolved:   "ghcr.io/other/denied@" + digest,
+				Digest:     digest,
+			},
+		}}, nil
+	}
+	deps.inspectImage = func(context.Context, string) (imageIdentity, error) {
+		t.Fatal("partially authorized set reached Docker inspection")
+		return imageIdentity{}, nil
+	}
+	var out bytes.Buffer
+	err := deps.run(context.Background(), []string{"--check"}, &out)
+	if err == nil || !strings.Contains(err.Error(), "1 image(s) missing, unlocked, or denied") || !strings.Contains(out.String(), "DENIED") {
+		t.Fatalf("error=%v output=%q", err, out.String())
+	}
+}
+
 func TestRunRejectsUnsafeOrIncompleteInvocation(t *testing.T) {
 	layout := testLayout()
 	for _, args := range [][]string{nil, {"--apply", "--local"}, {"--check", "--local", "demo"}, {"--apply", "--other", "demo"}} {
