@@ -24,6 +24,10 @@ func CheckRegistryRecovery(hostenv.WSLLayout) error {
 	return errors.New("native WSL registry recovery validation requires Linux")
 }
 
+func CheckLockRecovery(hostenv.WSLLayout) error {
+	return errors.New("native WSL lockfile recovery validation requires Linux")
+}
+
 func currentLayout() (hostenv.WSLLayout, error) {
 	return hostenv.WSLLayout{}, errors.New("native WSL layout discovery requires Linux")
 }

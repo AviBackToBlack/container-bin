@@ -18,6 +18,7 @@ type frontendDependencies struct {
 	currentLayout         func() (hostenv.WSLLayout, error)
 	checkLayout           func(hostenv.WSLLayout) (wslfs.Plan, error)
 	checkRegistryRecovery func(hostenv.WSLLayout) error
+	checkLockRecovery     func(hostenv.WSLLayout) error
 	loadPolicy            func() (policy.Policy, error)
 	loadRegistry          func(string, registry.Authenticator) (registry.Registry, string, error)
 	inspectShims          func(hostenv.WSLLayout, []string) (wslshim.Result, error)
@@ -39,7 +40,7 @@ func runFrontend(ctx context.Context, invoked string, args []string, deps fronte
 	if !registry.ValidToolName(invoked) || registry.ReservedToolName(invoked) {
 		return 0, fmt.Errorf("invalid native WSL tool invocation name %q", invoked)
 	}
-	if deps.currentLayout == nil || deps.checkLayout == nil || deps.checkRegistryRecovery == nil || deps.loadPolicy == nil ||
+	if deps.currentLayout == nil || deps.checkLayout == nil || deps.checkRegistryRecovery == nil || deps.checkLockRecovery == nil || deps.loadPolicy == nil ||
 		deps.loadRegistry == nil || deps.inspectShims == nil || deps.lstat == nil || deps.executable == nil || deps.absPath == nil || deps.evalSymlinks == nil || deps.getwd == nil || deps.interactive == nil || deps.environ == nil {
 		return 0, errors.New("native WSL frontend dependencies are incomplete")
 	}
@@ -56,6 +57,9 @@ func runFrontend(ctx context.Context, invoked string, args []string, deps fronte
 	}
 	if err := deps.checkRegistryRecovery(layout); err != nil {
 		return 0, fmt.Errorf("validate native WSL registry recovery state: %w", err)
+	}
+	if err := deps.checkLockRecovery(layout); err != nil {
+		return 0, fmt.Errorf("validate native WSL lockfile recovery state: %w", err)
 	}
 	if info, err := deps.lstat(layout.RegistryPath); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {

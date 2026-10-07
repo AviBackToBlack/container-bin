@@ -66,17 +66,41 @@ func CheckRegistryRecovery(layout hostenv.WSLLayout) error {
 	return checkRegistryRecovery(layout, runtime, machineID)
 }
 
+// CheckLockRecovery validates the primary lockfile or the backup that
+// lockfile.Load would promote when the primary is missing. This binds atomic
+// recovery to the same private WSL ownership and filesystem identity as the
+// ordinary managed lockfile.
+func CheckLockRecovery(layout hostenv.WSLLayout) error {
+	runtime, err := hostenv.Current()
+	if err != nil {
+		return fmt.Errorf("classify native WSL runtime: %w", err)
+	}
+	machineID, err := readMachineIDFile("/etc/machine-id")
+	if err != nil {
+		return fmt.Errorf("read native WSL machine identity: %w", err)
+	}
+	return checkLockRecovery(layout, runtime, machineID)
+}
+
 func checkRegistryRecovery(layout hostenv.WSLLayout, runtime hostenv.Runtime, machineID string) error {
+	return checkFileRecovery(layout, runtime, machineID, layout.RegistryPath, "registry")
+}
+
+func checkLockRecovery(layout hostenv.WSLLayout, runtime hostenv.Runtime, machineID string) error {
+	return checkFileRecovery(layout, runtime, machineID, layout.LockPath, "lockfile")
+}
+
+func checkFileRecovery(layout hostenv.WSLLayout, runtime hostenv.Runtime, machineID, path, label string) error {
 	uid, rootDevice, err := validatePreflight(layout, runtime, machineID)
 	if err != nil {
 		return err
 	}
-	if _, err := os.Lstat(layout.RegistryPath); err == nil {
-		return validateManagedFile(layout.RegistryPath, uid, rootDevice, privateFileMode, "registry")
+	if _, err := os.Lstat(path); err == nil {
+		return validateManagedFile(path, uid, rootDevice, privateFileMode, label)
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("inspect native WSL registry %s before recovery: %w", layout.RegistryPath, err)
+		return fmt.Errorf("inspect native WSL %s %s before recovery: %w", label, path, err)
 	}
-	return validateManagedFile(layout.RegistryPath+".bak", uid, rootDevice, privateFileMode, "registry backup")
+	return validateManagedFile(path+".bak", uid, rootDevice, privateFileMode, label+" backup")
 }
 
 func prepare(layout hostenv.WSLLayout, runtime hostenv.Runtime, machineID string) (err error) {

@@ -3,6 +3,7 @@ package wslrun
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -32,6 +33,7 @@ func TestRunFrontendUsesOnlyFixedLayoutAndManagedIdentity(t *testing.T) {
 		currentLayout:         func() (hostenv.WSLLayout, error) { return layout, nil },
 		checkLayout:           func(got hostenv.WSLLayout) (wslfs.Plan, error) { return wslfs.Plan{Layout: got}, nil },
 		checkRegistryRecovery: func(hostenv.WSLLayout) error { return nil },
+		checkLockRecovery:     func(hostenv.WSLLayout) error { return nil },
 		loadPolicy:            func() (policy.Policy, error) { return policy.Policy{}, nil },
 		loadRegistry: func(path string, _ registry.Authenticator) (registry.Registry, string, error) {
 			if path != layout.RegistryPath {
@@ -71,6 +73,7 @@ func TestRunFrontendRejectsUnmanagedExecutableBeforeConfigOrDocker(t *testing.T)
 		currentLayout:         func() (hostenv.WSLLayout, error) { return layout, nil },
 		checkLayout:           func(got hostenv.WSLLayout) (wslfs.Plan, error) { return wslfs.Plan{Layout: got}, nil },
 		checkRegistryRecovery: func(hostenv.WSLLayout) error { return nil },
+		checkLockRecovery:     func(hostenv.WSLLayout) error { return nil },
 		loadPolicy: func() (policy.Policy, error) {
 			t.Fatal("policy loaded for unmanaged binary")
 			return policy.Policy{}, nil
@@ -93,6 +96,36 @@ func TestRunFrontendRejectsUnmanagedExecutableBeforeConfigOrDocker(t *testing.T)
 	_, err := runFrontend(context.Background(), "demo", nil, deps)
 	if err == nil || !strings.Contains(err.Error(), "requires managed binary") {
 		t.Fatalf("unmanaged executable error = %v", err)
+	}
+}
+
+func TestRunFrontendRejectsUnsafeLockRecoveryBeforeConfigOrDocker(t *testing.T) {
+	layout := hostenv.WSLLayout{RegistryPath: "/home/alice/.config/container-bin/container-bin.toml"}
+	deps := frontendDependencies{
+		currentLayout:         func() (hostenv.WSLLayout, error) { return layout, nil },
+		checkLayout:           func(got hostenv.WSLLayout) (wslfs.Plan, error) { return wslfs.Plan{Layout: got}, nil },
+		checkRegistryRecovery: func(hostenv.WSLLayout) error { return nil },
+		checkLockRecovery:     func(hostenv.WSLLayout) error { return errors.New("permissive backup") },
+		loadPolicy: func() (policy.Policy, error) {
+			t.Fatal("policy loaded after unsafe lock recovery state")
+			return policy.Policy{}, nil
+		},
+		loadRegistry: func(string, registry.Authenticator) (registry.Registry, string, error) {
+			t.Fatal("registry loaded after unsafe lock recovery state")
+			return registry.Registry{}, "", nil
+		},
+		inspectShims: func(hostenv.WSLLayout, []string) (wslshim.Result, error) { return wslshim.Result{}, nil },
+		lstat:        func(string) (os.FileInfo, error) { return fakeFileInfo{}, nil },
+		executable:   func() (string, error) { return "", nil },
+		absPath:      func(value string) (string, error) { return value, nil },
+		evalSymlinks: func(value string) (string, error) { return value, nil },
+		getwd:        func() (string, error) { return "", nil },
+		interactive:  func() bool { return false },
+		environ:      func() []string { return nil },
+	}
+	_, err := runFrontend(context.Background(), "demo", nil, deps)
+	if err == nil || !strings.Contains(err.Error(), "lockfile recovery state") || !strings.Contains(err.Error(), "permissive backup") {
+		t.Fatalf("unsafe lock recovery error = %v", err)
 	}
 }
 

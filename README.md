@@ -904,6 +904,9 @@ cb wsl prepare --check             # native WSL2 only; read-only fixed-layout va
 cb wsl prepare --apply             # create missing fixed-layout directories, then revalidate
 cb wsl install --check             # read-only native install/config/shim plan
 cb wsl install --apply             # install this native binary, registry and fixed symlinks
+cb wsl lock --check                # read-only fixed-lock authorization and Engine availability
+cb wsl lock --apply                # refresh public registry images through the proven Engine socket
+cb wsl lock --apply --local TOOL   # explicitly lock TOOL's present local image ID
 cb state                           # native WSL: list only exactly proven namespace volumes
 cb gc [TOOL|STATE_GROUP]           # native WSL: dry-run current project cleanup
 cb gc [TOOL|STATE_GROUP] --orphans # native WSL: dry-run missing-project cleanup
@@ -955,6 +958,19 @@ contact Docker itself. Install reports the wired-but-gated runtime state;
 managed tool dispatch remains fail-closed until integration coverage and real
 WSL2 qualification land. See
 [docs/wsl.md](docs/wsl.md).
+
+`cb wsl lock --check` validates the fixed private lockfile, current machine
+policy and availability of every exact resolved image through Docker Desktop's
+proven WSL Engine socket. It is read-only: it does not recover `.bak` files,
+pull images or rewrite the lock. `cb wsl lock --apply` serializes on the fixed
+registry mutation lock, authorizes the complete registry before Docker I/O,
+pulls registry-backed images without consulting a Docker CLI/context or
+credential file, inspects exact Engine identities, and atomically writes the
+complete lock at mode `0600`. `--local TOOL` is explicit local-image intent and
+inspects without pulling; repeat it for multiple concrete tool names. Apply
+supplies no private-registry credential bridge and fails closed when machine
+policy requires image-signature evidence, which remains outside the v2 native
+WSL support contract. Rerun apply to refresh the complete lock.
 
 `cb wsl cleanup --check` reports exact namespace-owned retained runtime
 containers as active or orphaned without mutation. `--apply` stops, waits and

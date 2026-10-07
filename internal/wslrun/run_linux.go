@@ -29,6 +29,7 @@ func productionFrontendDependencies() frontendDependencies {
 		currentLayout:         wslfs.CurrentLayout,
 		checkLayout:           wslfs.Check,
 		checkRegistryRecovery: wslfs.CheckRegistryRecovery,
+		checkLockRecovery:     wslfs.CheckLockRecovery,
 		loadPolicy:            policy.Load,
 		loadRegistry:          registry.LoadAt,
 		inspectShims:          wslshim.Inspect,
