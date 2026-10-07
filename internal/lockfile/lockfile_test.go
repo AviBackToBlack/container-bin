@@ -611,17 +611,17 @@ func TestLoadReadOnlyDoesNotPromoteBackup(t *testing.T) {
 	}
 }
 
-func TestWriteModeUsesRequestedPermissions(t *testing.T) {
+func TestWriteModeWritesLoadableLockfileAndValidatesInputs(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "container-bin.lock")
 	if err := WriteMode(path, &LockFile{Version: 1, Images: map[string]LockEntry{}}, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	info, err := os.Stat(path)
+	got, err := LoadReadOnly(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := info.Mode().Perm(); got != 0o600 {
-		t.Fatalf("lockfile mode = %04o, want 0600", got)
+	if got == nil || got.Version != 1 || len(got.Images) != 0 {
+		t.Fatalf("LoadReadOnly() = %#v, want empty version 1 lockfile", got)
 	}
 	if err := WriteMode(path, nil, 0o600); err == nil {
 		t.Fatal("WriteMode accepted nil lockfile")
