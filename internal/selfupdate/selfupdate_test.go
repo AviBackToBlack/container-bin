@@ -135,6 +135,43 @@ func TestPlanSelectsARM64ArchiveFromGOARCH(t *testing.T) {
 	}
 }
 
+func TestPlanKeepsV1ToV2WindowsSelfUpdateCompatibleWithSeparateWSLAssets(t *testing.T) {
+	selected := canonicalDualArchRelease("v2.0.0", false)
+	for _, name := range []string{
+		"container-bin-v2.0.0-linux-amd64.tar.gz",
+		"SHA256SUMS-WSL",
+	} {
+		selected.Assets = append(selected.Assets, releaseAsset{
+			Name:               name,
+			Size:               2 << 20,
+			BrowserDownloadURL: releaseWebRoot + "/download/v2.0.0/" + name,
+		})
+	}
+	for _, tc := range []struct {
+		arch       string
+		wantBinary string
+	}{
+		{arch: "amd64", wantBinary: "cb.exe"},
+		{arch: "arm64", wantBinary: "container-bin-v2.0.0-windows-arm64.zip"},
+	} {
+		t.Run(tc.arch, func(t *testing.T) {
+			plan, err := (checker{doer: releaseDoer(t, apiRoot+"/releases/latest", selected)}).Plan(context.Background(), "v1.1.0", "windows", tc.arch, Options{Check: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if plan.Binary.Name != tc.wantBinary || plan.checksumLayout != checksumLayoutDualArch {
+				t.Fatalf("unexpected v1 to v2 %s plan: %+v", tc.arch, plan)
+			}
+			if err := validateStagingPlan(plan); err != nil {
+				t.Fatalf("v1 to v2 %s staging validation: %v", tc.arch, err)
+			}
+			if _, err := validateVerificationPlan(plan); err != nil {
+				t.Fatalf("v1 to v2 %s verification validation: %v", tc.arch, err)
+			}
+		})
+	}
+}
+
 func TestPlanExactAndDowngradePolicy(t *testing.T) {
 	selected := canonicalRelease("v1.0.0", false)
 	c := checker{doer: releaseDoer(t, apiRoot+"/releases/tags/v1.0.0", selected)}

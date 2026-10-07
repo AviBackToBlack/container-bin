@@ -41,6 +41,40 @@ Environment variables alone never promote an ordinary Linux kernel to WSL2.
 Custom kernels that remove the Microsoft WSL2 identity markers fail closed;
 Docker Desktop also documents custom WSL kernels as unsupported.
 
+## Release artifact and bootstrap
+
+Starting with v2, the release workflow publishes the deterministic,
+provenance-attested `container-bin-VERSION-linux-amd64.tar.gz` archive for the
+native WSL frontend. The archive contains exactly `cb`, `LICENSE` and
+`README.md`. Its Linux name describes the executable format; it is a WSL2
+bootstrap artifact and does not create a standalone-Linux support claim.
+
+Download and verify the archive inside a distribution-local temporary
+directory, not under `/mnt/*`, then install from that exact running binary:
+
+```bash
+VERSION=v2.0.0
+ARCHIVE="container-bin-${VERSION}-linux-amd64.tar.gz"
+BOOTSTRAP_DIR="$(mktemp -d "${HOME}/.container-bin-bootstrap.XXXXXX")"
+cd "${BOOTSTRAP_DIR}"
+curl --fail --location --remote-name \
+  "https://github.com/AviBackToBlack/container-bin/releases/download/${VERSION}/${ARCHIVE}"
+curl --fail --location --remote-name \
+  "https://github.com/AviBackToBlack/container-bin/releases/download/${VERSION}/SHA256SUMS-WSL"
+sha256sum --check SHA256SUMS-WSL
+gh attestation verify "${ARCHIVE}" --repo AviBackToBlack/container-bin
+tar -xzf "${ARCHIVE}"
+./cb wsl prepare --apply
+./cb wsl install --apply
+~/.local/bin/cb version
+```
+
+The checksum detects corruption but is not an authentication mechanism;
+GitHub provenance verification authenticates the archive. Remove only the
+exact `BOOTSTRAP_DIR` after the managed installation has been revalidated.
+Native WSL self-update is not implied: future upgrades use a newly verified
+bootstrap archive and the same explicit install transaction.
+
 ## Native layout and state identity
 
 The WSL frontend uses fixed, distribution-local locations. `XDG_*`, `PATH` and

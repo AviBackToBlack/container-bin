@@ -1214,9 +1214,20 @@ download. The ARM64 archive is release-provenance coverage, not a support
 claim: full Windows ARM64 support still requires real Docker Desktop
 qualification.
 
+The v2 release also includes
+`container-bin-VERSION-linux-amd64.tar.gz`, containing exactly the native `cb`
+binary, `LICENSE` and `README.md`. It is the bootstrap artifact for the supported
+WSL2 frontend, not a standalone-Linux support claim. Verify the archive itself
+with `gh attestation verify ... --repo AviBackToBlack/container-bin` before
+extracting it in the distribution-local Linux filesystem; the explicit
+bootstrap/install sequence is documented in [docs/wsl.md](docs/wsl.md).
+
 `cb self-update --check` selects the raw `cb.exe` on Windows amd64 and the
 ARM64 archive on Windows arm64 directly from Go's native `GOARCH`; unsupported
 architectures fail explicitly. The verifier authenticates the selected asset
 before extracting the ARM64 `cb.exe`, accepts the legacy two-entry checksum
 manifest for pre-ARM64 amd64 releases, and requires the canonical three-entry
-manifest for dual-architecture releases.
+`SHA256SUMS` manifest for dual-Windows-architecture releases. The WSL archive
+uses a separate one-entry `SHA256SUMS-WSL` manifest so already-released Windows
+clients retain direct self-update compatibility with v2; this changes no
+Windows artifact selection, verification or replacement behavior.

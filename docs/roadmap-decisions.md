@@ -16,7 +16,7 @@ items from being repeatedly rediscovered as if they were immediately actionable.
 | RM-24 Python / uv | **Keep both** | Decision complete. Built-in `python`/`pip` keep the dedicated Python provider; `uv`/`uvx` remain separate opt-in stateful profiles. |
 | RM-26 Python global CLI exposure | **pipx yes; plain pip expose no** | Completed in PR #74. The separate stateful pipx profile and managed store shipped; project/compat `/venv/bin` remains intentionally unexposed. |
 | RM-34 Cargo expose enhancement | **Intentionally deferred** | Existing expose-all and explicit binary selection are sufficient. Reopen only for a concrete unmet use case. |
-| WSL2 | **Native WSL frontend** | Fixed-layout install, managed-tool runtime/Docker composition, proof-bound retained-container reconciliation, and the v2-required state/GC lifecycle are wired. Integration corpus and real WSL qualification remain before activation. No Windows↔WSL path/state guessing. |
+| WSL2 | **Native WSL frontend** | Fixed-layout install, managed-tool runtime/Docker composition, proof-bound retained-container reconciliation, v2-required state/GC, and the deterministic Linux/amd64 bootstrap artifact are wired. Integration corpus and real WSL qualification remain before activation. No Windows↔WSL path/state guessing. |
 | Enterprise policy | **Machine-owned constraint layer** | Foundation shipped in PR #75. Authenticated registry and image-trust follow-ups must extend this boundary and cannot be weakened by lower layers. |
 | Image trust | **Policy-driven Sigstore/cosign at lock time** | Ready after signed-registry policy. Digest locking remains default where policy permits. Required trust never silently falls back to digest-only. |
 | Per-project overlays | **Explicit digest-bound, add-only trust model** | Implementation-ready on the merged policy foundation. Initial overlays exclude host mounts, env prefixes and shared cross-project volumes. |
@@ -206,8 +206,10 @@ and exactly one explicit `GH_TOKEN` or `GITHUB_TOKEN`. These host paths come
 from Windows APIs rather than inherited variables. GitHub host, config-directory,
 proxy, custom-CA and other inherited settings are not passed through. It
 accepts the legacy two-entry `SHA256SUMS` layout for pre-ARM64 amd64 releases
-and requires the canonical three-entry layout for dual-architecture releases,
-invokes
+and requires the canonical three-entry layout for dual-Windows-architecture
+releases. Native WSL bootstrap archives use the separate one-entry
+`SHA256SUMS-WSL` manifest so Windows self-update compatibility remains
+unchanged. The verifier invokes
 `gh attestation verify` with the repository, exact workflow-and-tag certificate
 identity, tag ref and SLSA provenance predicate fixed in argv, validates the
 reported subject digest and re-hashes the selected artifact after verification.
