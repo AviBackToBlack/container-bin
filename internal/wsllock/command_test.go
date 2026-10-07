@@ -110,7 +110,9 @@ func TestCheckIsReadOnlyAndAuthorizesBeforeInspect(t *testing.T) {
 		return imageIdentity{id: id}, nil
 	}
 	deps.withLock = func(string, func() error) error { panic("read-only check acquired mutation lock") }
-	deps.loadRegistry = func(string, registry.Authenticator) (registry.Registry, string, error) { panic("read-only check used recovering registry loader") }
+	deps.loadRegistry = func(string, registry.Authenticator) (registry.Registry, string, error) {
+		panic("read-only check used recovering registry loader")
+	}
 	deps.loadLock = func(string) (*lockfile.LockFile, error) { panic("read-only check used recovering lock loader") }
 	deps.pullImage = func(context.Context, string) error { panic("read-only check pulled image") }
 	deps.writeLock = func(string, *lockfile.LockFile, os.FileMode) error { panic("read-only check wrote lock") }
@@ -187,8 +189,8 @@ func testLayout() hostenv.WSLLayout {
 		BinaryPath: "/home/alice/.local/lib/container-bin/cb", ManagementShim: "/home/alice/.local/bin/cb",
 		ShimDir: "/home/alice/.local/bin", ConfigDir: "/home/alice/.config/container-bin",
 		RegistryPath: "/home/alice/.config/container-bin/container-bin.toml",
-		LockPath: "/home/alice/.config/container-bin/container-bin.lock",
-		StateDir: "/home/alice/.local/state/container-bin", StateNamespace: "wsl2-0123456789abcdef0123456789abcdef",
+		LockPath:     "/home/alice/.config/container-bin/container-bin.lock",
+		StateDir:     "/home/alice/.local/state/container-bin", StateNamespace: "wsl2-0123456789abcdef0123456789abcdef",
 	}
 }
 
