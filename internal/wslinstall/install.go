@@ -63,7 +63,9 @@ type command struct {
 	withLock              LockFunc
 }
 
-// Run serves the only native-WSL management lifecycle currently exposed.
+// Run serves the filesystem preparation and installation portion of the
+// native-WSL management lifecycle. Main dispatches lock and cleanup to their
+// separately scoped packages.
 func Run(args []string, out io.Writer, version string, withLock LockFunc) error {
 	return (command{
 		prepareCommand:        wslfs.Run,
@@ -95,7 +97,7 @@ func (c command) run(args []string, out io.Writer, version string) error {
 		return c.prepareCommand(args, out)
 	}
 	if len(args) != 2 || args[0] != "install" || (args[1] != "--check" && args[1] != "--apply") {
-		return errors.New("usage: cb wsl prepare (--check | --apply) | cb wsl cleanup (--check | --apply) | cb wsl install (--check | --apply)")
+		return errors.New("usage: cb wsl prepare (--check | --apply) | cb wsl install (--check | --apply) | cb wsl lock --check | cb wsl lock --apply [--local TOOL ...] | cb wsl cleanup (--check | --apply)")
 	}
 	if c.currentLayout == nil || c.checkLayout == nil || c.checkRegistryRecovery == nil || c.loadPolicy == nil || c.loadRegistryReadOnly == nil || c.executable == nil || c.lstat == nil || c.binaryState == nil || c.inspectNames == nil {
 		return errors.New("native WSL install command is incomplete")

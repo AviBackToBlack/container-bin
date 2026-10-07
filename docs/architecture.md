@@ -346,6 +346,7 @@ internal/terminal      shared stdin/stdout character-device decision   (leaf)
 internal/wslfs         native WSL filesystem ownership/mode preflight
 internal/wslshim       native WSL registry-derived shim preflight/mutation
 internal/wslinstall    native WSL install/config lifecycle orchestrator
+internal/wsllock       native WSL fixed-lock lifecycle orchestrator
 internal/wslproject    native WSL project-root selection and storage boundary
 internal/wslpathmap    native WSL project argument mapping
 internal/wsldocker     native WSL Docker Desktop integration proof
@@ -360,13 +361,14 @@ The exact import edges, from `go list -f '{{.ImportPath}} {{.Imports}}' ./...`,
 project-internal imports only:
 
 ```
-main         -> cli, diag, dockerrun, hostenv, mutationlock, policy, projectconfig, registry, selfupdate, state, wslfs, wslinstall, wslrun, wslstate
-cli          -> atomicio, diag, dockerrun, dockervol, lockfile, pathmap, policy, registry, statearchive, toml
+main         -> cli, diag, dockerrun, hostenv, mutationlock, policy, projectconfig, registry, selfupdate, state, wslfs, wslinstall, wsllock, wslreconcile, wslrun, wslstate
+cli          -> atomicio, diag, dockerrun, dockervol, imagetrust, lockfile, pathmap, policy, registry, statearchive, toml
 projectconfig -> atomicio, pathmap, policy, registry, toml
 diag         -> dockerrun, dockervol, lockfile, pathmap, policy, registry
 dockerrun    -> dockervol, lockfile, pathmap, policy, registry, terminal
 state        -> dockervol, pathmap, registry
 statearchive -> dockervol, pathmap
+imagetrust   -> policy
 lockfile     -> atomicio, policy, registry, toml
 pathmap      -> registry
 registry     -> atomicio, toml
@@ -374,11 +376,13 @@ policy       -> toml
 wslfs       -> hostenv
 wslshim     -> hostenv, registry, wslfs
 wslinstall  -> hostenv, policy, registry, wslfs, wslshim
+wsllock     -> hostenv, lockfile, policy, registry, wsldocker, wslfs
 wslproject  -> hostenv, registry
 wslpathmap  -> registry, wslproject
-wsldocker   -> hostenv
+wsldocker   -> hostenv, policy
 wslvolume   -> hostenv, registry, wsldocker, wslproject
-wslrun      -> hostenv, lockfile, policy, registry, wsldocker, wslfs, wslpathmap, wslproject, wslshim, wslvolume
+wslreconcile -> hostenv, wsldocker, wslfs
+wslrun      -> hostenv, lockfile, policy, registry, wsldocker, wslfs, wslpathmap, wslproject, wslreconcile, wslshim, wslvolume
 wslstate    -> hostenv, policy, registry, wslfs, wslproject, wslvolume
 selfupdate  -> mutationlock, registry
 atomicio, dockervol, hostenv, mutationlock, terminal, toml -> (leaves)
@@ -440,6 +444,18 @@ binary at the fixed path, then reconciles the management and registry-derived
 tool symlinks through `internal/wslshim`. It performs no Docker I/O; ordinary
 managed tool dispatch revalidates the resulting identity in `internal/wslrun`.
 
+`internal/wsllock` provides the explicit `cb wsl lock --check|--apply`
+lifecycle for the fixed private lockfile. Check uses read-only registry and
+lock loaders, authorizes the full configured set before exact Engine image
+inspection, and never promotes a backup. Apply revalidates under the shared
+mutation lock, authorizes every target before Docker I/O, composes proof-bound
+pull/inspect with the shared lockfile repository/local identity rules, and
+publishes one complete mode-`0600` lock atomically. It never invokes a Docker
+CLI or loads an ambient Docker context/credential file. WSL-native production
+of image-signature evidence and private-registry credential bridging remain
+explicit fail-closed deferrals; runtime authorization still consumes valid
+pre-provisioned evidence.
+
 `internal/wslproject` is a profile-aware selector and classifier for
 native WSL project roots. It applies the registry's nearest/outermost marker
 policy or an exact trusted overlay root, then proves both the selected root and
@@ -470,6 +486,10 @@ framing metadata and independent stdin half-close. Parent cancellation closes
 the upgraded connection and unblocks I/O. Sibling proof-bound primitives decode
 strict non-TTY multiplexed output and perform exact container inspection, wait,
 TTY resize, signal, start, creation and stopped-container cleanup operations.
+The image lifecycle adds a bounded long-running pull stream and bounded exact
+image inspection. Streamed HTTP-200 daemon errors are decoded as failures;
+image IDs and every reported RepoDigest are validated before they cross into
+lockfile resolution.
 Creation admits only one canonical project bind, exact namespace-prefixed
 volumes and an explicit auto-remove/retention configuration; it generates a unique run label,
 rejects Engine warnings and re-inspects the stopped container before returning

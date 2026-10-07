@@ -620,8 +620,13 @@ startup and explicit `cb wsl cleanup --check|--apply` re-prove and recover only
 exact unlocked or lease-less retained runs. Native `cb state`/`cb gc` now
 reconcile only completely proven namespace volumes, never delete shared state,
 and require an absent recorded Linux path before orphan deletion. Native state
-backup/restore remains deferred; project/cross-boundary integration coverage
-and real WSL qualification remain for v2 activation.
+backup/restore remains deferred. The fixed lock now has an explicit
+`cb wsl lock --check|--apply` lifecycle: read-only check never promotes a
+backup, while apply authorizes the complete configured set before proof-bound
+Engine pull/inspect and atomically publishes one private mode-`0600` lock.
+Private-registry credential bridging and WSL-native image-signature evidence
+production remain fail-closed deferrals. Project/cross-boundary integration
+coverage and real WSL qualification remain for v2 activation.
 
 Implementation must define native config/shim location, Docker endpoint,
 project identity, named-volume behavior, file permissions, case sensitivity,

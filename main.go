@@ -22,6 +22,7 @@ import (
 	"github.com/AviBackToBlack/container-bin/internal/state"
 	"github.com/AviBackToBlack/container-bin/internal/wslfs"
 	"github.com/AviBackToBlack/container-bin/internal/wslinstall"
+	"github.com/AviBackToBlack/container-bin/internal/wsllock"
 	"github.com/AviBackToBlack/container-bin/internal/wslreconcile"
 	"github.com/AviBackToBlack/container-bin/internal/wslrun"
 	"github.com/AviBackToBlack/container-bin/internal/wslstate"
@@ -64,12 +65,15 @@ var runSelfUpdate = selfupdate.Run
 // the private request carries and revalidates every required identity.
 var runSelfUpdateHelper = selfupdate.RunHelper
 
-// runWSL is a test seam for the native-WSL bootstrap and install lifecycle.
-// The dispatcher remains ahead of the Windows frontend gate; wslinstall loads
-// only the fixed native policy/registry paths for commands that require them.
+// runWSL is a test seam for the native-WSL bootstrap, install, lock and cleanup
+// lifecycle. The dispatcher remains ahead of the Windows frontend gate; each
+// command package loads only its fixed native paths and dependencies.
 var runWSL = func(args []string, out io.Writer) error {
 	if len(args) != 0 && args[0] == "cleanup" {
 		return wslreconcile.Run(context.Background(), args[1:], out)
+	}
+	if len(args) != 0 && args[0] == "lock" {
+		return wsllock.Run(context.Background(), args[1:], out, withMutationLock)
 	}
 	return wslinstall.Run(args, out, version, withMutationLock)
 }
@@ -109,7 +113,7 @@ func main() {
 	}
 	if hostRuntime.Kind == hostenv.WSL2Native {
 		if isManagementInvocation(invoked) {
-			fatalf("native WSL management command %q is unavailable; use `cb state`, `cb gc`, `cb wsl install --check|--apply`, `cb wsl cleanup --check|--apply`, `cb version`, `cb help`, or a managed tool shim", strings.Join(os.Args[1:], " "))
+			fatalf("native WSL management command %q is unavailable; use `cb state`, `cb gc`, `cb wsl install --check|--apply`, `cb wsl lock --check|--apply`, `cb wsl cleanup --check|--apply`, `cb version`, `cb help`, or a managed tool shim", strings.Join(os.Args[1:], " "))
 			return
 		}
 		code, err := runWSLTool(context.Background(), invoked, os.Args[1:])
@@ -484,6 +488,9 @@ Commands:
                  inspect or reconcile retained native-WSL runtime containers
   cb wsl install (--check | --apply)
                  inspect or reconcile the fixed native-WSL installation
+  cb wsl lock --check
+  cb wsl lock --apply [--local TOOL ...]
+                 check or refresh the fixed private native-WSL image lock
   cb list      list configured tool profiles
   cb default   list defaults; "cb default set FAMILY VERSION" switches a family
   cb trace     show raw/normalized/mapped argv for a tool without running it

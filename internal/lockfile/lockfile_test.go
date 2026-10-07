@@ -482,6 +482,41 @@ func TestResolveImagePolicyDenialHappensBeforeDocker(t *testing.T) {
 	}
 }
 
+func TestResolveImagesFromInspectionPreservesIdentitySemantics(t *testing.T) {
+	id := "sha256:" + strings.Repeat("a", 64)
+	digest := "sha256:" + strings.Repeat("b", 64)
+	repository, err := ResolveRepositoryImageFromInspection(
+		"docker.io/library/python:3.13-slim",
+		id,
+		[]string{"python@" + digest},
+		policy.Policy{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repository.Resolved != "python@"+digest || repository.Digest != digest {
+		t.Fatalf("repository entry = %#v", repository)
+	}
+	local, err := ResolveLocalImageFromInspection("local/tool:dev", id, []string{"local/tool@" + digest}, policy.Policy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if local.Resolved != id || local.Digest != id {
+		t.Fatalf("local entry = %#v", local)
+	}
+}
+
+func TestResolveRepositoryImageFromInspectionRejectsInvalidImageIDAndForeignDigest(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("b", 64)
+	if _, err := ResolveRepositoryImageFromInspection("python:3.13", "invalid", []string{"python@" + digest}, policy.Policy{}); err == nil || !strings.Contains(err.Error(), "invalid image ID") {
+		t.Fatalf("invalid ID error = %v", err)
+	}
+	id := "sha256:" + strings.Repeat("a", 64)
+	if _, err := ResolveRepositoryImageFromInspection("python:3.13", id, []string{"someone/else@" + digest}, policy.Policy{}); err == nil || !strings.Contains(err.Error(), "no RepoDigest") {
+		t.Fatalf("foreign digest error = %v", err)
+	}
+}
+
 func TestRuntimeImageForToolReportsPolicyBeforeStaleLock(t *testing.T) {
 	tool := registry.Tool{Name: "python", Image: "python:3.13"}
 	stale := &LockFile{Version: 1, Images: map[string]LockEntry{}}
@@ -550,6 +585,49 @@ func TestLoadLockFile_RecoversFromBackup(t *testing.T) {
 	}
 	if _, err := os.Stat(bak); !os.IsNotExist(err) {
 		t.Fatalf("backup still exists: %v", err)
+	}
+}
+
+func TestLoadReadOnlyDoesNotPromoteBackup(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "container-bin.lock")
+	bak := path + ".bak"
+	lf := &LockFile{Version: 1, Images: map[string]LockEntry{}}
+	if err := os.WriteFile(bak, render(lf), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadReadOnly(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != nil {
+		t.Fatalf("LoadReadOnly() = %#v, want nil primary", got)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("primary lockfile was created: %v", err)
+	}
+	if _, err := os.Stat(bak); err != nil {
+		t.Fatalf("backup changed during read-only load: %v", err)
+	}
+}
+
+func TestWriteModeWritesLoadableLockfileAndValidatesInputs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "container-bin.lock")
+	if err := WriteMode(path, &LockFile{Version: 1, Images: map[string]LockEntry{}}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadReadOnly(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || got.Version != 1 || len(got.Images) != 0 {
+		t.Fatalf("LoadReadOnly() = %#v, want empty version 1 lockfile", got)
+	}
+	if err := WriteMode(path, nil, 0o600); err == nil {
+		t.Fatal("WriteMode accepted nil lockfile")
+	}
+	if err := WriteMode(path, &LockFile{Images: map[string]LockEntry{}}, 0); err == nil {
+		t.Fatal("WriteMode accepted mode 0000")
 	}
 }
 

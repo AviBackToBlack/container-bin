@@ -31,8 +31,8 @@ lifecycle is wired and available independently of that gate.
 - `cb version`, `cb help` and `cb config` remain bootstrap-safe for diagnosis;
   they perform no Docker or registry mutation and return before host enforcement.
 - `cb wsl prepare --check|--apply`, `cb wsl install --check|--apply`,
-  `cb wsl cleanup --check|--apply`, `cb state` and `cb gc` are the native-WSL
-  management surface.
+  `cb wsl lock --check|--apply`, `cb wsl cleanup --check|--apply`, `cb state`
+  and `cb gc` are the native-WSL management surface.
   Managed tool shims are installed, but their runtime dispatch remains gated;
   other `cb` management commands remain explicitly unavailable rather than
   falling through to Windows-oriented Docker CLI, path or state behavior.
@@ -105,7 +105,8 @@ administrator-owned `/etc/container-bin/policy.toml` contract.
 The filesystem checks are a point-in-time preflight, not a durable path handle.
 The installer revalidates the layout under the mutation lock, shim writes use
 descriptor-relative, no-follow traversal, and ordinary tool execution repeats
-the fixed-layout, registry, shim and Docker identity checks before each run.
+the fixed-layout, registry, lock-recovery, shim and Docker identity checks
+before each run.
 
 `cb wsl prepare --check` validates this contract without changing the
 filesystem and reports every missing required directory. Explicit
@@ -156,6 +157,31 @@ An interruption before the final binary rename can leave a current-user-owned
 `.cb-install-<random>.tmp` regular file in the private binary directory.
 ContainerBin does not sweep filename lookalikes without stronger provenance;
 they are never adopted as the managed binary.
+
+`cb wsl lock --check` is the read-only image-lock preflight. It validates the
+same complete layout plus registry and lock recovery identities, loads policy
+and registry only from their fixed paths without promoting backups, authorizes
+every configured lock entry, then inspects only authorized exact resolved
+images through the proof-bound Docker Desktop Engine socket. Missing and denied
+entries are all reported and stop the check before any Engine I/O. Only a fully
+authorized set proceeds to inspection, where unavailable images are reported
+together before failure. Check does not pull images, write the lock or consult
+a Docker CLI/context.
+
+`cb wsl lock --apply [--local TOOL ...]` is the explicit complete refresh. It
+acquires the fixed registry mutation lock, revalidates the layout and any
+recoverable private `0600` lock backup, authorizes every configured image before
+the first Docker operation, then pulls registry-backed images and inspects their
+IDs/RepoDigests through the direct Engine API. Each `--local TOOL` selects an
+already-present local image deliberately and never infers local intent from
+Docker metadata. The command assembles the whole lock in memory and atomically
+publishes it once at the fixed path with mode `0600`; a later failure cannot
+leave a partially refreshed lock. Apply supplies no registry-auth header and
+does not read ambient Docker credentials. Native WSL production of cosign
+signature evidence is also not part of the v2 contract: a policy requiring that
+evidence fails before Docker I/O, while a separately provisioned valid evidence
+record remains enforceable at check/runtime. Rerunning apply is the supported
+whole-lock refresh; there is no implicit mutable-tag fallback.
 
 Config, state and managed-binary directories must be
 private and current-user-owned; existing registry and lock files must be

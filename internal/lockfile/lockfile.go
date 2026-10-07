@@ -122,6 +122,20 @@ func Load(path string) (*LockFile, error) {
 	return parseLockFile(b, maxLockVersion)
 }
 
+// LoadReadOnly loads the primary lockfile without promoting an interrupted
+// atomic-write backup. Callers that advertise a read-only check must use this
+// entry point and report recovery as work for an explicit apply operation.
+func LoadReadOnly(path string) (*LockFile, error) {
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return parseLockFile(b, maxLockVersion)
+}
+
 func parseLockFile(b []byte, maxVersion int) (*LockFile, error) {
 	lf := &LockFile{Version: 0, Images: map[string]LockEntry{}}
 	var cur *LockEntry
@@ -580,7 +594,21 @@ func ResolveRepositoryImage(configured string, machinePolicy policy.Policy) (Loc
 	if err != nil {
 		return LockEntry{}, err
 	}
-	return repositoryLockEntry(configured, inspected)
+	return ResolveRepositoryImageFromInspection(configured, inspected.id, inspected.repoDigests, machinePolicy)
+}
+
+// ResolveRepositoryImageFromInspection creates a registry-backed lock entry
+// from an authenticated Docker frontend's bounded image inspection. It keeps
+// repository matching and policy authorization identical across the Windows
+// Docker CLI and native-WSL Engine API transports.
+func ResolveRepositoryImageFromInspection(configured, imageID string, repoDigests []string, machinePolicy policy.Policy) (LockEntry, error) {
+	if err := machinePolicy.AuthorizeLockTarget(configured, false); err != nil {
+		return LockEntry{}, err
+	}
+	if !validImageID(imageID) {
+		return LockEntry{}, fmt.Errorf("image %s has invalid image ID %q", configured, imageID)
+	}
+	return repositoryLockEntry(configured, imageInspection{id: imageID, repoDigests: append([]string(nil), repoDigests...)})
 }
 
 // ResolveLocalImage refreshes a local-image lock by inspecting the configured
@@ -594,7 +622,17 @@ func ResolveLocalImage(configured string, machinePolicy policy.Policy) (LockEntr
 	if err != nil {
 		return LockEntry{}, fmt.Errorf("local image %s is not available (build or load it before locking): %w", configured, err)
 	}
-	return localLockEntry(configured, inspected)
+	return ResolveLocalImageFromInspection(configured, inspected.id, inspected.repoDigests, machinePolicy)
+}
+
+// ResolveLocalImageFromInspection creates a local-image lock entry from an
+// authenticated Docker frontend's bounded image inspection. Local intent is
+// supplied by the command and is never inferred from RepoDigests.
+func ResolveLocalImageFromInspection(configured, imageID string, repoDigests []string, machinePolicy policy.Policy) (LockEntry, error) {
+	if err := machinePolicy.AuthorizeLockTarget(configured, true); err != nil {
+		return LockEntry{}, err
+	}
+	return localLockEntry(configured, imageInspection{id: imageID, repoDigests: append([]string(nil), repoDigests...)})
 }
 
 func RuntimeImageForTool(t registry.Tool, machinePolicy policy.Policy) (string, error) {
@@ -640,6 +678,18 @@ func runtimeImageForTool(t registry.Tool, machinePolicy policy.Policy, lf *LockF
 }
 
 func Write(path string, lf *LockFile) error {
+	return WriteMode(path, lf, 0o644)
+}
+
+// WriteMode validates and atomically writes a lockfile using the frontend's
+// required file mode. Native WSL uses 0600; the Windows layout retains 0644.
+func WriteMode(path string, lf *LockFile, perm os.FileMode) error {
+	if lf == nil {
+		return errors.New("lockfile is nil")
+	}
+	if perm.Perm() != perm || perm == 0 {
+		return fmt.Errorf("invalid lockfile mode %04o", perm)
+	}
 	if lf.Version == 0 {
 		lf.Version = 1
 	}
@@ -647,15 +697,11 @@ func Write(path string, lf *LockFile) error {
 		return fmt.Errorf("unsupported lock_version %d (supported: 1-%d)", lf.Version, maxLockVersion)
 	}
 	data := render(lf)
-	// Parse our own output before committing it.
-	tmp := path + ".validate.tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
-		return err
-	}
-	_, err := Load(tmp)
-	_ = os.Remove(tmp)
-	if err != nil {
+	// Parse our own output in memory before committing it. A predictable
+	// validation pathname would be unsafe in the private WSL configuration
+	// directory because os.WriteFile follows an attacker-created symlink.
+	if _, err := parseLockFile(data, maxLockVersion); err != nil {
 		return fmt.Errorf("generated lockfile failed validation: %w", err)
 	}
-	return atomicio.WriteFile(path, data, 0644)
+	return atomicio.WriteFile(path, data, perm)
 }
