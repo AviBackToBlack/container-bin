@@ -513,9 +513,9 @@ identity constructed by this package and its complete labels plus local
 driver/scope. The package also preflights an entire stateful profile's
 project/shared binding set, re-proves the exact project root before deriving
 project identities, and ensures each distinct identity only after the complete
-plan validates. Tool-time composition and the v2 state/GC lifecycle are wired,
-but the host boundary keeps managed tools activation-gated while integration
-coverage and real qualification remain.
+plan validates. Tool-time composition and the v2 state/GC lifecycle are wired
+and covered by the portable project-boundary integration corpus, but the host
+boundary keeps managed tools activation-gated until real qualification lands.
 
 `internal/wslrun` is the native WSL vertical orchestrator. It requires the
 fixed layout, private registry, managed binary and exact invoked shim; resolves
