@@ -10,6 +10,13 @@ import (
 	"github.com/AviBackToBlack/container-bin/internal/registry"
 )
 
+func TestResolverSelectForToolRejectsIncompleteInspection(t *testing.T) {
+	var resolver Resolver
+	if _, _, err := resolver.SelectForTool("/home/alice/project", registry.Tool{}); err == nil || !strings.Contains(err.Error(), "inspection is incomplete") {
+		t.Fatalf("SelectForTool() error = %v", err)
+	}
+}
+
 func TestSelectForToolAppliesNearestAndOutermostMarkerPolicy(t *testing.T) {
 	start := "/home/alice/workspace/crates/app/src"
 	modes := map[string]os.FileMode{

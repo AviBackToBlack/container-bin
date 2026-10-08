@@ -30,8 +30,15 @@ type toolDependencies struct {
 // for one stateful profile before any Docker mutation. Project volumes consume
 // a fresh proof of the exact classified project root.
 func PlanStatefulToolVolumes(scope Scope, tool registry.Tool, project wslproject.Project, workspaceRoot string) ([]Binding, error) {
+	return PlanStatefulToolVolumesWithClassifier(scope, tool, project, workspaceRoot, wslproject.ClassifyDescendant)
+}
+
+// PlanStatefulToolVolumesWithClassifier composes volume planning with a
+// caller-owned coherent project resolver. It is intended for cross-package
+// integration corpora; normal runtime code should use PlanStatefulToolVolumes.
+func PlanStatefulToolVolumesWithClassifier(scope Scope, tool registry.Tool, project wslproject.Project, workspaceRoot string, classify func(wslproject.Project, string) (wslproject.Descendant, error)) ([]Binding, error) {
 	return planStatefulToolVolumes(scope, tool, project, workspaceRoot, toolDependencies{
-		classifyDescendant: wslproject.ClassifyDescendant,
+		classifyDescendant: classify,
 	})
 }
 

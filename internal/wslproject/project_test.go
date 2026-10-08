@@ -13,6 +13,20 @@ import (
 
 const rootMount = "24 1 8:1 / / rw,relatime - ext4 /dev/sdb rw\n"
 
+func TestResolverRejectsIncompleteInspection(t *testing.T) {
+	if _, err := NewResolver(Inspection{}); err == nil || !strings.Contains(err.Error(), "inspection is incomplete") {
+		t.Fatalf("NewResolver() error = %v", err)
+	}
+
+	var resolver Resolver
+	if _, err := resolver.Classify("/home/alice/project"); err == nil || !strings.Contains(err.Error(), "inspection is incomplete") {
+		t.Fatalf("Classify() error = %v", err)
+	}
+	if _, err := resolver.ClassifyDescendant(Project{}, "/home/alice/project"); err == nil || !strings.Contains(err.Error(), "inspection is incomplete") {
+		t.Fatalf("ClassifyDescendant() error = %v", err)
+	}
+}
+
 func TestClassifyDistributionProjectPreservesExactCase(t *testing.T) {
 	deps := validDependencies("/home/alice/Project", rootMount)
 	project, err := classify("/home/alice/Project", deps)

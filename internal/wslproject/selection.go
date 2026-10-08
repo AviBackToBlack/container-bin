@@ -17,6 +17,20 @@ type selectionDependencies struct {
 	lstat              func(string) (pathInfo, error)
 }
 
+// SelectForTool applies a profile's marker policy using this resolver's
+// coherent runtime and filesystem inspection source.
+func (r Resolver) SelectForTool(start string, tool registry.Tool) (Project, bool, error) {
+	deps, err := r.inspectionDependencies()
+	if err != nil {
+		return Project{}, false, err
+	}
+	return selectForTool(start, tool, selectionDependencies{
+		classify:           r.Classify,
+		classifyDescendant: r.ClassifyDescendant,
+		lstat:              deps.lstat,
+	})
+}
+
 func selectForTool(start string, tool registry.Tool, d selectionDependencies) (Project, bool, error) {
 	if d.classify == nil || d.classifyDescendant == nil || d.lstat == nil {
 		return Project{}, false, errors.New("native WSL project selection dependencies are incomplete")

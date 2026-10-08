@@ -512,8 +512,7 @@ Commands:
 
 Native WSL2:
   Bootstrap, cb wsl ..., cb state and cb gc are enabled. The managed-tool
-  runtime is wired but activation awaits integration coverage and real Docker
-  Desktop qualification.
+  runtime is wired but activation awaits real Docker Desktop qualification.
 
 Registry:
   %s

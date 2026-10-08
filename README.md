@@ -71,7 +71,7 @@ real Linux CLI/runtime in an ephemeral container
 |---|---|
 | Windows 10/11 x64 + Docker Desktop (Linux containers) + PowerShell | **Supported** — this is the validated configuration |
 | cmd.exe invocation of shims | Works for the common cases; less battle-tested than PowerShell |
-| WSL2 | **v2 runtime and state lifecycle wired; activation gated.** The native Linux runtime uses the fixed private WSL layout and Docker Desktop's WSL integration directly, including proof-bound retained-container and volume cleanup, but managed-tool dispatch remains fail-closed until integration coverage and real WSL2 qualification land. See [docs/wsl.md](docs/wsl.md) |
+| WSL2 | **v2 runtime and state lifecycle wired; activation gated.** The native Linux runtime uses the fixed private WSL layout and Docker Desktop's WSL integration directly, including proof-bound retained-container and volume cleanup. Its portable integration corpus covers distribution and default Windows-drive projects plus mixed-boundary rejection; managed-tool dispatch remains fail-closed until real WSL2 qualification lands. See [docs/wsl.md](docs/wsl.md) |
 | Windows 11 ARM64 | **CI/release-artifact/update-path qualified only, not supported yet.** Native tests/build/dispatch run on GitHub-hosted ARM64 hardware, the release workflow produces a reproducible ARM64 archive, and self-update selects and verifies that archive by `GOARCH`; real Docker Desktop ARM64 E2E qualification remains |
 | Linux / macOS hosts | **Not supported.** The program is Go and cross-compiles, but shim installation, path mapping and doctor checks are Windows-specific |
 | Windows containers | Not supported; images are Linux images |
@@ -955,8 +955,8 @@ creation/upgrades and requires an already provisioned authenticated registry.
 The bootstrap executable must itself be a bounded, current-user-owned regular
 non-symlink file with safe executable permissions. This command still does not
 contact Docker itself. Install reports the wired-but-gated runtime state;
-managed tool dispatch remains fail-closed until integration coverage and real
-WSL2 qualification land. See
+managed tool dispatch remains fail-closed until real WSL2 qualification lands.
+See
 [docs/wsl.md](docs/wsl.md).
 
 `cb wsl lock --check` validates the fixed private lockfile, current machine
@@ -1155,9 +1155,10 @@ benchmark methodology and the disposable-container tradeoff are in
 - Windows x64 + Docker Desktop (Linux containers) is the currently qualified
   release target. The native WSL2 runtime, fixed-layout installation, project
   mapping, managed volumes, Engine lifecycle, stdio/TTY, resize, signal and exit
-  propagation plus retained-container and volume cleanup are wired, but
-  activation still requires integration coverage and real WSL2 + Docker
-  Desktop qualification. Windows
+  propagation plus retained-container and volume cleanup are wired. Portable
+  integration coverage exercises distribution and default Windows-drive
+  projects plus mixed-boundary rejection, but activation still requires real
+  WSL2 + Docker Desktop qualification. Windows
   ARM64 has native non-Docker CI
   coverage and published release artifacts, but no Docker support claim.
 - First invocation of a tool after `cb lock` may still need images present

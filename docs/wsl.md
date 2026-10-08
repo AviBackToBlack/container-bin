@@ -8,8 +8,8 @@ WSL frontend, and standalone Linux remains a separate, demand-gated product.
 The implementation establishes the runtime boundary, fixed native-WSL layout,
 explicit install/config lifecycle and the complete managed-tool composition
 through Docker Desktop's Engine socket. Managed-tool dispatch remains
-fail-closed until the integration corpus and real WSL2 + Docker Desktop
-qualification land. The v2-required native state inventory and cleanup
+fail-closed until real WSL2 + Docker Desktop qualification lands. The
+v2-required native state inventory and cleanup
 lifecycle is wired and available independently of that gate.
 
 ## Runtime classification
@@ -152,7 +152,7 @@ created only when missing and fully revalidated. Foreign files, owners, targets
 or unsafe modes stop the transaction instead of being repaired or replaced.
 The install command itself performs no Docker request. After a successful
 apply and revalidation, its managed tool shims remain activation-gated by the
-host boundary until integration coverage and real qualification land.
+host boundary until real qualification lands.
 An interruption before the final binary rename can leave a current-user-owned
 `.cb-install-<random>.tmp` regular file in the private binary directory.
 ContainerBin does not sweep filename lookalikes without stronger provenance;
@@ -434,12 +434,16 @@ activation.
 
 ## Remaining before the v2 WSL support claim
 
-The ordinary managed tool path is implemented behind the host gate. Activation
-and release qualification still require all of the following:
+The ordinary managed tool path is implemented behind the host gate. A portable
+cross-package integration corpus composes the production project selector,
+mount and descendant proof, argument mapper, fixed-lock resolver and managed
+volume identity for both distribution-backed and default `/mnt/<drive>`
+projects. It also proves fail-closed rejection for mixed storage, Windows path
+spelling in declared path positions, exact-case mismatch, symlink descendants
+and nested mounts before volume planning.
 
-1. Windows-filesystem and WSL-filesystem project tests plus mixed-invocation
-   rejection; and
-2. real WSL2 + Docker Desktop end-to-end qualification before any support claim.
+Activation and release qualification still require real WSL2 + Docker Desktop
+end-to-end qualification before any support claim.
 
 The WSL runtime deliberately rejects `host_mounts`: that registry field uses a
 Windows drive-path grammar and silently reinterpreting it as Linux would violate

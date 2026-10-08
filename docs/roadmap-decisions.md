@@ -16,7 +16,7 @@ items from being repeatedly rediscovered as if they were immediately actionable.
 | RM-24 Python / uv | **Keep both** | Decision complete. Built-in `python`/`pip` keep the dedicated Python provider; `uv`/`uvx` remain separate opt-in stateful profiles. |
 | RM-26 Python global CLI exposure | **pipx yes; plain pip expose no** | Completed in PR #74. The separate stateful pipx profile and managed store shipped; project/compat `/venv/bin` remains intentionally unexposed. |
 | RM-34 Cargo expose enhancement | **Intentionally deferred** | Existing expose-all and explicit binary selection are sufficient. Reopen only for a concrete unmet use case. |
-| WSL2 | **Native WSL frontend** | Fixed-layout install, managed-tool runtime/Docker composition, proof-bound retained-container reconciliation, v2-required state/GC, and the deterministic Linux/amd64 bootstrap artifact are wired. Integration corpus and real WSL qualification remain before activation. No Windows↔WSL path/state guessing. |
+| WSL2 | **Native WSL frontend** | Fixed-layout install, managed-tool runtime/Docker composition, proof-bound retained-container reconciliation, v2-required state/GC, the deterministic Linux/amd64 bootstrap artifact, and the portable project-boundary integration corpus are wired. Real WSL qualification remains before activation. No Windows↔WSL path/state guessing. |
 | Enterprise policy | **Machine-owned constraint layer** | Foundation shipped in PR #75. Authenticated registry and image-trust follow-ups must extend this boundary and cannot be weakened by lower layers. |
 | Image trust | **Policy-driven Sigstore/cosign at lock time** | Ready after signed-registry policy. Digest locking remains default where policy permits. Required trust never silently falls back to digest-only. |
 | Per-project overlays | **Explicit digest-bound, add-only trust model** | Implementation-ready on the merged policy foundation. Initial overlays exclude host mounts, env prefixes and shared cross-project volumes. |
@@ -351,7 +351,7 @@ is not completion.
    - explicit read-only/apply Linux ownership, permission and symlink layout
      preparation plus the fixed-path native install/config lifecycle are
      implemented; ordinary managed tool dispatch is composed but remains
-     activation-gated pending integration coverage and real qualification;
+     activation-gated pending real qualification;
    - Docker Desktop WSL integration proof, proof-bound bounded control requests,
      the separately constrained attach transport, strict raw-stream decoder,
      exact container inspection, wait, TTY-resize, signal, start, creation and
@@ -366,7 +366,9 @@ is not completion.
    - process-held per-run leases, create-to-lease namespace serialization,
      proof-bound automatic orphan recovery and explicit read-only/apply cleanup
      are implemented for retained runtime containers;
-   - project identity and cross-boundary rejection integration tests;
+   - portable project identity and cross-boundary rejection integration tests
+     cover distribution and default Windows-drive projects through the composed
+     selector, mapper, fixed-lock resolver and volume planner;
    - real WSL Docker E2E.
 
 4. **RM-30 Authenticode**

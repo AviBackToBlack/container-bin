@@ -18,14 +18,23 @@ type dependencies struct {
 	classify func(wslproject.Project, string) (wslproject.Descendant, error)
 }
 
+// DescendantClassifier proves one candidate against an already classified
+// project. The production mapper uses wslproject.ClassifyDescendant.
+type DescendantClassifier func(wslproject.Project, string) (wslproject.Descendant, error)
+
 // MapToolArgs maps only paths proven to remain inside project and returns the
 // matching container working directory. Absolute or explicitly path-shaped
 // arguments outside that boundary fail closed; this primitive never invents
 // an external bind mount or Windows-path equivalence.
 func MapToolArgs(tool registry.Tool, project wslproject.Project, cwd, workspaceRoot string, args []string) ([]string, string, error) {
-	return mapToolArgs(tool, project, cwd, workspaceRoot, args, dependencies{
-		classify: wslproject.ClassifyDescendant,
-	})
+	return MapToolArgsWithClassifier(tool, project, cwd, workspaceRoot, args, wslproject.ClassifyDescendant)
+}
+
+// MapToolArgsWithClassifier composes argument mapping with a caller-owned
+// coherent project resolver. It exists for cross-package integration corpora;
+// normal runtime code should use MapToolArgs.
+func MapToolArgsWithClassifier(tool registry.Tool, project wslproject.Project, cwd, workspaceRoot string, args []string, classify DescendantClassifier) ([]string, string, error) {
+	return mapToolArgs(tool, project, cwd, workspaceRoot, args, dependencies{classify: classify})
 }
 
 func mapToolArgs(tool registry.Tool, project wslproject.Project, cwd, workspaceRoot string, args []string, deps dependencies) ([]string, string, error) {

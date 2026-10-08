@@ -20,24 +20,22 @@ const maxMountInfoBytes = 1 << 20
 // root. The caller must pass an already-selected project root, not an arbitrary
 // path to search upward from.
 func Classify(root string) (Project, error) {
-	return classify(root, dependencies{
-		currentRuntime: hostenv.Current,
-		lstat:          statPath,
-		evalSymlinks:   filepath.EvalSymlinks,
-		readMountInfo:  readMountInfo,
-	})
+	resolver, err := productionResolver()
+	if err != nil {
+		return Project{}, err
+	}
+	return resolver.Classify(root)
 }
 
 // ClassifyDescendant revalidates a previously classified project and proves
 // that one canonical path has not crossed a symlink or nested-mount boundary.
 // Missing output paths are classified through their nearest existing ancestor.
 func ClassifyDescendant(project Project, candidate string) (Descendant, error) {
-	return resolveDescendant(project, candidate, dependencies{
-		currentRuntime: hostenv.Current,
-		lstat:          statPath,
-		evalSymlinks:   filepath.EvalSymlinks,
-		readMountInfo:  readMountInfo,
-	})
+	resolver, err := productionResolver()
+	if err != nil {
+		return Descendant{}, err
+	}
+	return resolver.ClassifyDescendant(project, candidate)
 }
 
 // ProveMissingProject proves that an absent recorded project path still lies
@@ -54,10 +52,22 @@ func ProveMissingProject(root string) error {
 // native-WSL project root. The boolean reports whether a marker or trusted
 // overlay root was found; otherwise the proven working directory is the root.
 func SelectForTool(start string, tool registry.Tool) (Project, bool, error) {
-	return selectForTool(start, tool, selectionDependencies{
-		classify:           Classify,
-		classifyDescendant: ClassifyDescendant,
-		lstat:              statPath,
+	resolver, err := productionResolver()
+	if err != nil {
+		return Project{}, false, err
+	}
+	return resolver.SelectForTool(start, tool)
+}
+
+func productionResolver() (Resolver, error) {
+	return NewResolver(Inspection{
+		CurrentRuntime: hostenv.Current,
+		Lstat: func(path string) (InspectionInfo, error) {
+			info, err := statPath(path)
+			return InspectionInfo{Mode: info.Mode, Device: info.Dev}, err
+		},
+		EvalSymlinks:  filepath.EvalSymlinks,
+		ReadMountInfo: readMountInfo,
 	})
 }
 
