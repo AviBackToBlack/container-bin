@@ -80,7 +80,7 @@ The minimum delivery gate for a code change is:
 | RM-31 self-update | **Core pipeline and repeatable published-release E2E implemented** | The read-only plan, fail-closed staging, provenance verification, architecture-specific artifact selection, rollback-safe replacement transaction, protected wait helper and explicit user-facing apply wiring are implemented. PR #126 added the Windows/amd64 harness that qualifies the complete transaction against a canonical published release; rerun it for each exact release candidate |
 | RM-34 Cargo expose enhancement | **Intentionally deferred** | Existing expose-all/explicit selection are sufficient; reopen only for concrete unmet use case |
 | Linux/macOS hosts | **Demand-gated** | WSL may factor reusable Linux host code; standalone support needs its own demand and qualification |
-| Enterprise policy | **Foundation and signed registry shipped / image trust remains** | PRs #75 and #84 shipped the machine-owned constraint layer and authenticated registry; image trust remains |
+| Enterprise policy | **Foundation and signed registry completed** | PRs #75 and #84 shipped the machine-owned constraint layer and authenticated registry; image trust is tracked separately below |
 | Image trust | **Online/offline production and runtime authorization implemented / private-registry work remains** | Add an explicit private-registry credential bridge |
 | Plugin/provider architecture | **Intentionally deferred** | Reopen only after at least two real integrations cannot fit the declarative model |
 | WSL2 | **Native runtime/state/artifact/corpus wired / real qualification remaining** | The fixed install/config/shim lifecycle, project proof/mapping, namespaced tool-time volumes, direct Docker Desktop Engine lifecycle, stdin/output framing, raw TTY, resize, signal forwarding, retained-container cleanup, proof-bound state/GC, orphan reconciliation, exit propagation, deterministic Linux/amd64 bootstrap artifact and portable project-boundary integration corpus are composed. Real WSL2 + Docker Desktop qualification remains before activation. |
@@ -503,10 +503,12 @@ ownership checks, schema/versioning, stable diagnostics, effective-request
 authorization, repository/image allowlisting, mandatory lock enforcement, and
 diagnostics. Lower-precedence configuration cannot weaken that policy.
 
-Authenticated registry files and image trust remain separate follow-up slices.
-Host-mount/environment restrictions are not part of schema 1 and are not
-implied by the merged foundation. Follow-ups must extend the merged policy
-boundary rather than introducing a parallel precedence model.
+Authenticated registry files shipped in PR #84. Public-registry and pinned-
+offline image-trust production and runtime authorization also shipped as
+separate slices; the remaining follow-up is explicit non-ambient private-
+registry credential bridging. Host-mount/environment restrictions are not part
+of schema 1 and are not implied by the merged foundation. Follow-ups must extend
+the merged policy boundary rather than introducing a parallel precedence model.
 
 ### Required policy model
 
