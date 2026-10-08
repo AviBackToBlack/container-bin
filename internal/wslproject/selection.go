@@ -20,10 +20,14 @@ type selectionDependencies struct {
 // SelectForTool applies a profile's marker policy using this resolver's
 // coherent runtime and filesystem inspection source.
 func (r Resolver) SelectForTool(start string, tool registry.Tool) (Project, bool, error) {
+	deps, err := r.inspectionDependencies()
+	if err != nil {
+		return Project{}, false, err
+	}
 	return selectForTool(start, tool, selectionDependencies{
 		classify:           r.Classify,
 		classifyDescendant: r.ClassifyDescendant,
-		lstat:              r.deps.lstat,
+		lstat:              deps.lstat,
 	})
 }
 

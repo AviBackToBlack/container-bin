@@ -89,13 +89,28 @@ func NewResolver(inspection Inspection) (Resolver, error) {
 
 // Classify proves the storage and canonical identity of one project root.
 func (r Resolver) Classify(root string) (Project, error) {
-	return classify(root, r.deps)
+	deps, err := r.inspectionDependencies()
+	if err != nil {
+		return Project{}, err
+	}
+	return classify(root, deps)
 }
 
 // ClassifyDescendant revalidates a project and proves one path remains inside
 // its exact storage and mount identity.
 func (r Resolver) ClassifyDescendant(project Project, candidate string) (Descendant, error) {
-	return resolveDescendant(project, candidate, r.deps)
+	deps, err := r.inspectionDependencies()
+	if err != nil {
+		return Descendant{}, err
+	}
+	return resolveDescendant(project, candidate, deps)
+}
+
+func (r Resolver) inspectionDependencies() (dependencies, error) {
+	if r.deps.currentRuntime == nil || r.deps.lstat == nil || r.deps.evalSymlinks == nil || r.deps.readMountInfo == nil {
+		return dependencies{}, errors.New("native WSL project inspection is incomplete")
+	}
+	return r.deps, nil
 }
 
 type pathInfo struct {
