@@ -537,8 +537,8 @@ all orphan removal uses the same proof-bound non-force lifecycle. Explicit
 coordinator-held pass enumerates managed lease names and reaps an unlocked
 lease only when complete namespace discovery contains no matching run; locked
 lease-only records remain untouched. The production host
-boundary still does not dispatch into this orchestrator until integration
-coverage and real WSL qualification complete. `internal/wslstate` is dispatched
+boundary still does not dispatch into this orchestrator until real WSL
+qualification completes. `internal/wslstate` is dispatched
 separately before that gate; it plans current project/shared identities from
 the fixed registry, consumes only exactly proven namespace volumes, and offers
 dry-run-by-default non-force project cleanup without selecting shared state.

@@ -102,8 +102,8 @@ readable, and dangerous to let others edit.
   Installation validates that layout before fixed-path policy/registry access,
   authenticates signed registries when required, and reconciles only the fixed
   managed binary and provenance-checked symlinks. The ordinary managed-tool
-  runtime is composed and tested but remains behind this host gate until
-  integration coverage and real qualification land;
+  runtime is composed and covered by a portable project-boundary integration
+  corpus, but remains behind this host gate until real qualification lands;
   unsupported native management commands remain rejected.
 - **Native WSL installation does not adopt ambient files.** The bootstrap
   executable is the exact OS-reported running image and must be a bounded,

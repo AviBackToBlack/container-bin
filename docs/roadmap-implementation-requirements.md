@@ -625,8 +625,10 @@ backup/restore remains deferred. The fixed lock now has an explicit
 backup, while apply authorizes the complete configured set before proof-bound
 Engine pull/inspect and atomically publishes one private mode-`0600` lock.
 Private-registry credential bridging and WSL-native image-signature evidence
-production remain fail-closed deferrals. Project/cross-boundary integration
-coverage and real WSL qualification remain for v2 activation.
+production remain fail-closed deferrals. A portable cross-package corpus now
+covers exact project identity and cross-boundary rejection for distribution and
+default Windows-drive projects through selection, mapping, fixed-lock resolution
+and volume planning. Real WSL qualification remains for v2 activation.
 
 Implementation must define native config/shim location, Docker endpoint,
 project identity, named-volume behavior, file permissions, case sensitivity,
@@ -748,7 +750,7 @@ in PR #91.
 2. Signed-registry enterprise policy.
 3. Image trust at lock time, after signed-registry policy merges.
 4. Remaining RM-31 real published-release/self-test E2E qualification.
-5. Native WSL integration corpus and real E2E.
+5. Native WSL real E2E qualification.
 6. RM-30 Authenticode only after certificate/protected-signing prerequisites exist.
 7. RM-29 real Windows-on-Arm + Docker Desktop qualification last; do not delay
    higher-value work for it.

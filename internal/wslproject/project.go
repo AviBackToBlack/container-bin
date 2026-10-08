@@ -45,6 +45,59 @@ type Descendant struct {
 	NearestExisting string
 }
 
+// InspectionInfo is the filesystem identity needed to prove a native-WSL
+// path. It is intentionally narrower than os.FileInfo so deterministic
+// integration corpora can exercise the production proof algorithm without a
+// live WSL mount table.
+type InspectionInfo struct {
+	Mode   os.FileMode
+	Device uint64
+}
+
+// Inspection supplies the native-WSL runtime and filesystem observations used
+// by Resolver. Production entry points bind these hooks to the live host;
+// portable integration tests can instead provide a fixed, internally
+// consistent WSL filesystem model.
+type Inspection struct {
+	CurrentRuntime func() (hostenv.Runtime, error)
+	Lstat          func(string) (InspectionInfo, error)
+	EvalSymlinks   func(string) (string, error)
+	ReadMountInfo  func() ([]byte, error)
+}
+
+// Resolver applies the production native-WSL project selection and path proof
+// algorithms to one coherent inspection source.
+type Resolver struct {
+	deps dependencies
+}
+
+// NewResolver constructs a proof resolver from a complete inspection source.
+func NewResolver(inspection Inspection) (Resolver, error) {
+	if inspection.CurrentRuntime == nil || inspection.Lstat == nil || inspection.EvalSymlinks == nil || inspection.ReadMountInfo == nil {
+		return Resolver{}, errors.New("native WSL project inspection is incomplete")
+	}
+	return Resolver{deps: dependencies{
+		currentRuntime: inspection.CurrentRuntime,
+		lstat: func(path string) (pathInfo, error) {
+			info, err := inspection.Lstat(path)
+			return pathInfo{Mode: info.Mode, Dev: info.Device}, err
+		},
+		evalSymlinks:  inspection.EvalSymlinks,
+		readMountInfo: inspection.ReadMountInfo,
+	}}, nil
+}
+
+// Classify proves the storage and canonical identity of one project root.
+func (r Resolver) Classify(root string) (Project, error) {
+	return classify(root, r.deps)
+}
+
+// ClassifyDescendant revalidates a project and proves one path remains inside
+// its exact storage and mount identity.
+func (r Resolver) ClassifyDescendant(project Project, candidate string) (Descendant, error) {
+	return resolveDescendant(project, candidate, r.deps)
+}
+
 type pathInfo struct {
 	Mode os.FileMode
 	Dev  uint64

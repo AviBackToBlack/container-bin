@@ -1,10 +1,11 @@
 # Native WSL process contract
 
 This document defines the process semantics implemented by ContainerBin's
-native-Linux frontend inside WSL2. The runtime is composed and covered in this
-tree, but managed-tool dispatch remains activation-gated until the integration
-corpus and real WSL2 + Docker Desktop qualification land. The v2-required
-native state inventory and cleanup surface is wired independently of that gate.
+native-Linux frontend inside WSL2. The runtime is composed and covered by a
+portable cross-package integration corpus, but managed-tool dispatch remains
+activation-gated until real WSL2 + Docker Desktop qualification lands. The
+v2-required native state inventory and cleanup surface is wired independently
+of that gate.
 The corresponding Windows behavior is documented separately in
 [the Windows shell/process contract](shell-contract.md).
 
