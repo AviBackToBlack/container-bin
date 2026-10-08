@@ -13,14 +13,18 @@ ready items. Requirements below remain useful acceptance detail, but an older
 "decision required" sentence must not be interpreted as reopening an accepted
 decision.
 
-Status snapshot: **2026-09-26**. The earlier 2026-09-17 snapshot counted every
+Status snapshot: **2026-10-08**. The earlier 2026-09-17 snapshot counted every
 unchecked roadmap line as unfinished work; that is no longer an accurate model.
-RM-26 pipx, per-project overlay trust, signed-registry policy, the RM-31
-selection/check/staging/verification slices, the WSL host boundary and native
-layout identity, native Windows ARM64 CI, and reproducible ARM64 release
-packaging have since shipped. The
-maintainer has also explicitly accepted product/security dispositions for the
-remaining design gates. Use the readiness table below plus
+RM-26 pipx, per-project overlay trust, signed-registry policy, public/offline
+image-trust production and runtime authorization, the complete RM-31 update
+pipeline and published-release qualification harness, the native WSL host,
+layout, runtime, state, artifact and project-integration slices, native Windows
+ARM64 CI, reproducible release packaging and ARM64 update selection have since
+shipped. Real WSL2 + Docker Desktop E2E qualification is the remaining v2
+activation gate; exact-candidate self-update E2E is per-release evidence rather
+than missing implementation. The maintainer has also explicitly accepted
+product/security dispositions for the remaining design gates. Use the readiness
+table below plus
 [roadmap-decisions.md](roadmap-decisions.md), not checkbox count or unmerged pull
 request coverage, to decide whether work is actionable.
 
@@ -73,13 +77,13 @@ The minimum delivery gate for a code change is:
 | RM-26 Python global CLI exposure | **Completed in PR #74** | Stateful pipx + `cb expose pipx` shipped; plain pip `/venv/bin` remains intentionally unexposed |
 | RM-29 Windows ARM64 | **Native CI, release packaging and update selection shipped / hardware work remains** | PR #78 added native hosted ARM64 CI, PR #86 added reproducible release packaging and PR #91 added ARM64 self-update selection; real Windows-on-Arm + Docker Desktop E2E remains |
 | RM-30 Authenticode | **Design complete / externally blocked** | Provision real code-signing certificate and protected signing mechanism |
-| RM-31 self-update | **Core pipeline and repeatable published-release E2E implemented** | PRs #76, #81, #82 and #91 shipped the read-only plan, fail-closed staging, provenance verification and ARM64 artifact selection; this tree adds the rollback-safe replacement transaction, protected wait helper and explicit user-facing apply wiring. The Windows/amd64 harness qualifies the complete transaction against a canonical published release and must be rerun for each release candidate |
+| RM-31 self-update | **Core pipeline and repeatable published-release E2E implemented** | The read-only plan, fail-closed staging, provenance verification, architecture-specific artifact selection, rollback-safe replacement transaction, protected wait helper and explicit user-facing apply wiring are implemented. PR #126 added the Windows/amd64 harness that qualifies the complete transaction against a canonical published release; rerun it for each exact release candidate |
 | RM-34 Cargo expose enhancement | **Intentionally deferred** | Existing expose-all/explicit selection are sufficient; reopen only for concrete unmet use case |
 | Linux/macOS hosts | **Demand-gated** | WSL may factor reusable Linux host code; standalone support needs its own demand and qualification |
-| Enterprise policy | **Foundation and signed registry shipped / image trust remains** | PRs #75 and #84 shipped the machine-owned constraint layer and authenticated registry; image trust remains |
+| Enterprise policy | **Foundation and signed registry completed** | PRs #75 and #84 shipped the machine-owned constraint layer and authenticated registry; image trust is tracked separately below |
 | Image trust | **Online/offline production and runtime authorization implemented / private-registry work remains** | Add an explicit private-registry credential bridge |
 | Plugin/provider architecture | **Intentionally deferred** | Reopen only after at least two real integrations cannot fit the declarative model |
-| WSL2 | **Native runtime/state/artifact wired / activation remaining** | The fixed install/config/shim lifecycle, project proof/mapping, namespaced tool-time volumes, direct Docker Desktop Engine lifecycle, stdin/output framing, raw TTY, resize, signal forwarding, retained-container cleanup, proof-bound state/GC, orphan reconciliation, exit propagation and deterministic Linux/amd64 bootstrap artifact are composed. Integration corpus and real WSL2 + Docker Desktop qualification remain before activation. |
+| WSL2 | **Native runtime/state/artifact/corpus wired / real qualification remaining** | The fixed install/config/shim lifecycle, project proof/mapping, namespaced tool-time volumes, direct Docker Desktop Engine lifecycle, stdin/output framing, raw TTY, resize, signal forwarding, retained-container cleanup, proof-bound state/GC, orphan reconciliation, exit propagation, deterministic Linux/amd64 bootstrap artifact and portable project-boundary integration corpus are composed. Real WSL2 + Docker Desktop qualification remains before activation. |
 | Per-project overlays | **Completed in PR #80** | Add-only digest-bound trust model shipped on the merged enterprise-policy foundation |
 | Release SBOM | **Conditionally deferred** | Trigger on shipped third-party/runtime dependencies or concrete compliance/consumer demand |
 | Snyk | **Conditionally deferred** | Trigger only for a real coverage gap plus owner/account/token and triage/outage policy |
@@ -499,10 +503,12 @@ ownership checks, schema/versioning, stable diagnostics, effective-request
 authorization, repository/image allowlisting, mandatory lock enforcement, and
 diagnostics. Lower-precedence configuration cannot weaken that policy.
 
-Authenticated registry files and image trust remain separate follow-up slices.
-Host-mount/environment restrictions are not part of schema 1 and are not
-implied by the merged foundation. Follow-ups must extend the merged policy
-boundary rather than introducing a parallel precedence model.
+Authenticated registry files shipped in PR #84. Public-registry and pinned-
+offline image-trust production and runtime authorization also shipped as
+separate slices; the remaining follow-up is explicit non-ambient private-
+registry credential bridging. Host-mount/environment restrictions are not part
+of schema 1 and are not implied by the merged foundation. Follow-ups must extend
+the merged policy boundary rather than introducing a parallel precedence model.
 
 ### Required policy model
 
@@ -740,19 +746,21 @@ implementation task in this roadmap document.
 
 ## Recommended implementation order
 
-Merged foundations are not remaining queue entries: RM-26 shipped in PR #74,
-enterprise-policy foundation in PR #75, RM-31 selection/check in PR #76, the
-WSL host boundary in PR #77, native Windows ARM64 CI in PR #78, and
-reproducible ARM64 release packaging in PR #86, and ARM64 self-update selection
-in PR #91.
+Completed implementation slices are not remaining queue entries: RM-26,
+enterprise policy and signed registries, per-project overlay trust,
+public/offline image-trust production and runtime authorization, the RM-31
+update pipeline and repeatable qualification harness, the native WSL host,
+layout, runtime, state, artifact and project-integration slices, native Windows
+ARM64 CI, reproducible release packaging and ARM64 self-update selection.
 
-1. Per-project overlay trust foundation.
-2. Signed-registry enterprise policy.
-3. Image trust at lock time, after signed-registry policy merges.
-4. Remaining RM-31 real published-release/self-test E2E qualification.
-5. Native WSL real E2E qualification.
-6. RM-30 Authenticode only after certificate/protected-signing prerequisites exist.
-7. RM-29 real Windows-on-Arm + Docker Desktop qualification last; do not delay
+1. Explicit private-registry credential bridging remains the image-trust
+   follow-up. Native WSL v2 explicitly fails closed instead of requiring it.
+2. Native WSL real E2E qualification. This is the remaining v2 activation gate.
+3. RM-31 exact-candidate published-release/self-update E2E qualification after
+   the candidate tag and assets exist. This is release evidence, not missing
+   implementation.
+4. RM-30 Authenticode only after certificate/protected-signing prerequisites exist.
+5. RM-29 real Windows-on-Arm + Docker Desktop qualification last; do not delay
    higher-value work for it.
 
 RM-19, RM-23, RM-34, standalone Linux/macOS, plugins, SBOM and Snyk are dormant

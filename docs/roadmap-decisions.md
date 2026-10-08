@@ -1,6 +1,6 @@
 # Roadmap decisions and implementation queue
 
-Status date: **2026-09-25**
+Status date: **2026-10-08**
 
 This document records maintainer decisions for the remaining roadmap items in
 issue #2. These decisions are authoritative scope for implementation work unless
@@ -17,9 +17,9 @@ items from being repeatedly rediscovered as if they were immediately actionable.
 | RM-26 Python global CLI exposure | **pipx yes; plain pip expose no** | Completed in PR #74. The separate stateful pipx profile and managed store shipped; project/compat `/venv/bin` remains intentionally unexposed. |
 | RM-34 Cargo expose enhancement | **Intentionally deferred** | Existing expose-all and explicit binary selection are sufficient. Reopen only for a concrete unmet use case. |
 | WSL2 | **Native WSL frontend** | Fixed-layout install, managed-tool runtime/Docker composition, proof-bound retained-container reconciliation, v2-required state/GC, the deterministic Linux/amd64 bootstrap artifact, and the portable project-boundary integration corpus are wired. Real WSL qualification remains before activation. No Windows↔WSL path/state guessing. |
-| Enterprise policy | **Machine-owned constraint layer** | Foundation shipped in PR #75. Authenticated registry and image-trust follow-ups must extend this boundary and cannot be weakened by lower layers. |
-| Image trust | **Policy-driven Sigstore/cosign at lock time** | Ready after signed-registry policy. Digest locking remains default where policy permits. Required trust never silently falls back to digest-only. |
-| Per-project overlays | **Explicit digest-bound, add-only trust model** | Implementation-ready on the merged policy foundation. Initial overlays exclude host mounts, env prefixes and shared cross-project volumes. |
+| Enterprise policy | **Machine-owned constraint layer** | Foundation and authenticated registries shipped in PRs #75 and #84. Public/offline image trust shipped separately; its private-registry credential bridge remains tracked below. Lower layers cannot weaken this boundary. |
+| Image trust | **Policy-driven Sigstore/cosign at lock time** | Online/offline evidence production and runtime authorization are implemented. Explicit non-ambient private-registry credential bridging remains. Digest locking stays the default where policy permits; required trust never falls back to digest-only. |
+| Per-project overlays | **Explicit digest-bound, add-only trust model** | Shipped in PR #80 on the merged policy foundation. Overlays exclude host mounts, env prefixes and shared cross-project volumes. |
 | Plugin/provider architecture | **Intentionally deferred** | Reopen only after at least two concrete integrations cannot be expressed safely by the declarative model. |
 | RM-31 self-update | **Explicit transactional, attestation-verifying update** | Selection/check, staging, verification, ARM64 artifact selection, the private wait helper and explicit apply wiring are implemented. A repeatable Windows/amd64 published-release E2E harness now qualifies the complete current-source-to-v1.1.0 transaction; future release candidates must rerun it against their exact published target. |
 | RM-30 Authenticode | **Design accepted; externally blocked** | Implement only after a real code-signing certificate and protected signing mechanism exist. Stable and prerelease release artifacts are both signed. |
