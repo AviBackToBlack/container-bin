@@ -149,6 +149,19 @@ func TestExecuteToolAppliesTTYSizeAndForwardsHostEvents(t *testing.T) {
 		}
 		return terminalControl{height: 24, width: 80, restore: func() error { return nil }}, nil
 	}
+	deps.initialTTYSize = func(tty bool) (uint16, uint16) {
+		if !tty {
+			t.Fatal("TTY plan measured as non-interactive")
+		}
+		return 24, 80
+	}
+	originalCreate := deps.create
+	deps.create = func(ctx context.Context, spec wsldocker.ContainerCreateSpec) (containerHandle, error) {
+		if spec.TerminalHeight != 24 || spec.TerminalWidth != 80 {
+			t.Fatalf("initial terminal size in create spec = %dx%d", spec.TerminalHeight, spec.TerminalWidth)
+		}
+		return originalCreate(ctx, spec)
+	}
 	deps.startEvents = func(tty bool) (<-chan hostEvent, func(), error) {
 		if !tty {
 			t.Fatal("TTY events were started as non-interactive")
@@ -200,6 +213,7 @@ func TestExecuteToolPreservesFastTTYExitAcrossInitialResizeRace(t *testing.T) {
 	deps.prepareTerminal = func(bool) (terminalControl, error) {
 		return terminalControl{height: 24, width: 80, restore: func() error { return nil }}, nil
 	}
+	deps.initialTTYSize = func(bool) (uint16, uint16) { return 24, 80 }
 	deps.resize = func(context.Context, string, uint16, uint16) error {
 		return &wsldocker.APIError{StatusCode: http.StatusConflict, Message: "container is not running"}
 	}
@@ -442,6 +456,7 @@ func successfulRunDependencies(t *testing.T, stream *fakeAttach, stdout, stderr 
 			}
 			return nil
 		},
+		initialTTYSize:  func(bool) (uint16, uint16) { return 0, 0 },
 		prepareTerminal: func(bool) (terminalControl, error) { return terminalControl{restore: func() error { return nil }}, nil },
 		startEvents: func(bool) (<-chan hostEvent, func(), error) {
 			*calls = append(*calls, "events")

@@ -13,16 +13,16 @@ ready items. Requirements below remain useful acceptance detail, but an older
 "decision required" sentence must not be interpreted as reopening an accepted
 decision.
 
-Status snapshot: **2026-10-08**. The earlier 2026-09-17 snapshot counted every
+Status snapshot: **2026-10-09**. The earlier 2026-09-17 snapshot counted every
 unchecked roadmap line as unfinished work; that is no longer an accurate model.
 RM-26 pipx, per-project overlay trust, signed-registry policy, public/offline
 image-trust production and runtime authorization, the complete RM-31 update
 pipeline and published-release qualification harness, the native WSL host,
 layout, runtime, state, artifact and project-integration slices, native Windows
 ARM64 CI, reproducible release packaging and ARM64 update selection have since
-shipped. Real WSL2 + Docker Desktop E2E qualification is the remaining v2
-activation gate; exact-candidate self-update E2E is per-release evidence rather
-than missing implementation. The maintainer has also explicitly accepted
+shipped. Real WSL2 + Docker Desktop E2E qualification passed on 2026-10-09;
+exact-candidate self-update E2E is per-release evidence rather than missing
+implementation. The maintainer has also explicitly accepted
 product/security dispositions for the remaining design gates. Use the readiness
 table below plus
 [roadmap-decisions.md](roadmap-decisions.md), not checkbox count or unmerged pull
@@ -83,7 +83,7 @@ The minimum delivery gate for a code change is:
 | Enterprise policy | **Foundation and signed registry completed** | PRs #75 and #84 shipped the machine-owned constraint layer and authenticated registry; image trust is tracked separately below |
 | Image trust | **Online/offline production and runtime authorization implemented / private-registry work remains** | Add an explicit private-registry credential bridge |
 | Plugin/provider architecture | **Intentionally deferred** | Reopen only after at least two real integrations cannot fit the declarative model |
-| WSL2 | **Native runtime/state/artifact/corpus wired / real qualification remaining** | The fixed install/config/shim lifecycle, project proof/mapping, namespaced tool-time volumes, direct Docker Desktop Engine lifecycle, stdin/output framing, raw TTY, resize, signal forwarding, retained-container cleanup, proof-bound state/GC, orphan reconciliation, exit propagation, deterministic Linux/amd64 bootstrap artifact and portable project-boundary integration corpus are composed. Real WSL2 + Docker Desktop qualification remains before activation. |
+| WSL2 | **Native v2 frontend implemented and activation-qualified** | The fixed install/config/shim lifecycle, project proof/mapping, namespaced tool-time volumes, direct Docker Desktop Engine lifecycle, stdin/output framing, raw TTY, resize, signal forwarding, retained-container cleanup, proof-bound state/GC, orphan reconciliation, exit propagation, deterministic Linux/amd64 bootstrap artifact and portable project-boundary integration corpus are composed. Real WSL2 + Docker Desktop qualification passed on 2026-10-09. |
 | Per-project overlays | **Completed in PR #80** | Add-only digest-bound trust model shipped on the merged enterprise-policy foundation |
 | Release SBOM | **Conditionally deferred** | Trigger on shipped third-party/runtime dependencies or concrete compliance/consumer demand |
 | Snyk | **Conditionally deferred** | Trigger only for a real coverage gap plus owner/account/token and triage/outage policy |
@@ -634,7 +634,8 @@ Private-registry credential bridging and WSL-native image-signature evidence
 production remain fail-closed deferrals. A portable cross-package corpus now
 covers exact project identity and cross-boundary rejection for distribution and
 default Windows-drive projects through selection, mapping, fixed-lock resolution
-and volume planning. Real WSL qualification remains for v2 activation.
+and volume planning. Real WSL qualification passed for v2 activation on
+2026-10-09.
 
 Implementation must define native config/shim location, Docker endpoint,
 project identity, named-volume behavior, file permissions, case sensitivity,
@@ -755,12 +756,11 @@ ARM64 CI, reproducible release packaging and ARM64 self-update selection.
 
 1. Explicit private-registry credential bridging remains the image-trust
    follow-up. Native WSL v2 explicitly fails closed instead of requiring it.
-2. Native WSL real E2E qualification. This is the remaining v2 activation gate.
-3. RM-31 exact-candidate published-release/self-update E2E qualification after
+2. RM-31 exact-candidate published-release/self-update E2E qualification after
    the candidate tag and assets exist. This is release evidence, not missing
    implementation.
-4. RM-30 Authenticode only after certificate/protected-signing prerequisites exist.
-5. RM-29 real Windows-on-Arm + Docker Desktop qualification last; do not delay
+3. RM-30 Authenticode only after certificate/protected-signing prerequisites exist.
+4. RM-29 real Windows-on-Arm + Docker Desktop qualification last; do not delay
    higher-value work for it.
 
 RM-19, RM-23, RM-34, standalone Linux/macOS, plugins, SBOM and Snyk are dormant

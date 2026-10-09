@@ -93,6 +93,8 @@ func TestNativeWSLLayoutRejectsAmbiguousInputs(t *testing.T) {
 		{name: "missing distro", runtime: Runtime{Kind: WSL2Native}, home: "/home/alice", machineID: testMachineID, want: "distribution identity"},
 		{name: "padded distro", runtime: Runtime{Kind: WSL2Native, Distro: " Ubuntu"}, home: "/home/alice", machineID: testMachineID, want: "canonical UTF-8"},
 		{name: "distro control", runtime: Runtime{Kind: WSL2Native, Distro: "Ubuntu\n"}, home: "/home/alice", machineID: testMachineID, want: "canonical UTF-8"},
+		{name: "Docker Desktop private distro", runtime: Runtime{Kind: WSL2Native, Distro: "docker-desktop"}, home: "/home/alice", machineID: testMachineID, want: "private Docker Desktop distribution"},
+		{name: "Docker Desktop data distro", runtime: Runtime{Kind: WSL2Native, Distro: "DOCKER-DESKTOP-DATA"}, home: "/home/alice", machineID: testMachineID, want: "private Docker Desktop distribution"},
 		{name: "relative home", runtime: Runtime{Kind: WSL2Native, Distro: "Ubuntu"}, home: "home/alice", machineID: testMachineID, want: "canonical absolute"},
 		{name: "root home", runtime: Runtime{Kind: WSL2Native, Distro: "Ubuntu"}, home: "/", machineID: testMachineID, want: "non-root"},
 		{name: "unclean home", runtime: Runtime{Kind: WSL2Native, Distro: "Ubuntu"}, home: "/home/../alice", machineID: testMachineID, want: "canonical absolute"},

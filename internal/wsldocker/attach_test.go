@@ -47,7 +47,7 @@ func TestOpenAttachBindsDuplexStreamToProvenSocket(t *testing.T) {
 				Header: http.Header{
 					"Connection":   {"keep-alive, Upgrade"},
 					"Upgrade":      {"tcp"},
-					"Content-Type": {attachMediaType},
+					"Content-Type": {attachMultiplexedMediaType},
 				},
 				PeerUID: 0,
 				Stream:  duplex,
@@ -165,6 +165,31 @@ func TestOpenAttachRejectsContextCanceledDuringUpgrade(t *testing.T) {
 	}
 }
 
+func TestValidateAttachHeadersBindsMediaTypeToTTYFraming(t *testing.T) {
+	base := http.Header{"Connection": {"Upgrade"}, "Upgrade": {"tcp"}}
+	for _, test := range []struct {
+		name      string
+		mediaType string
+		tty       bool
+		wantError bool
+	}{
+		{name: "legacy non-TTY raw stream", mediaType: attachRawMediaType},
+		{name: "current non-TTY multiplexed stream", mediaType: attachMultiplexedMediaType},
+		{name: "TTY raw stream", mediaType: attachRawMediaType, tty: true},
+		{name: "TTY rejects multiplexed stream", mediaType: attachMultiplexedMediaType, tty: true, wantError: true},
+		{name: "reject parameters", mediaType: attachRawMediaType + "; charset=utf-8", wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			header := base.Clone()
+			header.Set("Content-Type", test.mediaType)
+			err := validateAttachHeaders(header, test.tty)
+			if (err != nil) != test.wantError {
+				t.Fatalf("validateAttachHeaders() error = %v, wantError=%v", err, test.wantError)
+			}
+		})
+	}
+}
+
 func TestAttachStreamEnforcesInputAndFramingContract(t *testing.T) {
 	duplex := &testDuplex{}
 	stream := &AttachStream{stream: duplex, stdin: false, tty: true}
@@ -185,7 +210,7 @@ func successfulAttachResult(stream attachDuplex) attachOperationResult {
 		Header: http.Header{
 			"Connection":   {"Upgrade"},
 			"Upgrade":      {"tcp"},
-			"Content-Type": {attachMediaType},
+			"Content-Type": {attachRawMediaType},
 		},
 		PeerUID: 0,
 		Stream:  stream,

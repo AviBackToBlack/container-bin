@@ -2,6 +2,7 @@ package wsldocker
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -45,6 +46,37 @@ func TestInspectContainerBindsExactSnapshotToProvenSocket(t *testing.T) {
 	labels["cb.managed"] = "mutated"
 	if snapshot.Labels()["cb.managed"] != "true" {
 		t.Fatal("Labels returned mutable internal state")
+	}
+}
+
+func TestDecodeContainerInspectResponseValidatesConsoleSize(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		size      string
+		want      [2]uint16
+		wantError bool
+	}{
+		{name: "omitted", want: [2]uint16{}},
+		{name: "zero", size: `[0,0]`, want: [2]uint16{}},
+		{name: "positive", size: `[24,80]`, want: [2]uint16{24, 80}},
+		{name: "empty", size: `[]`, wantError: true},
+		{name: "short", size: `[24]`, wantError: true},
+		{name: "long", size: `[24,80,99]`, wantError: true},
+		{name: "partial", size: `[0,80]`, wantError: true},
+		{name: "negative", size: `[-1,80]`, wantError: true},
+		{name: "overflow", size: `[24,65536]`, wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			extra := ""
+			if test.size != "" {
+				extra = `,"ConsoleSize":` + test.size
+			}
+			raw := fmt.Sprintf(`{"Id":%q,"Config":{"Labels":{},"Tty":true,"AttachStdin":true,"AttachStdout":true,"AttachStderr":true,"OpenStdin":true,"StdinOnce":true},"State":{"Running":false},"HostConfig":{"AutoRemove":false%s}}`, testContainerID, extra)
+			got, err := decodeContainerInspectResponse([]byte(raw), testContainerID)
+			if (err != nil) != test.wantError || err == nil && got.ConsoleSize() != test.want {
+				t.Fatalf("console size = %v, error = %v; want %v, error = %v", got.ConsoleSize(), err, test.want, test.wantError)
+			}
+		})
 	}
 }
 

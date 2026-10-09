@@ -64,6 +64,7 @@ func productionFrontendDependencies() frontendDependencies {
 				}
 				return wsldocker.RemoveContainer(ctx, container)
 			},
+			initialTTYSize:  initialHostTerminalSize,
 			prepareTerminal: prepareHostTerminal,
 			startEvents:     startHostEvents,
 			stdin:           os.Stdin,

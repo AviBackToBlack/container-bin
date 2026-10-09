@@ -7,15 +7,14 @@ WSL frontend, and standalone Linux remains a separate, demand-gated product.
 
 The implementation establishes the runtime boundary, fixed native-WSL layout,
 explicit install/config lifecycle and the complete managed-tool composition
-through Docker Desktop's Engine socket. Managed-tool dispatch remains
-fail-closed until real WSL2 + Docker Desktop qualification lands. The
-v2-required native state inventory and cleanup
-lifecycle is wired and available independently of that gate.
+through Docker Desktop's Engine socket. Managed-tool dispatch is enabled for
+native WSL2 after fixed-installation preflight. The v2-required native state
+inventory and cleanup lifecycle is part of the same supported frontend.
 
 ## Runtime classification
 
-- Native Windows is the currently qualified release frontend. The native WSL2
-  runtime is wired here but remains activation-gated for v2.0.0.
+- Native Windows and the native WSL2 frontend are qualified release frontends
+  on x64 Windows with Docker Desktop running Linux containers.
 - A Windows process with `WSL_INTEROP` or `WSL_DISTRO_NAME` is classified as
   Windows-through-WSL interoperability and rejected. The diagnostic names the
   inherited marker so a stray variable in an otherwise native Windows process
@@ -32,10 +31,10 @@ lifecycle is wired and available independently of that gate.
   they perform no Docker or registry mutation and return before host enforcement.
 - `cb wsl prepare --check|--apply`, `cb wsl install --check|--apply`,
   `cb wsl lock --check|--apply`, `cb wsl cleanup --check|--apply`, `cb state`
-  and `cb gc` are the native-WSL management surface.
-  Managed tool shims are installed, but their runtime dispatch remains gated;
-  other `cb` management commands remain explicitly unavailable rather than
-  falling through to Windows-oriented Docker CLI, path or state behavior.
+  and `cb gc` are the native-WSL management surface. Managed tool shims dispatch
+  through the native runtime; other `cb` management commands remain explicitly
+  unavailable rather than falling through to Windows-oriented Docker CLI, path
+  or state behavior.
 
 Environment variables alone never promote an ordinary Linux kernel to WSL2.
 Custom kernels that remove the Microsoft WSL2 identity markers fail closed;
@@ -151,8 +150,8 @@ no-op. The management shim and every registry-derived tool shim are then
 created only when missing and fully revalidated. Foreign files, owners, targets
 or unsafe modes stop the transaction instead of being repaired or replaced.
 The install command itself performs no Docker request. After a successful
-apply and revalidation, its managed tool shims remain activation-gated by the
-host boundary until real qualification lands.
+apply and revalidation, its managed tool shims are enabled by the native WSL2
+host boundary.
 An interruption before the final binary rename can leave a current-user-owned
 `.cb-install-<random>.tmp` regular file in the private binary directory.
 ContainerBin does not sweep filename lookalikes without stronger provenance;
@@ -248,8 +247,7 @@ preserves relative package patterns such as `./...`, maps absolute package
 patterns, and rejects external, symlinked or cross-mount paths instead of
 creating implicit mounts or translating Windows spellings. Ambiguous bare
 arguments remain unchanged so a project entry cannot replace a tool subcommand.
-The wired native runtime consumes this exact proof for every project-mode tool;
-production dispatch remains gated.
+The native runtime consumes this exact proof for every project-mode tool.
 
 A WSL-filesystem project root must be on the same filesystem device as the
 distribution root. A Windows-filesystem project root must be below a proven default
@@ -349,10 +347,10 @@ wins the race between inspection and deletion, a DELETE 404 succeeds only after
 a fresh proof-bound inspection confirms absence.
 The runtime attaches before start, streams stdin with an explicit half-close,
 decodes non-TTY stdout/stderr framing, selects TTY only when both stdin and
-stdout accept real termios queries, uses raw terminal mode, and applies a
-positive initial size from stdin when measurable. Zero-sized or unreadable
-dimensions skip that resize; an unmeasurable `SIGWINCH` is dropped rather than
-terminating the tool. A source-side stdin read failure remains fatal, while a
+stdout accept real termios queries, uses raw terminal mode, and puts a positive
+initial stdin size in the create request before repeating it after start.
+Zero-sized or unreadable dimensions skip sizing; an unmeasurable `SIGWINCH` is
+dropped rather than terminating the tool. A source-side stdin read failure remains fatal, while a
 closed attach sink after the tool stops defers to the authoritative Engine wait
 status. The runtime forwards HUP, INT, QUIT, USR1, USR2, TERM, CONT, TSTP and
 PIPE numerically to the exact owned container. Completion-race 404/409 responses
@@ -361,7 +359,7 @@ Engine exit status, drains output, restores the terminal and performs proof-boun
 cleanup; the tool's `0..255` exit code passes through.
 Infrastructure or stream failure cancels the live wait, sends SIGKILL through
 the same proof-bound transport, waits for stop and then cleans up. Real WSL2 +
-Docker Desktop qualification remains mandatory before release support.
+Docker Desktop qualification remains a release gate for each candidate.
 
 Every ordinary run first acquires the private state-directory namespace lock,
 applies orphan reconciliation, creates the retained container while still holding that
@@ -429,21 +427,30 @@ the proof-bound lifecycle and verifies exact absence after deletion. All
 discovery, ownership proof, path classification and planning finish before the
 first mutation. Apply also re-proves orphan status immediately before each
 removal, so a restored project invalidates the stale plan. Native backup/restore
-remains separate future management work; it is not required for v2 runtime
-activation.
+remains separate future management work; it is not part of the v2 runtime
+support contract.
 
-## Remaining before the v2 WSL support claim
+## V2 activation qualification
 
-The ordinary managed tool path is implemented behind the host gate. A portable
+The ordinary managed tool path is enabled by the native WSL2 host gate. A portable
 cross-package integration corpus composes the production project selector,
 mount and descendant proof, argument mapper, fixed-lock resolver and managed
 volume identity for both distribution-backed and default `/mnt/<drive>`
 projects. It also proves fail-closed rejection for mixed storage, Windows path
-spelling in declared path positions, exact-case mismatch, symlink descendants
-and nested mounts before volume planning.
+spelling in bare and registry-declared path positions, exact-case mismatch,
+symlink descendants and nested mounts before volume planning.
 
-Activation and release qualification still require real WSL2 + Docker Desktop
-end-to-end qualification before any support claim.
+The activation run on 2026-10-09 used Docker Desktop 4.94.0, Engine 29.8.2,
+Ubuntu 26.04 and kernel `6.18.33.2-microsoft-standard-WSL2`. Distribution-local
+and default Windows-drive projects both passed image-lock verification,
+representative stateless/stateful tools, piped stdin/EOF, split stdout/stderr,
+fast exit, exact exit status, initial and dynamic TTY sizing, SIGINT forwarding,
+project/shared state persistence, fail-closed mixed and Windows-spelled paths,
+and controlled retained-container crash recovery. Final cleanup reported no
+active, orphaned or residual leases. The release matrix retains the per-candidate
+artifact, provenance and rerun requirements.
+The [activation qualification record](qualification/wsl2-activation.md) retains
+the final binary checksums, environment, observed results and coverage limits.
 
 The WSL runtime deliberately rejects `host_mounts`: that registry field uses a
 Windows drive-path grammar and silently reinterpreting it as Linux would violate

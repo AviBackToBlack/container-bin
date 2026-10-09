@@ -12,7 +12,10 @@ import (
 	"sync/atomic"
 )
 
-const attachMediaType = "application/vnd.docker.raw-stream"
+const (
+	attachRawMediaType         = "application/vnd.docker.raw-stream"
+	attachMultiplexedMediaType = "application/vnd.docker.multiplexed-stream"
+)
 
 // AttachRequest describes the one streaming Docker operation ContainerBin
 // permits: attaching live stdio to an exact container created by the caller.
@@ -149,7 +152,7 @@ func openAttach(ctx context.Context, request AttachRequest, deps attachDependenc
 			Message: dockerErrorMessage(operation.ErrorBody),
 		})
 	}
-	if err := validateAttachHeaders(operation.Header); err != nil {
+	if err := validateAttachHeaders(operation.Header, request.TTY); err != nil {
 		return fail(err)
 	}
 	if operation.Stream == nil {
@@ -168,12 +171,13 @@ func validateAttachRequest(request AttachRequest) error {
 	return nil
 }
 
-func validateAttachHeaders(header http.Header) error {
+func validateAttachHeaders(header http.Header, tty bool) error {
 	if !headerHasToken(header, "Connection", "upgrade") || !strings.EqualFold(header.Get("Upgrade"), "tcp") {
 		return errors.New("Docker Desktop WSL attach response did not provide the exact TCP upgrade")
 	}
 	mediaType, parameters, err := mime.ParseMediaType(header.Get("Content-Type"))
-	if err != nil || mediaType != attachMediaType || len(parameters) != 0 {
+	validMediaType := mediaType == attachRawMediaType || (!tty && mediaType == attachMultiplexedMediaType)
+	if err != nil || !validMediaType || len(parameters) != 0 {
 		return fmt.Errorf("Docker Desktop WSL attach returned unsupported content type %q", header.Get("Content-Type"))
 	}
 	return nil

@@ -124,10 +124,8 @@ and must not be confused with the passthrough above.
 TTY-allocation decision in cb:
 
 ```go
-// Interactive reports whether both stdin and stdout are character devices.
-// Any stat failure or redirected stream returns false.
 func Interactive() bool {
-	return interactiveFor(os.Stdin, os.Stdout)
+	return interactiveFor(os.Stdin, os.Stdout) && platformTerminalPair(os.Stdin, os.Stdout)
 }
 
 func interactiveFor(stdin, stdout fileStatter) bool {
@@ -139,6 +137,12 @@ func interactiveFor(stdin, stdout fileStatter) bool {
 	return err == nil && out.Mode()&os.ModeCharDevice != 0
 }
 ```
+
+On Windows, `platformTerminalPair` additionally requires `GetConsoleMode` to
+succeed for both handles. Character-device mode alone is insufficient: `NUL`
+has that mode but is redirected output, including when `cb self-test --json`
+captures nested tool output. Pipes, files, `NUL` and failed console queries
+select non-TTY execution.
 
 For Docker container TTY allocation, no color-forcing, terminal capability
 negotiation, or alternate buffer control exists. `RunTool` adds `docker run -t`
@@ -268,7 +272,6 @@ checked in the current codebase.
   negotiation code in the repository.
 - **No locale or codepage translation** between the Windows console and the
   Linux container. Streams are passed byte-for-byte.
-- **No Win32 console or process-control API calls.** A search for `SetConsoleMode`,
-  `SetConsoleCtrlHandler`, `GenerateConsoleCtrlEvent`, `CreateProcess`, and
-  `golang.org/x/sys/windows` finds no matches in the codebase; all process
+- **No console-mode mutation or custom console signal forwarding.** Windows
+  TTY detection queries `GetConsoleMode` without changing it; tool process
   launching goes through `os/exec`.

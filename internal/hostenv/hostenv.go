@@ -49,11 +49,10 @@ func Current() (Runtime, error) {
 	return classify(goos, kernelRelease, os.Getenv("WSL_DISTRO_NAME"), os.Getenv("WSL_INTEROP")), nil
 }
 
-// RequireFrontend enforces the supported host boundary. Native Windows is
-// enabled. Native WSL2 is classified precisely but managed-tool dispatch
-// remains activation-gated until real qualification lands. Its
-// bootstrap/install and state-management commands are dispatched
-// separately before this general gate.
+// RequireFrontend enforces the supported host boundary. Native Windows and a
+// precisely classified native WSL2 user distribution are enabled. Native WSL
+// bootstrap/install and state-management commands are dispatched separately
+// before this general gate.
 func RequireFrontend() error {
 	return requireFrontend(Current())
 }
@@ -70,7 +69,7 @@ func requireFrontend(info Runtime, probeErr error) error {
 		if markers == "" {
 			markers = "WSL_INTEROP or WSL_DISTRO_NAME"
 		}
-		return fmt.Errorf("Windows ContainerBin process inherited WSL interoperability marker(s): %s; this invocation is unsupported; run cb from a native Windows process, or use the native WSL frontend after it is released", markers)
+		return fmt.Errorf("Windows ContainerBin process inherited WSL interoperability marker(s): %s; this invocation is unsupported; run cb from a native Windows process, or run the native Linux cb inside a supported WSL2 distribution", markers)
 	case WSL2Native:
 		if strings.TrimSpace(info.Distro) == "" {
 			return errors.New("native WSL2 was detected but WSL_DISTRO_NAME is unavailable, so distribution identity cannot be proven")
@@ -78,7 +77,7 @@ func requireFrontend(info Runtime, probeErr error) error {
 		if err := validateDistroIdentity(info.Distro); err != nil {
 			return fmt.Errorf("native WSL2 distribution identity cannot be proven: %w", err)
 		}
-		return fmt.Errorf("native WSL2 distribution %q was detected; the tool runtime and state lifecycle are wired but activation is gated until real Docker Desktop qualification lands", info.Distro)
+		return nil
 	case WSL1Native:
 		return errors.New("WSL1 is unsupported; the native frontend requires WSL2 and Docker Desktop WSL integration")
 	case WSLUnrecognized:

@@ -1,11 +1,9 @@
 # Native WSL process contract
 
 This document defines the process semantics implemented by ContainerBin's
-native-Linux frontend inside WSL2. The runtime is composed and covered by a
-portable cross-package integration corpus, but managed-tool dispatch remains
-activation-gated until real WSL2 + Docker Desktop qualification lands. The
-v2-required native state inventory and cleanup surface is wired independently
-of that gate.
+native-Linux frontend inside WSL2. The runtime is covered by a portable
+cross-package integration corpus and real WSL2 + Docker Desktop qualification;
+managed-tool dispatch is enabled after fixed-installation preflight.
 The corresponding Windows behavior is documented separately in
 [the Windows shell/process contract](shell-contract.md).
 
@@ -85,9 +83,10 @@ no matching run identity.
 ## Streams and TTY
 
 ContainerBin always attaches stdin, stdout and stderr. Non-TTY stdin is copied
-byte-for-byte and half-closed at EOF while output remains open. Docker's strict
-raw-stream framing is decoded into the caller's separate stdout and stderr; a
-truncated or malformed frame is an infrastructure failure.
+byte-for-byte and half-closed at EOF while output remains open. Docker's
+multiplexed stream response (including the legacy raw-stream media type used by
+older Engines) is strictly decoded into the caller's separate stdout and
+stderr; a truncated or malformed frame is an infrastructure failure.
 
 If stdin's source reader has already completed with an error when the tool
 exits, that error wins over the tool status so genuinely truncated piped input
@@ -100,12 +99,14 @@ after the tool and output stream have both completed.
 TTY mode is selected only when both stdin and stdout accept real Linux termios
 queries; character-device mode alone is insufficient because `/dev/null` and
 `/dev/zero` are not terminals. Redirecting either stream selects non-TTY
-execution, matching the Windows frontend. The native stdin terminal enters raw
-mode and provides the initial size after start when positive dimensions are
-measurable. A zero-sized or temporarily unreadable terminal skips that resize,
-and an unmeasurable `SIGWINCH` is dropped rather than terminating the running
-tool. Docker's TTY stream is unframed and is written to stdout; terminal state
-is restored on every return path.
+execution, matching the Windows frontend. Before container creation, the
+runtime measures a positive stdin terminal size and includes it in Docker's
+create request so even a short-lived tool starts with usable dimensions. After
+start it repeats the size through the resize endpoint, and later `SIGWINCH`
+events apply live changes. A zero-sized or temporarily unreadable terminal skips
+the size, and an unmeasurable `SIGWINCH` is dropped rather than terminating the
+running tool. Docker's TTY stream is unframed and is written to stdout; terminal
+state is restored on every return path.
 
 The runtime waits up to five seconds for the attach stream to drain after the
 Engine reports exit. Failure to drain is an infrastructure error rather than a
@@ -147,7 +148,8 @@ the same bounded stop/wait sequence and then a proof-bound non-force removal;
 the removal can safely clean an already-stopped container but refuses one that
 is still running.
 
-These semantics have in-process integration coverage. The release gate still
-requires real WSL2 + Docker Desktop exercises for piped stdin, split output,
-interactive resize, Ctrl-C/termination, fast exit, cleanup and exact exit-code
-propagation on both distribution and default Windows-drive projects.
+These semantics have in-process integration coverage. The 2026-10-09 activation
+run additionally exercised piped stdin, split output, interactive initial/dynamic
+resize, SIGINT forwarding, fast exit, cleanup and exact exit-code propagation on
+both distribution and default Windows-drive projects. Each release candidate
+must retain equivalent real WSL2 + Docker Desktop evidence.

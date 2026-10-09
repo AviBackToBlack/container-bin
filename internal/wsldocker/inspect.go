@@ -23,6 +23,7 @@ type ContainerSnapshot struct {
 	openStdin    bool
 	stdinOnce    bool
 	autoRemove   bool
+	consoleSize  [2]uint16
 }
 
 func (s ContainerSnapshot) ID() string                { return s.id }
@@ -34,6 +35,7 @@ func (s ContainerSnapshot) AttachStderr() bool        { return s.attachStderr }
 func (s ContainerSnapshot) OpenStdin() bool           { return s.openStdin }
 func (s ContainerSnapshot) StdinOnce() bool           { return s.stdinOnce }
 func (s ContainerSnapshot) AutoRemove() bool          { return s.autoRemove }
+func (s ContainerSnapshot) ConsoleSize() [2]uint16    { return s.consoleSize }
 func (s ContainerSnapshot) Labels() map[string]string { return cloneContainerLabels(s.labels) }
 
 func inspectContainer(ctx context.Context, containerID string, deps operationDependencies) (ContainerSnapshot, error) {
@@ -76,7 +78,8 @@ func decodeContainerInspectResponse(raw []byte, expectedID string) (ContainerSna
 			Running *bool `json:"Running"`
 		} `json:"State"`
 		HostConfig *struct {
-			AutoRemove *bool `json:"AutoRemove"`
+			AutoRemove  *bool     `json:"AutoRemove"`
+			ConsoleSize *[]uint16 `json:"ConsoleSize"`
 		} `json:"HostConfig"`
 	}
 	if err := json.Unmarshal(raw, &response); err != nil {
@@ -121,6 +124,14 @@ func decodeContainerInspectResponse(raw []byte, expectedID string) (ContainerSna
 	if response.HostConfig.AutoRemove == nil {
 		return ContainerSnapshot{}, errors.New("Docker container inspect response is missing HostConfig.AutoRemove")
 	}
+	consoleSize := [2]uint16{}
+	if response.HostConfig.ConsoleSize != nil {
+		size := *response.HostConfig.ConsoleSize
+		if len(size) != 2 || (size[0] == 0) != (size[1] == 0) {
+			return ContainerSnapshot{}, errors.New("Docker container inspect response has invalid HostConfig.ConsoleSize")
+		}
+		consoleSize = [2]uint16{size[0], size[1]}
+	}
 	return ContainerSnapshot{
 		id:           response.ID,
 		labels:       cloneContainerLabels(response.Config.Labels),
@@ -132,6 +143,7 @@ func decodeContainerInspectResponse(raw []byte, expectedID string) (ContainerSna
 		openStdin:    *response.Config.OpenStdin,
 		stdinOnce:    *response.Config.StdinOnce,
 		autoRemove:   *response.HostConfig.AutoRemove,
+		consoleSize:  consoleSize,
 	}, nil
 }
 

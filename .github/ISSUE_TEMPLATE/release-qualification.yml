@@ -1,12 +1,12 @@
 name: Release qualification
-description: Record the Windows/Docker Desktop validation matrix for a release
+description: Record the Windows and WSL2/Docker Desktop validation matrix for a release
 title: "[release] "
 labels: ["release-qualification"]
 body:
   - type: markdown
     attributes:
       value: |
-        Use this template to record the manual Windows/Docker Desktop
+        Use this template to record the manual Windows and WSL2/Docker Desktop
         release-qualification matrix. See [docs/release-matrix.md](https://github.com/AviBackToBlack/container-bin/blob/main/docs/release-matrix.md)
         for the full procedure, the grid, and the per-cell steps.
 
@@ -26,6 +26,14 @@ body:
     attributes:
       label: Published-release self-update E2E
       description: Record the previous release, exact published candidate tag, source commit, signed GitHub CLI version/publisher, command, and complete sanitized JSON result from scripts/qualify-self-update-published.ps1.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: cell-wsl2-current
+    attributes:
+      label: Native WSL2 — current stable Docker Desktop
+      description: Record the exact candidate tag/source commit, archive checksum and attestation, Windows/Docker Desktop/Engine/distribution/kernel versions, both storage-mode process results, path-boundary checks, state isolation/persistence, cleanup recovery, final zero-residue check, and proof that native Windows volumes were preserved.
       render: text
     validations:
       required: true
