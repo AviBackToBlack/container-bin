@@ -63,6 +63,34 @@ func TestMapToolArgsPreservesNonPathsAndPackagePatterns(t *testing.T) {
 	}
 }
 
+func TestMapToolArgsRejectsWindowsAbsoluteSpellingInAnyPosition(t *testing.T) {
+	project := wslproject.Project{Root: "/home/alice/project", Storage: wslproject.Distribution}
+	tool := registry.Tool{Name: "example"}
+	for name, arg := range map[string]string{
+		"drive backslash": `C:\Work\App\input.txt`,
+		"drive slash":     `c:/Work/App/input.txt`,
+		"UNC":             `\\server\share\input.txt`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, _, err := mapToolArgs(tool, project, project.Root, "/workspace/demo", []string{arg}, testDependencies(project.Root)); err == nil || !strings.Contains(err.Error(), "Windows path spelling is not supported") {
+				t.Fatalf("Windows path spelling error = %v", err)
+			}
+		})
+	}
+}
+
+func TestMapToolArgsPreservesWindowsLikeNonPaths(t *testing.T) {
+	project := wslproject.Project{Root: "/home/alice/project", Storage: wslproject.Distribution}
+	args := []string{`C:relative`, `name:value`, `\d+`}
+	got, _, err := mapToolArgs(registry.Tool{Name: "example"}, project, project.Root, "/workspace/demo", args, testDependencies(project.Root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, args) {
+		t.Fatalf("mapped args = %q, want unchanged %q", got, args)
+	}
+}
+
 func TestMapToolArgsMapsAbsolutePackagePattern(t *testing.T) {
 	project := wslproject.Project{Root: "/home/alice/project", Storage: wslproject.Distribution}
 	got, _, err := mapToolArgs(

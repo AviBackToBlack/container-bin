@@ -47,6 +47,14 @@ func prepareHostTerminal(tty bool) (terminalControl, error) {
 	}, nil
 }
 
+func initialHostTerminalSize(tty bool) (uint16, uint16) {
+	if !tty {
+		return 0, 0
+	}
+	height, width, _ := usableTerminalSize(os.Stdin.Fd(), terminalSize)
+	return height, width
+}
+
 // interactiveHostTerminal requires real Linux terminals on stdin and stdout.
 // Character-device mode alone is insufficient because /dev/null and /dev/zero
 // also set os.ModeCharDevice but reject terminal ioctls. This matches the

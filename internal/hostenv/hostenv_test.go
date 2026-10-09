@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -46,11 +47,15 @@ func TestRequireFrontend(t *testing.T) {
 		want     string
 	}{
 		{name: "windows native", info: Runtime{Kind: WindowsNative}},
+		{name: "windows arm64 unchanged", info: Runtime{Kind: WindowsNative, GOARCH: "arm64"}},
 		{name: "windows interop", info: Runtime{Kind: WindowsWSLInterop, InteropMarkers: []string{"WSL_INTEROP"}}, want: "WSL_INTEROP"},
 		{name: "wsl2 missing distro", info: Runtime{Kind: WSL2Native}, want: "distribution identity cannot be proven"},
 		{name: "wsl2 whitespace distro", info: Runtime{Kind: WSL2Native, Distro: " \t"}, want: "distribution identity cannot be proven"},
 		{name: "wsl2 noncanonical distro", info: Runtime{Kind: WSL2Native, Distro: " Ubuntu"}, want: "distribution identity cannot be proven"},
-		{name: "wsl2 gated", info: Runtime{Kind: WSL2Native, Distro: "Ubuntu"}, want: "activation is gated"},
+		{name: "wsl2 amd64", info: Runtime{Kind: WSL2Native, Distro: "Ubuntu", GOARCH: "amd64"}},
+		{name: "wsl2 arm64", info: Runtime{Kind: WSL2Native, Distro: "Ubuntu", GOARCH: "arm64"}, want: `architecture "arm64" is unsupported`},
+		{name: "wsl2 unknown architecture", info: Runtime{Kind: WSL2Native, Distro: "Ubuntu"}, want: `architecture "" is unsupported`},
+		{name: "Docker Desktop private distro", info: Runtime{Kind: WSL2Native, Distro: "docker-desktop"}, want: "private Docker Desktop distribution"},
 		{name: "wsl1", info: Runtime{Kind: WSL1Native}, want: "WSL1 is unsupported"},
 		{name: "unrecognized Microsoft kernel", info: Runtime{Kind: WSLUnrecognized, KernelRelease: "4.19.128-microsoft-standard"}, want: "generation cannot be proven"},
 		{name: "linux", info: Runtime{Kind: LinuxNative}, want: "standalone Linux hosts are unsupported"},
@@ -70,6 +75,25 @@ func TestRequireFrontend(t *testing.T) {
 				t.Fatalf("requireFrontend() error = %v, want %q", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestCurrentRecordsProcessArchitecture(t *testing.T) {
+	info, err := Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.GOARCH != runtime.GOARCH {
+		t.Fatalf("Current() architecture = %q, want %q", info.GOARCH, runtime.GOARCH)
+	}
+}
+
+func TestRequireWSLArchitecture(t *testing.T) {
+	for _, arch := range []string{"amd64", "arm64", "386", "", "AMD64", " amd64"} {
+		err := (Runtime{GOARCH: arch}).RequireWSLArchitecture()
+		if (err == nil) != (arch == "amd64") {
+			t.Errorf("RequireWSLArchitecture(%q) = %v", arch, err)
+		}
 	}
 }
 

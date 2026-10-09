@@ -91,20 +91,20 @@ readable, and dangerous to let others edit.
   fingerprint, mechanism and signer/key identity. Missing or stale evidence
   never falls back to digest-only locking. Private-registry credentials remain
   excluded until an explicit non-ambient bridge is implemented.
-- **Fail-closed host boundary.** Non-bootstrap work currently runs only in a
-  native Windows process. Windows binaries launched through detected WSL
-  interoperability, WSL1, standalone Linux and other hosts refuse before
-  registry or Docker work. WSL2
+- **Fail-closed host boundary.** Non-bootstrap work runs in a native Windows
+  process or the supported native WSL2 frontend. Windows binaries launched
+  through detected WSL interoperability, WSL1, standalone Linux and other hosts
+  refuse before registry or Docker work. WSL2
   classification requires Microsoft WSL2 kernel markers and a canonical
   `WSL_DISTRO_NAME`; environment variables alone cannot turn ordinary Linux
   into a supported host. Native WSL preparation validates or creates only the
   fixed current-user layout and loads no registry or machine policy.
   Installation validates that layout before fixed-path policy/registry access,
   authenticates signed registries when required, and reconciles only the fixed
-  managed binary and provenance-checked symlinks. The ordinary managed-tool
-  runtime is composed and covered by a portable project-boundary integration
-  corpus, but remains behind this host gate until real qualification lands;
-  unsupported native management commands remain rejected.
+  managed binary and provenance-checked symlinks. The managed-tool runtime is
+  covered by a portable project-boundary integration corpus and real WSL2 +
+  Docker Desktop qualification; unsupported native management commands remain
+  rejected.
 - **Native WSL installation does not adopt ambient files.** The bootstrap
   executable is the exact OS-reported running image and must be a bounded,
   current-user-owned regular non-symlink file with safe executable permissions.

@@ -47,6 +47,8 @@ type ContainerCreateSpec struct {
 	WorkingDirectory string
 	Mounts           []ContainerMount
 	TTY              bool
+	TerminalHeight   uint16
+	TerminalWidth    uint16
 	// RetainUntilCleanup disables daemon auto-removal so an orchestrator can
 	// reliably collect even an ultra-short-lived process exit status before
 	// invoking the proof-bound cleanup operation.
@@ -95,8 +97,9 @@ type containerCreateBody struct {
 	Labels       map[string]string `json:"Labels"`
 	WorkingDir   string            `json:"WorkingDir"`
 	HostConfig   struct {
-		AutoRemove bool             `json:"AutoRemove"`
-		Mounts     []ContainerMount `json:"Mounts,omitempty"`
+		AutoRemove  bool             `json:"AutoRemove"`
+		ConsoleSize *[2]uint16       `json:"ConsoleSize,omitempty"`
+		Mounts      []ContainerMount `json:"Mounts,omitempty"`
 	} `json:"HostConfig"`
 }
 
@@ -136,6 +139,9 @@ func createContainer(ctx context.Context, spec ContainerCreateSpec, deps createD
 		WorkingDir:   spec.WorkingDirectory,
 	}
 	body.HostConfig.AutoRemove = !spec.RetainUntilCleanup
+	if spec.TerminalHeight != 0 {
+		body.HostConfig.ConsoleSize = &[2]uint16{spec.TerminalHeight, spec.TerminalWidth}
+	}
 	body.HostConfig.Mounts = append([]ContainerMount(nil), spec.Mounts...)
 	raw, err := json.Marshal(body)
 	if err != nil {
@@ -182,7 +188,7 @@ func createContainer(ctx context.Context, spec ContainerCreateSpec, deps createD
 		return Container{}, rollbackCreatedContainer(ctx, container, deps.operations,
 			errors.New("created Docker container is already running"))
 	}
-	if snapshot.TTY() != spec.TTY || !snapshot.AttachStdin() || !snapshot.AttachStdout() || !snapshot.AttachStderr() || !snapshot.OpenStdin() || !snapshot.StdinOnce() || snapshot.AutoRemove() != !spec.RetainUntilCleanup {
+	if snapshot.TTY() != spec.TTY || snapshot.ConsoleSize() != [2]uint16{spec.TerminalHeight, spec.TerminalWidth} || !snapshot.AttachStdin() || !snapshot.AttachStdout() || !snapshot.AttachStderr() || !snapshot.OpenStdin() || !snapshot.StdinOnce() || snapshot.AutoRemove() != !spec.RetainUntilCleanup {
 		return Container{}, rollbackCreatedContainer(ctx, container, deps.operations,
 			errors.New("created Docker container stdio, terminal or retention configuration does not match the request"))
 	}
@@ -241,6 +247,12 @@ func validateContainerCreateSpec(spec ContainerCreateSpec) error {
 	}
 	if err := validateContainerPath(spec.WorkingDirectory); err != nil {
 		return fmt.Errorf("invalid working directory: %w", err)
+	}
+	if (spec.TerminalHeight == 0) != (spec.TerminalWidth == 0) {
+		return errors.New("terminal height and width must both be zero or both be positive")
+	}
+	if !spec.TTY && spec.TerminalHeight != 0 {
+		return errors.New("terminal dimensions require TTY mode")
 	}
 	for index, argument := range spec.Command {
 		if !utf8.ValidString(argument) || strings.ContainsRune(argument, '\x00') {

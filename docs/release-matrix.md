@@ -1,6 +1,7 @@
-# Windows/Docker Desktop release validation matrix
+# Windows and WSL2/Docker Desktop release validation matrix
 
-This is the manual release-qualification matrix for ContainerBin on Windows.
+This is the manual release-qualification matrix for ContainerBin on Windows
+and its native WSL2 frontend.
 It is what `docs/shell-contract.md` and `docs/windows-paths.md` are validated
 against on a real host: a set of documented steps a maintainer runs before a
 release because GitHub-hosted CI cannot cover this ground.
@@ -211,6 +212,41 @@ filesystem, run its `cb version`, and use that exact binary for
 `~/.local/bin/cb version` matches before exercising managed tool shims. The
 archive is not standalone-Linux evidence and does not qualify WSL on Windows
 ARM64 hardware.
+
+### Native WSL2 runtime cell
+
+Run this cell in a normal user distribution with Docker Desktop WSL integration
+enabled, never in Docker Desktop's private distributions. Record Windows,
+Docker Desktop, Engine, distribution and WSL kernel versions plus the exact
+candidate tag, source commit, archive checksum and attestation result.
+
+Use both a distribution-local project and a project below a proven default
+`/mnt/<drive>` mount. With the exact installed candidate:
+
+1. Run `cb wsl lock --check` and representative stateless and stateful shims.
+2. Verify piped stdin/EOF, separately captured stdout/stderr, a fast successful
+   process and exact nonzero exit-code propagation in both projects.
+3. In a real PTY, verify a positive initial size, a live `SIGWINCH` resize,
+   SIGINT forwarding and the tool's resulting exit code in both projects.
+4. Verify project volumes persist without colliding across the two project
+   identities and shared state persists between them. Record `cb state`.
+5. Verify mixed-storage, external, symlink/nested-mount and literal Windows
+   path spelling fail before Docker mutation.
+6. Kill one disposable shim after its container starts. Confirm
+   `cb wsl cleanup --check` reports the exact orphan, `--apply` reconciles it,
+   and a final check reports zero active/orphaned containers or lease residue.
+7. Record the WSL namespace's exact volumes and prove that pre-existing native
+   Windows ContainerBin volumes were neither adopted nor removed.
+
+The v2 activation baseline passed on 2026-10-09 using Docker Desktop 4.94.0,
+Engine 29.8.2, Ubuntu 26.04 and kernel
+`6.18.33.2-microsoft-standard-WSL2`. That baseline activates the frontend; the
+steps above still run against every exact release candidate and its published
+artifact.
+
+The [activation qualification record](qualification/wsl2-activation.md) contains
+the source-build baseline and subsequent Windows preservation results. It does
+not replace the published-candidate checks above.
 
 ### Live published-release self-update qualification
 

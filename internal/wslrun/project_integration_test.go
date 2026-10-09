@@ -106,7 +106,7 @@ func TestBuildToolPlanRejectsMixedAndCrossBoundaryPathsBeforeVolumePlanning(t *t
 	}{
 		{name: "distribution to Windows drive", storage: wslproject.Distribution, argument: "/mnt/c/Work/App/input.txt", want: "outside project root"},
 		{name: "Windows drive to distribution", storage: wslproject.WindowsDrive, argument: "/home/alice/work/App/input.txt", want: "outside project root"},
-		{name: "forced Windows spelling", storage: wslproject.Distribution, argument: `C:\Work\App\input.txt`, want: "canonical absolute non-root Linux path"},
+		{name: "forced Windows spelling", storage: wslproject.Distribution, argument: `C:\Work\App\input.txt`, want: "Windows path spelling is not supported"},
 		{name: "case mismatch", storage: wslproject.Distribution, argument: "/home/alice/work/app/input.txt", want: "outside project root"},
 		{
 			name: "symlink descendant", storage: wslproject.Distribution, argument: "linked/input.txt", want: "is a symlink",
@@ -144,6 +144,21 @@ func TestBuildToolPlanRejectsMixedAndCrossBoundaryPathsBeforeVolumePlanning(t *t
 				t.Fatalf("boundary error = %v, want substring %q", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestBuildToolPlanRejectsBareWindowsPathSpellingBeforeVolumePlanning(t *testing.T) {
+	root, cwd := "/home/alice/work/App", "/home/alice/work/App/src"
+	model := newCorpusFilesystem(root, cwd, wslproject.Distribution)
+	resolver := newCorpusResolver(t, model)
+	deps := corpusPlanDependencies(resolver)
+	deps.planVolumes = func(wslvolume.Scope, registry.Tool, wslproject.Project, string) ([]wslvolume.Binding, error) {
+		t.Fatal("volume planning ran after argument boundary rejection")
+		return nil, nil
+	}
+	_, err := buildToolPlan(corpusTool(), []string{`C:\qualification\missing.py`}, policy.Policy{}, corpusLayout(t), cwd, false, nil, deps)
+	if err == nil || !strings.Contains(err.Error(), "Windows path spelling is not supported") {
+		t.Fatalf("bare Windows path error = %v", err)
 	}
 }
 

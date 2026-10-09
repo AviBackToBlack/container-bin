@@ -110,6 +110,9 @@ func mapToolArgs(tool registry.Tool, project wslproject.Project, cwd, workspaceR
 }
 
 func mapArg(project wslproject.Project, cwd, workspaceRoot, arg string, force bool, deps dependencies) (string, error) {
+	if isWindowsAbsolutePath(arg) {
+		return "", fmt.Errorf("map native WSL argument path %q: Windows path spelling is not supported", arg)
+	}
 	candidate, isPath := resolvePathArg(cwd, arg, force)
 	if !isPath {
 		return arg, nil
@@ -122,6 +125,18 @@ func mapArg(project wslproject.Project, cwd, workspaceRoot, arg string, force bo
 		return workspaceRoot, nil
 	}
 	return path.Join(workspaceRoot, descendant.Relative), nil
+}
+
+func isWindowsAbsolutePath(value string) bool {
+	if strings.HasPrefix(value, `\\`) {
+		return true
+	}
+	if len(value) < 3 {
+		return false
+	}
+	drive := value[0]
+	isLetter := drive >= 'A' && drive <= 'Z' || drive >= 'a' && drive <= 'z'
+	return isLetter && value[1] == ':' && (value[2] == '\\' || value[2] == '/')
 }
 
 func resolvePathArg(cwd, arg string, force bool) (string, bool) {

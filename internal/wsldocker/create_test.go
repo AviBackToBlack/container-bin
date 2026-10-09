@@ -39,7 +39,7 @@ func TestCreateContainerBuildsExactRequestAndReprovesOwnership(t *testing.T) {
 			if err := json.Unmarshal(request.Body, &body); err != nil {
 				t.Fatal(err)
 			}
-			if !body.AttachStdin || !body.AttachStdout || !body.AttachStderr || !body.OpenStdin || !body.StdinOnce || !body.TTY || !body.HostConfig.AutoRemove {
+			if !body.AttachStdin || !body.AttachStdout || !body.AttachStderr || !body.OpenStdin || !body.StdinOnce || !body.TTY || !body.HostConfig.AutoRemove || body.HostConfig.ConsoleSize == nil || *body.HostConfig.ConsoleSize != [2]uint16{24, 80} {
 				t.Fatalf("stdio/cleanup body = %#v", body)
 			}
 			if body.Image != spec.Image || body.WorkingDir != spec.WorkingDirectory || !reflect.DeepEqual(body.Command, spec.Command) || !reflect.DeepEqual(body.Environment, spec.Environment) || !reflect.DeepEqual(body.HostConfig.Mounts, engineMounts(spec.Mounts)) {
@@ -116,6 +116,11 @@ func TestCreateContainerRollsBackWarningAndPostCreateMismatch(t *testing.T) {
 			observed.TTY = !spec.TTY
 			return ownedContainerInspect(testContainerID, observed, testRunID, false, true)
 		},
+		"wrong terminal size": func(spec ContainerCreateSpec) []byte {
+			observed := spec
+			observed.TerminalWidth++
+			return ownedContainerInspect(testContainerID, observed, testRunID, false, true)
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			spec := testContainerCreateSpec()
@@ -189,6 +194,9 @@ func TestCreateContainerRejectsInvalidInputsBeforeProof(t *testing.T) {
 		"environment":                   func(spec *ContainerCreateSpec) { spec.Environment = []string{"1BAD=value"} },
 		"environment UTF-8":             func(spec *ContainerCreateSpec) { spec.Environment = []string{"GOOD=" + string([]byte{0xff})} },
 		"duplicate env":                 func(spec *ContainerCreateSpec) { spec.Environment = []string{"A=1", "A=2"} },
+		"height without width":          func(spec *ContainerCreateSpec) { spec.TerminalWidth = 0 },
+		"width without height":          func(spec *ContainerCreateSpec) { spec.TerminalHeight = 0 },
+		"size without TTY":              func(spec *ContainerCreateSpec) { spec.TTY = false },
 		"mount type":                    func(spec *ContainerCreateSpec) { spec.Mounts[0].Type = "socket" },
 		"mount source":                  func(spec *ContainerCreateSpec) { spec.Mounts[0].Source = "relative" },
 		"mount target":                  func(spec *ContainerCreateSpec) { spec.Mounts[0].Target = "/" },
@@ -386,7 +394,9 @@ func testContainerCreateSpec() ContainerCreateSpec {
 			{Type: "bind", Source: "/home/alice/project", Target: "/workspace/project"},
 			{Type: "volume", Source: "cb-" + testWSLNamespace + "-node-modules", Target: "/workspace/project/node_modules", VolumeLabels: testVolumeLabels()},
 		},
-		TTY: true,
+		TTY:            true,
+		TerminalHeight: 24,
+		TerminalWidth:  80,
 	}
 }
 
@@ -414,7 +424,8 @@ func ownedContainerInspect(id string, spec ContainerCreateSpec, runID string, ru
 			Running bool `json:"Running"`
 		} `json:"State"`
 		HostConfig struct {
-			AutoRemove bool `json:"AutoRemove"`
+			AutoRemove  bool      `json:"AutoRemove"`
+			ConsoleSize [2]uint16 `json:"ConsoleSize"`
 		} `json:"HostConfig"`
 	}{ID: id}
 	body.Config.Labels = containerLabels(Container{id: id, namespace: spec.Namespace, runID: runID, tool: spec.Tool})
@@ -426,6 +437,7 @@ func ownedContainerInspect(id string, spec ContainerCreateSpec, runID string, ru
 	body.Config.StdinOnce = true
 	body.State.Running = running
 	body.HostConfig.AutoRemove = autoRemove
+	body.HostConfig.ConsoleSize = [2]uint16{spec.TerminalHeight, spec.TerminalWidth}
 	raw, _ := json.Marshal(body)
 	return raw
 }

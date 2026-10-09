@@ -101,6 +101,9 @@ func validateDistroIdentity(distro string) error {
 			return errors.New("WSL distribution identity contains a control character")
 		}
 	}
+	if strings.EqualFold(distro, "docker-desktop") || strings.EqualFold(distro, "docker-desktop-data") {
+		return errors.New("the private Docker Desktop distribution is not a supported native WSL frontend")
+	}
 	return nil
 }
 

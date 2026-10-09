@@ -9,10 +9,11 @@ type fileStatter interface {
 	Stat() (os.FileInfo, error)
 }
 
-// Interactive reports whether both stdin and stdout are character devices.
-// Any stat failure or redirected stream returns false.
+// Interactive reports whether stdin and stdout can use interactive TTY mode.
+// Windows additionally requires real console handles: NUL is a character
+// device but must remain redirected, non-TTY output.
 func Interactive() bool {
-	return interactiveFor(os.Stdin, os.Stdout)
+	return interactiveFor(os.Stdin, os.Stdout) && platformTerminalPair(os.Stdin, os.Stdout)
 }
 
 func interactiveFor(stdin, stdout fileStatter) bool {

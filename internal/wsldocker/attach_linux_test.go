@@ -24,7 +24,7 @@ func TestPerformDockerAttachUsesExactUpgradeAndReturnsDuplexStream(t *testing.T)
 		if query.Get("logs") != "0" || query.Get("stream") != "1" || query.Get("stdin") != "true" || query.Get("stdout") != "true" || query.Get("stderr") != "false" {
 			t.Errorf("query = %v", query)
 		}
-		if !headerHasToken(request.Header, "Connection", "upgrade") || request.Header.Get("Upgrade") != "tcp" || request.Header.Get("Accept") != attachMediaType {
+		if !headerHasToken(request.Header, "Connection", "upgrade") || request.Header.Get("Upgrade") != "tcp" || request.Header.Get("Accept") != attachRawMediaType+", "+attachMultiplexedMediaType {
 			t.Errorf("headers = %v", request.Header)
 		}
 		connection, readerWriter, err := http.NewResponseController(response).Hijack()
@@ -33,7 +33,7 @@ func TestPerformDockerAttachUsesExactUpgradeAndReturnsDuplexStream(t *testing.T)
 			return
 		}
 		defer connection.Close()
-		_, _ = fmt.Fprintf(readerWriter, "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: tcp\r\nContent-Type: %s\r\n\r\nhello", attachMediaType)
+		_, _ = fmt.Fprintf(readerWriter, "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: tcp\r\nContent-Type: %s\r\n\r\nhello", attachMultiplexedMediaType)
 		_ = readerWriter.Flush()
 		input, err := io.ReadAll(readerWriter)
 		if err != nil || string(input) != "ping" {
@@ -77,7 +77,7 @@ func TestPerformDockerAttachCancellationClosesBlockedStream(t *testing.T) {
 			return
 		}
 		defer connection.Close()
-		_, _ = fmt.Fprintf(readerWriter, "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: tcp\r\nContent-Type: %s\r\n\r\n", attachMediaType)
+		_, _ = fmt.Fprintf(readerWriter, "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: tcp\r\nContent-Type: %s\r\n\r\n", attachMultiplexedMediaType)
 		_ = readerWriter.Flush()
 		_, _ = io.Copy(io.Discard, readerWriter)
 	}))

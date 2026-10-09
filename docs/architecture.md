@@ -513,9 +513,9 @@ identity constructed by this package and its complete labels plus local
 driver/scope. The package also preflights an entire stateful profile's
 project/shared binding set, re-proves the exact project root before deriving
 project identities, and ensures each distinct identity only after the complete
-plan validates. Tool-time composition and the v2 state/GC lifecycle are wired
-and covered by the portable project-boundary integration corpus, but the host
-boundary keeps managed tools activation-gated until real qualification lands.
+plan validates. Tool-time composition and the v2 state/GC lifecycle are wired,
+covered by the portable project-boundary integration corpus and qualified on a
+real WSL2 distribution using Docker Desktop integration.
 
 `internal/wslrun` is the native WSL vertical orchestrator. It requires the
 fixed layout, private registry, managed binary and exact invoked shim; resolves
@@ -536,10 +536,9 @@ all orphan removal uses the same proof-bound non-force lifecycle. Explicit
 `cb wsl cleanup --check|--apply` exposes that recovery path. The same
 coordinator-held pass enumerates managed lease names and reaps an unlocked
 lease only when complete namespace discovery contains no matching run; locked
-lease-only records remain untouched. The production host
-boundary still does not dispatch into this orchestrator until real WSL
-qualification completes. `internal/wslstate` is dispatched
-separately before that gate; it plans current project/shared identities from
+lease-only records remain untouched. The production WSL2 host boundary
+dispatches managed tool shims into this orchestrator after fixed-installation
+preflight. `internal/wslstate` plans current project/shared identities from
 the fixed registry, consumes only exactly proven namespace volumes, and offers
 dry-run-by-default non-force project cleanup without selecting shared state.
 

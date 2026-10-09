@@ -95,7 +95,11 @@ func performDockerAttachWithTimeout(ctx context.Context, socketPath string, requ
 		transport.CloseIdleConnections()
 		return attachOperationResult{}, fmt.Errorf("build Docker Desktop attach request: %w", err)
 	}
-	httpRequest.Header.Set("Accept", attachMediaType)
+	accept := attachRawMediaType
+	if !request.TTY {
+		accept += ", " + attachMultiplexedMediaType
+	}
+	httpRequest.Header.Set("Accept", accept)
 	httpRequest.Header.Set("Connection", "Upgrade")
 	httpRequest.Header.Set("Upgrade", "tcp")
 	response, err := client.Do(httpRequest)

@@ -51,8 +51,8 @@ var currentHostRuntime = hostenv.Current
 var runWSLTool = wslrun.Run
 
 // runWSLState owns the fixed-layout, proof-bound native-WSL state inventory
-// and cleanup surface. It is dispatched before the intentionally closed
-// general WSL frontend gate, just like cb wsl bootstrap/install commands.
+// and cleanup surface. It is dispatched before ordinary management handling,
+// just like cb wsl bootstrap/install commands.
 var runWSLState = wslstate.Run
 
 // runSelfUpdate is a test seam for proving the complete explicit self-update
@@ -511,8 +511,8 @@ Commands:
   cb help      print this help without loading the registry
 
 Native WSL2:
-  Bootstrap, cb wsl ..., cb state and cb gc are enabled. The managed-tool
-  runtime is wired but activation awaits real Docker Desktop qualification.
+  Bootstrap, cb wsl ..., cb state, cb gc and managed-tool dispatch are enabled
+  in an amd64 (x64) WSL2 user distribution with Docker Desktop integration.
 
 Registry:
   %s

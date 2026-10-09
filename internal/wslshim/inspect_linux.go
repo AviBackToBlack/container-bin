@@ -45,7 +45,7 @@ func InspectNames(layout hostenv.WSLLayout, names []string) (Result, error) {
 
 // Reconcile creates only missing registry-derived tool shims after validating
 // the complete fixed layout. Existing objects are never replaced. The native
-// frontend does not expose this primitive until installer qualification lands.
+// installer owns this primitive.
 func Reconcile(layout hostenv.WSLLayout, names []string) (Result, error) {
 	plan, err := wslfs.Check(layout)
 	if err != nil {

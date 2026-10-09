@@ -64,6 +64,7 @@ type runDependencies struct {
 	resize          func(context.Context, string, uint16, uint16) error
 	signal          func(context.Context, string, int) error
 	remove          func(context.Context, containerHandle) error
+	initialTTYSize  func(bool) (uint16, uint16)
 	prepareTerminal func(bool) (terminalControl, error)
 	startEvents     func(bool) (<-chan hostEvent, func(), error)
 	stdin           io.Reader
@@ -76,12 +77,14 @@ func executeTool(ctx context.Context, plan toolPlan, deps runDependencies) (code
 		return 0, errors.New("native WSL tool execution requires a context")
 	}
 	if deps.ensureVolume == nil || deps.beginRun == nil || deps.create == nil || deps.attach == nil || deps.start == nil || deps.wait == nil ||
-		deps.resize == nil || deps.signal == nil || deps.remove == nil || deps.prepareTerminal == nil || deps.startEvents == nil ||
+		deps.resize == nil || deps.signal == nil || deps.remove == nil || deps.initialTTYSize == nil || deps.prepareTerminal == nil || deps.startEvents == nil ||
 		deps.stdin == nil || deps.stdout == nil || deps.stderr == nil {
 		return 0, errors.New("native WSL tool execution dependencies are incomplete")
 	}
 	runCtx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
+	runtimeSpec := plan.spec
+	runtimeSpec.TerminalHeight, runtimeSpec.TerminalWidth = deps.initialTTYSize(runtimeSpec.TTY)
 	for _, volume := range plan.volumes {
 		if err := deps.ensureVolume(runCtx, volume); err != nil {
 			return 0, fmt.Errorf("ensure native WSL volume %s: %w", volume.Name(), err)
@@ -97,7 +100,7 @@ func executeTool(ctx context.Context, plan toolPlan, deps runDependencies) (code
 			retErr = errors.Join(retErr, fmt.Errorf("close native WSL runtime lease: %w", err))
 		}
 	}()
-	container, err := deps.create(runCtx, plan.spec)
+	container, err := deps.create(runCtx, runtimeSpec)
 	if err != nil {
 		return 0, fmt.Errorf("create native WSL tool container: %w", err)
 	}
@@ -167,18 +170,18 @@ func executeTool(ctx context.Context, plan toolPlan, deps runDependencies) (code
 		return 0, fmt.Errorf("publish native WSL runtime lease: %w", err)
 	}
 
-	events, stop, err := deps.startEvents(plan.spec.TTY)
+	events, stop, err := deps.startEvents(runtimeSpec.TTY)
 	if err != nil {
 		return 0, err
 	}
 	stopEvents = stop
 	stream, err = deps.attach(runCtx, wsldocker.AttachRequest{
-		ContainerID: container.id, Stdin: true, Stdout: true, Stderr: true, TTY: plan.spec.TTY,
+		ContainerID: container.id, Stdin: true, Stdout: true, Stderr: true, TTY: runtimeSpec.TTY,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("attach native WSL tool container: %w", err)
 	}
-	term, err = deps.prepareTerminal(plan.spec.TTY)
+	term, err = deps.prepareTerminal(runtimeSpec.TTY)
 	if err != nil {
 		return 0, err
 	}
@@ -194,7 +197,7 @@ func executeTool(ctx context.Context, plan toolPlan, deps runDependencies) (code
 		waitCode, waitErr := deps.wait(runCtx, container.id)
 		waitDone <- waitResult{code: waitCode, err: waitErr}
 	}()
-	if plan.spec.TTY && term.height != 0 && term.width != 0 {
+	if runtimeSpec.TTY && term.height != 0 && term.width != 0 {
 		if err := deps.resize(runCtx, container.id, term.height, term.width); err != nil && !containerCompletionRace(err) {
 			return 0, fmt.Errorf("set initial native WSL container terminal size: %w", err)
 		}
