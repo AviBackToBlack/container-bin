@@ -512,7 +512,7 @@ Commands:
 
 Native WSL2:
   Bootstrap, cb wsl ..., cb state, cb gc and managed-tool dispatch are enabled
-  in a native WSL2 user distribution with Docker Desktop integration.
+  in an amd64 (x64) WSL2 user distribution with Docker Desktop integration.
 
 Registry:
   %s

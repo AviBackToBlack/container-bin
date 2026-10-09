@@ -28,6 +28,7 @@ const (
 type Runtime struct {
 	Kind           Kind
 	GOOS           string
+	GOARCH         string
 	KernelRelease  string
 	Distro         string
 	InteropMarkers []string
@@ -46,11 +47,13 @@ func Current() (Runtime, error) {
 			return Runtime{}, fmt.Errorf("read Linux kernel release: %w", err)
 		}
 	}
-	return classify(goos, kernelRelease, os.Getenv("WSL_DISTRO_NAME"), os.Getenv("WSL_INTEROP")), nil
+	info := classify(goos, kernelRelease, os.Getenv("WSL_DISTRO_NAME"), os.Getenv("WSL_INTEROP"))
+	info.GOARCH = runtime.GOARCH
+	return info, nil
 }
 
 // RequireFrontend enforces the supported host boundary. Native Windows and a
-// precisely classified native WSL2 user distribution are enabled. Native WSL
+// precisely classified amd64 native WSL2 user distribution are enabled. Native WSL
 // bootstrap/install and state-management commands are dispatched separately
 // before this general gate.
 func RequireFrontend() error {
@@ -77,7 +80,7 @@ func requireFrontend(info Runtime, probeErr error) error {
 		if err := validateDistroIdentity(info.Distro); err != nil {
 			return fmt.Errorf("native WSL2 distribution identity cannot be proven: %w", err)
 		}
-		return nil
+		return info.RequireWSLArchitecture()
 	case WSL1Native:
 		return errors.New("WSL1 is unsupported; the native frontend requires WSL2 and Docker Desktop WSL integration")
 	case WSLUnrecognized:
@@ -87,6 +90,16 @@ func requireFrontend(info Runtime, probeErr error) error {
 	default:
 		return fmt.Errorf("host operating system %q is unsupported", info.GOOS)
 	}
+}
+
+// RequireWSLArchitecture enforces the qualified native WSL architecture before
+// ordinary tool dispatch or fixed-layout install/state operations. Bootstrap
+// version/help output does not need this runtime capability.
+func (r Runtime) RequireWSLArchitecture() error {
+	if r.GOARCH != "amd64" {
+		return fmt.Errorf("native WSL2 architecture %q is unsupported; the qualified frontend requires amd64 (x64)", r.GOARCH)
+	}
+	return nil
 }
 
 func classify(goos, kernelRelease, distro, interop string) Runtime {

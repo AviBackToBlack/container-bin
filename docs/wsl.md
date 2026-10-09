@@ -15,6 +15,9 @@ inventory and cleanup lifecycle is part of the same supported frontend.
 
 - Native Windows and the native WSL2 frontend are qualified release frontends
   on x64 Windows with Docker Desktop running Linux containers.
+- Native WSL tool dispatch and install/state operations require an `amd64`
+  (x64) binary. ARM64 and unknown architectures fail closed; bootstrap
+  version/help/config output remains available for diagnosis.
 - A Windows process with `WSL_INTEROP` or `WSL_DISTRO_NAME` is classified as
   Windows-through-WSL interoperability and rejected. The diagnostic names the
   inherited marker so a stray variable in an otherwise native Windows process

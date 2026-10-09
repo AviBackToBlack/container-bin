@@ -20,6 +20,9 @@ func currentLayout() (hostenv.WSLLayout, error) {
 	if err != nil {
 		return hostenv.WSLLayout{}, err
 	}
+	if err := runtime.RequireWSLArchitecture(); err != nil {
+		return hostenv.WSLLayout{}, err
+	}
 	machineID, err := readMachineIDFile("/etc/machine-id")
 	if err != nil {
 		return hostenv.WSLLayout{}, fmt.Errorf("read native WSL machine identity: %w", err)

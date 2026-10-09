@@ -1,7 +1,8 @@
 # Native WSL2 activation qualification
 
-The activation baseline ran on 2026-10-08 and was repeated against the final
-code on 2026-10-09. This record belongs to the activation change based on
+The activation baseline ran on 2026-10-08 and was repeated against the runtime
+code on 2026-10-09. A subsequent architecture-guard review fix and its narrower
+follow-up checks are recorded below. This activation change is based on
 `60446b8162d987b45ee6fe77d7e77223afe1c0b6`. It covers source-built runtime
 activation; the published candidate's archive, provenance and exact-target
 self-update checks remain separate release gates in
@@ -123,3 +124,29 @@ Formatting, `git diff --check`, `go vet ./...`, `go test -race ./...`, native
 Windows terminal regression tests, the 11 embedded Python tests and
 release-style version injection all passed. CI still supplies the complete
 native Windows/ARM64 unit suites and independent release-bundle reproduction.
+
+## Architecture-guard review follow-up
+
+Automated review found that a source-built ARM64 binary could pass the new
+ordinary WSL frontend gate despite the x64-only support contract. The follow-up
+records the process architecture and requires exactly `amd64` both at tool
+dispatch and when deriving the current install/state layout. Bootstrap
+version/help/config remain available. Tests reject ARM64, 386, empty and
+noncanonical architecture values while preserving native Windows ARM64.
+
+The follow-up builds used the same flags with version
+`v2.0.0-qualification.7`:
+
+```text
+linux/amd64 cb:
+35b77b62957390db97fa5e656731fe97346b93a377080ca611360c3b87dba5e8
+windows/amd64 cb.exe:
+b1f5196e60fca1e39debe3d0268bb4d61a54912b03cee962630a192163716b74
+```
+
+The Linux follow-up was installed through `cb wsl install --apply`. Installation
+recheck, all 12 image-lock checks, piped jq execution and state inventory in
+both storage modes passed; retained-container cleanup reported no active,
+orphaned or residual leases. Full race tests and vet also passed again. This
+follow-up did not repeat the full PTY/crash/Windows-shell matrix above; its
+runtime change only narrows architecture eligibility before those workflows.
