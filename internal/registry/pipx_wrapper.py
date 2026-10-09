@@ -50,7 +50,8 @@ def normalize_state(root, allowed_python):
             launcher_python = (
                 len(parts) == 5
                 and parts[:2] == ("launcher-cache", "archive-v0")
-                and parts[-2:] == ("bin", "python")
+                and parts[-2] == "bin"
+                and parts[-1] in interpreter_aliases
             )
             if target != allowed_python or not (
                 venv_python or shared_python or launcher_python
