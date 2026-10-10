@@ -27,7 +27,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
+          go-version-file: .go-version
           check-latest: false
       - name: gofmt
         run: |
@@ -37,6 +37,10 @@ jobs:
             echo "$out" >&2
             exit 1
           fi
+      - name: Verify shipping compiler and defaults
+        run: |
+          test "$(go env GOVERSION)" = "go$(tr -d '\r\n' < .go-version)"
+          test -z "$(go list -f '{{.DefaultGODEBUG}}' .)"
       - name: go vet
         run: go vet ./...
       - name: go test (race)
@@ -67,7 +71,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
+          go-version-file: .go-version
           check-latest: false
       - name: go test
         run: go test -v ./...
@@ -93,7 +97,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
+          go-version-file: .go-version
           check-latest: false
       - name: Verify native ARM64 runner
         shell: pwsh
@@ -161,6 +165,29 @@ jobs:
           # after asserting it so pwsh reports this validation step as passed.
           exit 0
 
+  source-compatibility:
+    name: Source compatibility (Go 1.24; not release)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          # Existing Go shim compatibility only; never upload these outputs.
+          go-version: '1.24.13'
+          check-latest: false
+      - name: Check offline source compatibility
+        env:
+          GOPROXY: 'off'
+          GOSUMDB: 'off'
+          CGO_ENABLED: '0'
+        run: |
+          go test ./...
+          GOOS=windows GOARCH=amd64 go build -buildvcs=false -o "$RUNNER_TEMP/cb-amd64.exe" .
+          GOOS=windows GOARCH=arm64 go build -buildvcs=false -o "$RUNNER_TEMP/cb-arm64.exe" .
+
   govulncheck-targets:
     name: govulncheck (${{ matrix.target.goos }}/${{ matrix.target.goarch }})
     runs-on: ubuntu-latest
@@ -179,7 +206,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           # Analyze the standard library that actually builds the releases.
-          go-version-file: go.mod
+          go-version-file: .go-version
           check-latest: false
       - name: Install govulncheck
         # Pinned like every other supply-chain input. Freshness of results is

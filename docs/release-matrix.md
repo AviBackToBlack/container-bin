@@ -132,14 +132,16 @@ The x64 `test-windows` job in `.github/workflows/ci.yml` is:
     name: Test and build (Windows)
     runs-on: windows-latest
     timeout-minutes: 20
+    env:
+      GOTOOLCHAIN: local
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
-          check-latest: true
+          go-version-file: .go-version
+          check-latest: false
       - name: go test
         run: go test -v ./...
       - name: Test benchmark comparison (Windows PowerShell 5.1)

@@ -11,7 +11,7 @@ version="$2"
 mkdir -p "$3"
 reports="$(realpath "$3")"
 date -u +'%Y-%m-%dT%H:%M:%SZ' > "$reports/started-at.txt"
-expected="$(awk '$1 == "go" { print $2 }' go.mod)"
+expected="$(tr -d '\r\n' < .go-version)"
 [[ "$expected" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
 test "$(go env GOVERSION)" = "go${expected}"
 go version -m "$(command -v govulncheck)" > "$reports/scanner-buildinfo.txt"
@@ -39,6 +39,11 @@ for target in windows-amd64 windows-arm64 linux-amd64; do
   grep -Fxq $'\tbuild\tGOOS='"${target%-*}" "$info"
   grep -Fxq $'\tbuild\tGOARCH='"${target#*-}" "$info"
   grep -Fxq $'\tbuild\tCGO_ENABLED=0' "$info"
+  # A lower language minimum must not select legacy shipping GODEBUG defaults.
+  if grep -q 'DefaultGODEBUG=' "$info"; then
+    echo "unexpected compatibility defaults in $target" >&2
+    exit 1
+  fi
   sha256sum "$binary" | sed "s|$scratch/||" > "$reports/sha256-$target.txt"
   # Extract metadata records whether the scanner has symbols. Stripped release
   # payloads may get conservative module-level results; never label these as

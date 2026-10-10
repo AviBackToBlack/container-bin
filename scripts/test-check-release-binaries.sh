@@ -6,7 +6,8 @@ scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
 cd "$scratch"
 mkdir -p tools bundle payload
-printf 'module test\n\ngo 1.27.2\n' > go.mod
+printf 'module test\n\ngo 1.24\n' > go.mod
+printf '1.27.2\n' > .go-version
 printf 'fixture executable\n' > payload/cb.exe
 cp payload/cb.exe bundle/cb.exe
 (cd payload; zip -q ../bundle/container-bin-v0.0.0-test-windows-amd64.zip cb.exe)
@@ -29,6 +30,7 @@ else
   target="${target%.exe}"
   printf '%s: %s\n\tbuild\tGOOS=%s\n\tbuild\tGOARCH=%s\n\tbuild\tCGO_ENABLED=%s\n' \
     "$3" "${EMBEDDED_GO:-go1.27.2}" "${target%-*}" "${TARGET_ARCH:-${target#*-}}" "${CGO_FLAG:-0}"
+  if [[ -n "${DEBUG_DEFAULTS:-}" ]]; then printf '\tbuild\tDefaultGODEBUG=%s\n' "$DEBUG_DEFAULTS"; fi
 fi
 MOCK
 cat > tools/govulncheck <<'MOCK'
@@ -56,7 +58,8 @@ expect_failure env SCANNER_VERSION=v0.0.0 bash "$gate" bundle v0.0.0-test report
 expect_failure env EMBEDDED_GO=go1.23.12 bash "$gate" bundle v0.0.0-test reports
 expect_failure env TARGET_ARCH=386 bash "$gate" bundle v0.0.0-test reports
 expect_failure env CGO_FLAG=1 bash "$gate" bundle v0.0.0-test reports
+expect_failure env DEBUG_DEFAULTS=tlssha1=1 bash "$gate" bundle v0.0.0-test reports
 expect_failure bash "$gate" bundle invalid reports
 printf 'corruption\n' >> bundle/cb.exe
 expect_failure bash "$gate" bundle v0.0.0-test reports
-echo 'release gate contract tests passed (success, findings, scanner/toolchain/target/CGO mismatch, invalid version, corruption)'
+echo 'release gate contract tests passed (success, findings, scanner/toolchain/target/CGO/defaults mismatch, invalid version, corruption)'

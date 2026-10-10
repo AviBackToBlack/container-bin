@@ -33,11 +33,14 @@ docker run --rm -v "${PWD}:/src" -w /src -e GOFLAGS=-buildvcs=false -e GOTOOLCHA
 If you *do* have Go installed, plain `gofmt`, `go vet ./...` and `go test ./...`
 work too. CI runs tests on both Linux and Windows, with the race detector on Linux.
 
-The exact Go patch in `go.mod` is the supported contributor, CI, vulnerability
+The exact Go patch in `.go-version` is the supported contributor, CI, vulnerability
 scan and release-build toolchain. `GOTOOLCHAIN=local` prevents silent toolchain
-downloads; use that exact version, not `stable` or an older Go image. An old
-minimum-language promise is not retained without a separate compatibility
-requirement and validation. See [release toolchain policy](docs/release-toolchain.md).
+downloads; use that exact version, not `stable`, for release/security validation.
+`go.mod` retains Go 1.24 source compatibility because ContainerBin's built-in Go
+shim uses that series. Compatibility builds through the shim are not patched
+release builds or vulnerability evidence. The Go 1.27-only defaults directive
+keeps shipping security defaults independent of the older language minimum.
+See [release toolchain policy](docs/release-toolchain.md).
 
 ## What unit tests can and cannot prove
 

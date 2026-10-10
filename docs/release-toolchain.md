@@ -2,7 +2,7 @@
 
 ## Deterministic security baseline
 
-`go.mod` pins **Go 1.27.2** for contributor builds, native CI, platform-specific
+`.go-version` pins **Go 1.27.2** for contributor builds, native CI, platform-specific
 source vulnerability analysis, release builds and independent reproduction.
 `check-latest: false` and `GOTOOLCHAIN=local` prevent resolution to a different
 patch or a downloaded toolchain. Updating the pin is an explicit reviewed
@@ -10,12 +10,19 @@ maintenance change, not a floating build input. The standard-library-only
 runtime dependency policy is unchanged.
 
 Go supports its latest two release series. As checked on 2026-10-11, 1.27.2 is
-the current patched release and 1.23.12 is unsupported. No documented consumer
-requirement for retaining Go 1.23 source-build compatibility was identified;
-ContainerBin's supported contract is its CLI/shims, not a public Go library.
-This intentionally raises the contributor toolchain requirement, without
-changing CLI compatibility. A future older language minimum needs its own
-justification and compatibility tests, separate from the shipping toolchain.
+the current patched release and 1.23.12 is unsupported. The module language
+minimum is separately **Go 1.24**, justified by the existing built-in Go/gofmt
+shim profiles (`golang:1.24`). Keeping source compatibility avoids a tool-profile
+or cache migration in this bounded release fix. It does not endorse unsupported
+compilers for security-qualified release outputs. Offline, GOTOOLCHAIN=local
+compatibility builds are tested separately.
+
+An older module language version also selects older GODEBUG defaults. Therefore
+`defaults_go127.go`, enabled only for Go 1.27+, explicitly selects Go 1.27
+defaults for shipping builds (including TLS SHA-1 and HTTP parsing limits).
+The file is excluded from Go 1.24 compatibility builds. Update this baseline
+when deliberately upgrading the release compiler series; do not restore old
+security defaults merely to retain source syntax compatibility.
 
 ## Evidence must match what ships
 
