@@ -6,6 +6,12 @@ OpenSSF Scorecard v5.5.0. These are workflow, testing and governance findings,
 not nine demonstrated application vulnerabilities. Alert state on the default
 branch is authoritative; a proposed fix or a successful PR check is not closure.
 
+The pinned Scorecard action's [policy](https://github.com/ossf/scorecard-action/blob/2d1146689b8cda280b9bc96326124645441f03bc/policies/template.yml)
+requires scores of 10 for Branch-Protection, Code-Review, Security-Policy and
+Fuzzing; 5 for CII-Best-Practices (a passing badge); and 1 for Maintained.
+Partial score improvements do not necessarily clear an alert. Keep these
+thresholds intact rather than weakening policy to make the dashboard green.
+
 ## Repository changes
 
 | Alert | Cause | Remediation and verification |
@@ -40,22 +46,26 @@ not replace independent human review under Scorecard's criterion.
 
 Before any settings change:
 
-1. Identify a genuinely independent human reviewer with permissions sufficient
-   to satisfy required GitHub approvals. A GitHub `User` account alone is not
+1. Identify two genuinely independent human reviewers with permissions sufficient
+   to satisfy required GitHub approvals. The full 10/10 branch-protection policy
+   requires at least two approving reviews, not just the first-tier improvement
+   of one. A GitHub `User` account alone is not
    evidence that a review is human or eligible.
 2. Arrange eligible independent CODEOWNER coverage with the owner's approval.
    `CODEOWNERS` currently names only the repository owner; removing the review
    bypass while requiring owner review can block owner-authored PRs. Do not
    disable CODEOWNER review to manufacture a better score.
-3. Obtain explicit approval for the exact ruleset edits: require at least one
+3. Obtain explicit approval for the exact ruleset edits: require at least two
    approval, latest-reviewable-push approval and up-to-date checks; remove the
    `main-review` administrator bypass once independent review is feasible.
    Preserve stale-review dismissal, thread resolution, integrity and security
    rules, existing required checks and full-SHA action pins.
 4. Read back effective rules and inspect the next real PR's review/merge gates.
    Verify fresh Scorecard results. Review-history scoring will improve only as
-   genuinely approved changes enter the rolling window; do not rewrite history
-   or create artificial changes to flush it.
+   genuinely approved changes enter the rolling window. The current alert
+   threshold is 10/10, so historical unreviewed changes may keep it open after
+   settings improve; do not rewrite history or create artificial changes to
+   flush it.
 
 No repository settings, reviewer permissions or bypasses are changed by the
 repository fixes. If independent review is unavailable, record the residual
@@ -100,7 +110,8 @@ These pointers are inputs, not a completed criteria audit or badge claim. The
 owner must assess every applicable criterion and provide truthful evidence,
 including actual report-response performance, maintainer security expertise,
 and any remaining process gaps. Register the exact repository URL, pursue the
-appropriate badge level, then verify the badge API and a fresh Scorecard result.
+passing badge (5/10 meets the current action policy), then verify the badge API
+and a fresh Scorecard result.
 Registration or an in-progress badge alone does not imply this alert closes.
 
 ## Completion boundary
