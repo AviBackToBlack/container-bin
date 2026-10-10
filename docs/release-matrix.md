@@ -6,6 +6,11 @@ It is what `docs/shell-contract.md` and `docs/windows-paths.md` are validated
 against on a real host: a set of documented steps a maintainer runs before a
 release because GitHub-hosted CI cannot cover this ground.
 
+The exact build toolchain and packaged-binary vulnerability gates are defined
+in [release-toolchain.md](release-toolchain.md). A compiler upgrade requires
+fresh qualification of its actual candidate outputs; a prior release's green
+matrix is not evidence for binaries built with a different standard library.
+
 The roadmap text for RM-7b is:
 
 > Define and maintain the validation matrix: Windows 11; Windows PowerShell 5.1;
