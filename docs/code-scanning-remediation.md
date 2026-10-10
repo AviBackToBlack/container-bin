@@ -56,10 +56,16 @@ Before any settings change:
    bypass while requiring owner review can block owner-authored PRs. Do not
    disable CODEOWNER review to manufacture a better score.
 3. Obtain explicit approval for the exact ruleset edits: require at least two
-   approval, latest-reviewable-push approval and up-to-date checks; remove the
+   approvals, latest-reviewable-push approval and up-to-date checks; remove the
    `main-review` administrator bypass once independent review is feasible.
    Preserve stale-review dismissal, thread resolution, integrity and security
    rules, existing required checks and full-SHA action pins.
+   After the fuzz jobs have landed and emitted successful check runs on `main`,
+   add the exact contexts `Fuzz (Linux)` and `Fuzz (Windows)` to `main-integrity`'s
+   existing required checks, bound to the GitHub Actions integration (15368).
+   Until that separately approved settings change, fuzz failures are visible
+   but do not themselves block merges. Keep the six existing required contexts;
+   do not replace them or require contexts before their jobs exist on `main`.
 4. Read back effective rules and inspect the next real PR's review/merge gates.
    Verify fresh Scorecard results. Review-history scoring will improve only as
    genuinely approved changes enter the rolling window. The current alert
