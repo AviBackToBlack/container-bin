@@ -147,7 +147,7 @@ jobs:
 
       - name: Preserve release vulnerability evidence
         if: always() && (steps.release-scan.outcome == 'success' || steps.release-scan.outcome == 'failure')
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-vulnerability-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/release-vulnerability
@@ -217,7 +217,7 @@ jobs:
           echo 'Windows and native WSL artifacts plus checksum manifest are reproducible'
 
       - name: Upload verified release bundle
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: container-bin-release-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
