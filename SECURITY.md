@@ -22,7 +22,7 @@ Only the latest released version receives security fixes.
 
 ## Reporting a vulnerability
 
-Please use **GitHub private vulnerability reporting**
+Please use [GitHub private vulnerability reporting](https://github.com/AviBackToBlack/container-bin/security/advisories/new)
 (Security → "Report a vulnerability" on the repository) rather than a public
 issue. Include:
 
