@@ -20,6 +20,7 @@ import (
 	"github.com/AviBackToBlack/container-bin/internal/lockfile"
 	"github.com/AviBackToBlack/container-bin/internal/pathmap"
 	"github.com/AviBackToBlack/container-bin/internal/policy"
+	"github.com/AviBackToBlack/container-bin/internal/pythonenv"
 	"github.com/AviBackToBlack/container-bin/internal/registry"
 	"github.com/AviBackToBlack/container-bin/internal/terminal"
 )
@@ -34,7 +35,7 @@ const IsolatedRoot = "?:\\no-project"
 
 // PythonBootstrap is exported within the internal tree so the native WSL
 // frontend can pin exact command parity without depending on dockerrun at run time.
-const PythonBootstrap = `if [ ! -x /venv/bin/python ]; then python -m venv /venv || exit $?; fi; if [ "$1" = "__CB_PIP__" ]; then shift; exec /venv/bin/python -m pip "$@"; else exec /venv/bin/python "$@"; fi`
+var PythonBootstrap = pythonenv.Bootstrap
 
 type runContext struct {
 	cwd           string

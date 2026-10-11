@@ -47,8 +47,15 @@ jobs:
         run: go test -race ./...
       - name: Test packaged-binary vulnerability gate
         run: bash scripts/test-check-release-binaries.sh
-      - name: Test embedded pipx wrapper
-        run: python3 -m unittest -v internal/registry/pipx_wrapper_test.py internal/cli/pipx_discovery_test.py
+      - name: Test embedded Python bootstraps and pipx discovery
+        run: python3 -m unittest -v internal/pythonenv/bootstrap_test.py internal/registry/pipx_wrapper_test.py internal/cli/pipx_discovery_test.py
+      - name: Python state archive round trips (disposable Docker daemon)
+        env:
+          CB_STATE_DOCKER_TEST: '1'
+        run: |
+          docker pull python@sha256:bf44cdfcb76cd3b41e879bc058fc37ec5872002ccfde7fcb765e218cde0cd79c
+          docker pull docker.io/library/alpine:3.23@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40
+          go test -v ./internal/statearchive -run '^TestPythonStateDockerRoundTrip$' -count=1
       - name: Verify release-style version injection
         run: |
           # The binary MUST be named cb: argv[0] dispatch treats any other

@@ -157,6 +157,29 @@ func TestHelperCommandAttachesOnlyRestoreStdin(t *testing.T) {
 	}
 }
 
+func TestPythonCompatibilityIdentityPreservesBothKnownOwners(t *testing.T) {
+	for _, owner := range []string{"python313/venv", "python313/global"} {
+		labels := map[string]string{"cb.managed": "true", "cb.kind": "compat", "cb.owner": owner}
+		if _, _, err := validateManagedIdentity("cb-python-313-global", labels); err != nil {
+			t.Fatalf("existing owner %q rejected: %v", owner, err)
+		}
+		if _, _, err := validateManagedIdentity("cb-python-313-other", labels); err == nil {
+			t.Fatalf("owner %q admitted a different volume name", owner)
+		}
+		labels["cb.project_path"] = t.TempDir()
+		if _, _, err := validateManagedIdentity("cb-python-313-global", labels); err == nil {
+			t.Fatalf("owner %q admitted project labels on compatibility state", owner)
+		}
+	}
+	for _, owner := range []string{"python313/other", "other/venv", ""} {
+		if _, _, err := validateManagedIdentity("cb-python-313-global", map[string]string{
+			"cb.managed": "true", "cb.kind": "compat", "cb.owner": owner,
+		}); err == nil {
+			t.Fatalf("unsupported owner %q admitted", owner)
+		}
+	}
+}
+
 func testManifest(tarData []byte) Manifest {
 	sum := sha256.Sum256(tarData)
 	return Manifest{

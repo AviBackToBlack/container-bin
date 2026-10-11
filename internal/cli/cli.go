@@ -1201,6 +1201,20 @@ func Backup(cfgPath string, args []string, version string, machinePolicy policy.
 	if err := f.Close(); err != nil {
 		return err
 	}
+	if stateCount > 0 {
+		archive, err := zip.OpenReader(path)
+		if err != nil {
+			return err
+		}
+		_, validationErr := statearchive.Open(archive.File)
+		closeErr := archive.Close()
+		if validationErr != nil {
+			return fmt.Errorf("state backup is not restorable: %w; run the Python provider once to repair legacy interpreter links, or resolve unsupported state links before retrying", validationErr)
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+	}
 	complete = true
 	abs, _ := filepath.Abs(path)
 	fmt.Printf("backup: %s\n", abs)
