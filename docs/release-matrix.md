@@ -144,7 +144,7 @@ Record the results in a release-qualification issue using
 
 The Linux verification job additionally runs an opt-in real Docker regression
 using pinned Python/helper images and fresh, ownership-checked project and
-compatibility volumes. It covers new/legacy venv archive round trips,
+compatibility volumes. It covers new/legacy/partially migrated venv round trips,
 non-empty refusal, package preservation, stdin/EOF, split streams and exit
 codes. This is Linux Docker Engine evidence, not Windows shell, Docker Desktop
 or native WSL qualification. The ordinary Go suite skips that integration

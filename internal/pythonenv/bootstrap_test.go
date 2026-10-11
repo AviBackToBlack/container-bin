@@ -16,7 +16,7 @@ func TestBootstrapShellQuotingAndArgv(t *testing.T) {
 	// prints its arguments. This exercises the actual embedded shell quoting
 	// without creating /venv or running the bootstrap on the test host.
 	wrapper := `python() { printf '%s\000' "$@"; }; ` + Bootstrap
-	wrapper = strings.Replace(wrapper, "exec python", "python", 1)
+	wrapper = strings.Replace(wrapper, `exec "$image_python"`, "python", 1)
 	args := []string{"-c", "print('quoted')", "a b", "", "$(no-command)"}
 	cmd := exec.Command("sh", append([]string{"-c", wrapper, "cb"}, args...)...)
 	out, err := cmd.Output()
@@ -24,7 +24,7 @@ func TestBootstrapShellQuotingAndArgv(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00")
-	want := append([]string{"-c", script}, args...)
+	want := append([]string{"-I", "-c", script}, args...)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("bootstrap argv mismatch: got %q, want %q", got, want)
 	}

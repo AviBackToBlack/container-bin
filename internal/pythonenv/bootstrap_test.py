@@ -87,6 +87,38 @@ class PythonBootstrapTests(unittest.TestCase):
             BOOTSTRAP.prepare(self.root, self.image_python)
         self.assertEqual(list(outside.iterdir()), [])
 
+    def test_interrupted_alias_copy_resumes_and_removes_temporary_files(self):
+        binary_dir = self.root / "bin"
+        binary_dir.mkdir()
+        (binary_dir / "python").symlink_to(self.image_python)
+        (binary_dir / "python3").symlink_to("python")
+        copy = BOOTSTRAP.shutil.copy2
+        count = 0
+
+        def interrupt_second_copy(*args):
+            nonlocal count
+            count += 1
+            if count == 2:
+                raise KeyboardInterrupt
+            return copy(*args)
+
+        with mock.patch.object(BOOTSTRAP.shutil, "copy2", side_effect=interrupt_second_copy):
+            with self.assertRaises(KeyboardInterrupt):
+                BOOTSTRAP.prepare(self.root, self.image_python)
+        self.assertFalse((binary_dir / "python").is_symlink())
+        self.assertTrue((binary_dir / "python3").is_symlink())
+        self.assertEqual(list(binary_dir.glob(".cb-python-*")), [])
+        BOOTSTRAP.prepare(self.root, self.image_python)
+        self.assertFalse((binary_dir / "python3").is_symlink())
+
+    def test_modified_internal_interpreter_copy_is_not_trusted(self):
+        binary_dir = self.root / "bin"
+        binary_dir.mkdir()
+        (binary_dir / "python").write_text("not the exact image interpreter")
+        (binary_dir / "python3").symlink_to("python")
+        with self.assertRaisesRegex(RuntimeError, "unsupported Python interpreter link"):
+            BOOTSTRAP.prepare(self.root, self.image_python)
+
     def test_lock_symlink_is_rejected_without_writing_its_target(self):
         outside = self.root / "outside"
         outside.write_text("unchanged")
@@ -100,6 +132,24 @@ class PythonBootstrapTests(unittest.TestCase):
         root_link.symlink_to(self.root, target_is_directory=True)
         with self.assertRaisesRegex(RuntimeError, "root must be a real directory"):
             BOOTSTRAP.prepare(root_link, self.image_python)
+
+    def test_incomplete_state_never_runs_venv_creation_through_existing_paths(self):
+        for name in ("alias", "configuration"):
+            with self.subTest(name=name):
+                root = self.root / name
+                root.mkdir()
+                outside = self.root / f"outside-{name}"
+                outside.write_text("unchanged")
+                if name == "alias":
+                    (root / "bin").mkdir()
+                    (root / "bin" / "python3").symlink_to(outside)
+                else:
+                    (root / "pyvenv.cfg").symlink_to(outside)
+                with mock.patch.object(BOOTSTRAP.subprocess, "run") as create:
+                    with self.assertRaisesRegex(RuntimeError, "contents but no interpreter"):
+                        BOOTSTRAP.prepare(root, self.image_python)
+                    create.assert_not_called()
+                self.assertEqual(outside.read_text(), "unchanged")
 
     def test_unknown_dangling_interpreter_is_rejected(self):
         binary_dir = self.root / "bin"

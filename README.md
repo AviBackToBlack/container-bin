@@ -863,7 +863,10 @@ compressed state data.
 The Python provider creates new venvs with copied interpreters. On the first
 Python/pip invocation with an older venv, it replaces only recognized
 `bin/python*` symlinks resolving to the current image interpreter with copies,
-preserving installed packages. Both frontends use the same bootstrap. Invoke
+preserving installed packages. Both frontends use the same bootstrap, which
+selects the image interpreter independently of the venv-first PATH, isolates
+its own standard-library imports, and resumes interrupted alias replacement
+only when existing internal copies match the image bytes. Invoke
 `python -c "import sys; print(sys.prefix)"` in the relevant project (or outside
 all project markers for compatibility state) before backing up an old venv.
 The exact legacy compatibility-volume owner labels are preserved and accepted;
@@ -872,6 +875,8 @@ interpreter links remain rejected: repair the live venv and create a new
 backup. Arbitrary absolute/escaping links are still forbidden, not repaired or
 followed by backup/restore. Keep the original archive if it is your only copy;
 this change does not provide recovery from an already-unrestorable backup.
+An incomplete non-empty venv with no `bin/python` is refused before creation;
+inspect that state explicitly rather than letting bootstrap overwrite it.
 
 Keep ContainerBin tool invocations stopped for the entire restore: the command
 rechecks running volume users immediately before import, but no filesystem API

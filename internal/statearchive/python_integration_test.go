@@ -15,7 +15,7 @@ import (
 )
 
 // This opt-in test requires the two pinned images to be local. It never pulls,
-// adopts existing volumes, or mounts host projects. CI runs all four cases on
+// adopts existing volumes, or mounts host projects. CI runs all six cases on
 // its disposable daemon; a developer can select only project cases when the
 // fixed compatibility volume already contains real state.
 func TestPythonStateDockerRoundTrip(t *testing.T) {
@@ -29,7 +29,7 @@ func TestPythonStateDockerRoundTrip(t *testing.T) {
 		}
 	}
 	for _, kind := range []string{"project", "compat"} {
-		for _, age := range []string{"fresh", "legacy"} {
+		for _, age := range []string{"fresh", "legacy", "partial"} {
 			t.Run(kind+"-"+age, func(t *testing.T) {
 				project := t.TempDir()
 				name := pathmap.PythonEnvID(project, kind == "project")
@@ -68,15 +68,18 @@ func TestPythonStateDockerRoundTrip(t *testing.T) {
 				runPython := func(bootstrap string, args ...string) string {
 					t.Helper()
 					assertOwned()
-					argv := []string{"run", "--rm", "--pull", "never", "--network", "none", "--mount", "type=volume,src=" + name + ",dst=/venv", pythonImage, "sh", "-c", bootstrap, "cb"}
+					argv := []string{"run", "--rm", "--pull", "never", "--network", "none", "--mount", "type=volume,src=" + name + ",dst=/venv", "--env", "VIRTUAL_ENV=/venv", "--env", "PATH=/venv/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin", pythonImage, "sh", "-c", bootstrap, "cb"}
 					out, err := exec.Command("docker", append(argv, args...)...).CombinedOutput()
 					if err != nil {
 						t.Fatalf("Python fixture failed: %v: %s", err, out)
 					}
 					return strings.TrimSpace(string(out))
 				}
-				if age == "legacy" {
+				if age != "fresh" {
 					runPython(`python -m venv /venv`)
+				}
+				if age == "partial" {
+					runPython(`python -c 'import pathlib,shutil; image=pathlib.Path("/usr/local/bin/python3.13"); alias=pathlib.Path("/venv/bin/python"); alias.unlink(); shutil.copy2(image,alias); alias=pathlib.Path("/venv/bin/python3"); alias.unlink(); alias.symlink_to(image)'`)
 				}
 				runPython(pythonenv.Bootstrap, "-c", `import pathlib,sysconfig; pathlib.Path(sysconfig.get_path("purelib"), "cb_roundtrip_fixture.py").write_text("value = 42\n")`)
 				// Exercise the pip sentinel against the real copied interpreter.
@@ -112,7 +115,7 @@ func TestPythonStateDockerRoundTrip(t *testing.T) {
 				if out := runPython(pythonenv.Bootstrap, "-c", "import cb_roundtrip_fixture; print(cb_roundtrip_fixture.value)"); out != "42" {
 					t.Fatalf("restored package state lost: %s", out)
 				}
-				streamArgs := []string{"run", "--rm", "-i", "--pull", "never", "--network", "none", "--mount", "type=volume,src=" + name + ",dst=/venv", pythonImage, "sh", "-c", pythonenv.Bootstrap, "cb", "-c",
+				streamArgs := []string{"run", "--rm", "-i", "--pull", "never", "--network", "none", "--mount", "type=volume,src=" + name + ",dst=/venv", "--env", "VIRTUAL_ENV=/venv", "--env", "PATH=/venv/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin", pythonImage, "sh", "-c", pythonenv.Bootstrap, "cb", "-c",
 					`import sys; sys.stdout.write(sys.stdin.read()); sys.stderr.write("stderr-only\n"); sys.exit(42)`}
 				stream := exec.Command("docker", streamArgs...)
 				stream.Stdin = strings.NewReader("stdin-through-EOF\n")

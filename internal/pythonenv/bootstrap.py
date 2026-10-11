@@ -1,4 +1,5 @@
 import fcntl
+import filecmp
 import os
 import pathlib
 import shutil
@@ -23,6 +24,12 @@ def prepare(root, image_python):
             raise RuntimeError("Python state bin must be a real directory")
         interpreter = binary_dir / "python"
         if not os.path.lexists(interpreter):
+            # venv creation writes several paths, not just bin/python. Never
+            # follow pre-existing aliases/configuration in incomplete state.
+            if any(entry.name != ".cb-python.lock" for entry in root.iterdir()):
+                raise RuntimeError(
+                    "Python state has contents but no interpreter; inspect it before recreating the venv"
+                )
             subprocess.run(
                 [str(image_python), "-m", "venv", "--copies", str(root)],
                 check=True,
@@ -36,7 +43,15 @@ def prepare(root, image_python):
             alias = binary_dir / name
             if not alias.is_symlink():
                 continue
-            if alias.resolve(strict=True) != image_python:
+            target = alias.resolve(strict=True)
+            # An interrupted migration can leave links to the first repaired
+            # alias. Trust only a known internal alias with byte-exact content.
+            repaired_copy = (
+                target.parent == binary_dir
+                and target.name in aliases
+                and filecmp.cmp(target, image_python, shallow=False)
+            )
+            if target != image_python and not repaired_copy:
                 raise RuntimeError(f"unsupported Python interpreter link: {alias}")
             links.append(alias)
         # Validate the whole chain before replacing its first link: normal
