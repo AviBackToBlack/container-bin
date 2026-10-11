@@ -26,6 +26,10 @@ security defaults merely to retain source syntax compatibility.
 
 ## Evidence must match what ships
 
+Linux and Windows fuzz campaigns also use the exact `.go-version` shipping
+toolchain, not the lower `go.mod` language minimum. Only the explicitly labeled
+offline source-compatibility job selects Go 1.24; its outputs are never shipped.
+
 CI runs pinned `govulncheck v1.8.0` source analysis with the shipping toolchain
 and `CGO_ENABLED=0` for Windows amd64, Windows ARM64 and Linux amd64. Native
 Windows/ARM64 tests and Linux race tests remain separate requirements.
@@ -78,9 +82,10 @@ backup restore and self-update. ARM64 compilation/native CI does not imply
 real ARM64 Docker Desktop qualification. Previous v2.0.0 evidence is historical,
 not qualification of a different compiler's outputs.
 
-PR #136's fuzzing work is separate and was not part of v2.0.0 qualification.
-This maintenance change does not merge that PR, alter repository security
-rules, make personal OpenSSF attestations, or accept assessment-data licenses.
+PR #136's fuzzing work is now merged and retained in the combined CI, but was
+not part of historical v2.0.0 qualification.
+This maintenance change does not alter repository security rules, make personal
+OpenSSF attestations, or accept assessment-data licenses.
 
 References: [Go releases/support](https://go.dev/doc/devel/release),
 [official downloads](https://go.dev/dl/),

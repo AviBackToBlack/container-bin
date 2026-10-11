@@ -61,6 +61,44 @@ jobs:
             *) echo "ldflags version injection failed" >&2; exit 1 ;;
           esac
 
+  fuzz:
+    name: Fuzz (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: Linux
+          - os: windows-latest
+            platform: Windows
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: .go-version
+          check-latest: false
+          cache: false
+      - name: Fuzz parser and argv boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          # One target per invocation; regular tests also run all seed corpora.
+          # Two workers bound CPU/memory use on both runner platforms.
+          for target in \
+            registry:FuzzParseTOML \
+            lockfile:FuzzParseLockFile \
+            selfupdate:FuzzChecksumManifest \
+            pathmap:FuzzNormalizeWindowsToolArgs \
+            wslpathmap:FuzzMapToolArgs; do
+            package="${target%%:*}"
+            name="${target#*:}"
+            go test "./internal/${package}" -run '^$' -fuzz "^${name}$" -fuzztime=30s -parallel=2
+          done
+
   test-windows:
     name: Test and build (Windows)
     runs-on: windows-latest

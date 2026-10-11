@@ -5,6 +5,9 @@ updates:
   # and the human-readable version comment.
   - package-ecosystem: github-actions
     directory: /
+    # Age routine releases without delaying Dependabot security updates.
+    cooldown:
+      default-days: 7
     schedule:
       interval: weekly
       day: monday
@@ -28,6 +31,8 @@ updates:
   # but keep the toolchain directive and any future modules covered.
   - package-ecosystem: gomod
     directory: /
+    cooldown:
+      default-days: 7
     schedule:
       interval: monthly
       time: "06:10"
