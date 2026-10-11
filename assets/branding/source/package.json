@@ -1,0 +1,7 @@
+{
+  "name": "containerbin-branding-build",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Isolated build-time SVG rendering; never part of ContainerBin",
+  "dependencies": { "sharp": "0.35.5" }
+}
