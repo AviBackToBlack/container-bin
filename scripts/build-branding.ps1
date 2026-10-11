@@ -11,7 +11,7 @@ $checkArg = if ($Check) { '--check' } else { '' }
 Push-Location -LiteralPath $root
 try {
     & docker run --rm --mount "type=bind,source=$root,target=/src" -w /src $pythonImage `
-        sh -eu -c "python -m pip install --disable-pip-version-check --no-cache-dir -r assets/branding/source/requirements.txt >/dev/null && python scripts/build-branding.py $checkArg"
+        sh -eu -c "python -m pip install --disable-pip-version-check --no-cache-dir --require-hashes -r assets/branding/source/requirements.txt >/dev/null && python scripts/build-branding.py $checkArg"
     if ($LASTEXITCODE -ne 0) { throw 'Native SVG generation/validation failed' }
     # Install the lockfile into the disposable container, never the checkout.
     & docker run --rm --mount "type=bind,source=$root,target=/src" -w /src `

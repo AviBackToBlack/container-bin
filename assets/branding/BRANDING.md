@@ -47,6 +47,10 @@ Both have exactly the same icon, letter outlines, positions, baseline and
 spacing; only the “Container” fill changes. The repository README uses HTML
 `picture` sources selected by `prefers-color-scheme`, with a light fallback,
 image alternative text and a retained text heading.
+Release archives contain the README without the branding directory; offline
+readers retain that heading, alternative text and the complete text description.
+Brand assets are available from the source checkout. Release packaging is
+unchanged by this branding package.
 
 All production assets have transparent backgrounds. The backgrounds in the
 comparison sheets are deliberately opaque proof surfaces. Do not stretch,
@@ -60,7 +64,9 @@ ribs and underscore are subpixel details; use 32px+ when those must read clearly
 
 ## Source fidelity and intentional differences
 
-The original archive is `containerbin-brand-references.zip`. Its three image
+The original supplied archive is `containerbin-brand-references.zip`; it is not
+duplicated in the repository because its extracted references are retained.
+Its three image
 hashes are recorded in `references/README.md` and independently checked during
 export. Reference dimensions are 1254 × 1254 (icon) and 2048 × 682 (wordmarks).
 They are actual RGBA images, not images with a painted checkerboard.
@@ -128,7 +134,8 @@ From a Windows checkout, with Docker Desktop running in Linux-container mode:
 & 'D:\Work\GIT\container-bin\scripts\build-branding.ps1' -Check
 ```
 
-The wrapper uses digest-pinned Python and Node images, `fonttools==4.60.1`,
+The wrapper uses digest-pinned Python and Node images, the exact universal
+`fonttools==4.60.1` wheel with SHA-256 verification (`pip --require-hashes`),
 and `sharp==0.35.5` with an npm integrity lockfile. Packages live only inside
 the disposable containers. No global workstation runtime, runtime dependency,
 font installation, Go module change, CI change or release-workflow change is
