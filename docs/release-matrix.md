@@ -120,10 +120,36 @@ mode:
    temp project volumes and already-local locked images rather than a first-run
    user project.
 
+5. Require real Python state backup/restore round trips in both marker-selected
+   project state and marker-free compatibility state. Use only fresh,
+   disposable volumes: if the fixed compatibility name already exists, this
+   part requires an empty independent Docker environment, not adoption or
+   deletion of normal state. Cover a newly created venv and a legacy
+   symlink-based venv after one invocation of the candidate's Python provider.
+   Record the selected volume's exact labels and the untouched backup hash;
+   require backup success, refusal to restore over non-empty state, then
+   successful restore into an absent/empty test-owned destination and a
+   working import of installed package state. Reconcile/remove only the proven
+   disposable resources. Also require that arbitrary absolute/escaping links
+   fail closed and a failed backup leaves no purportedly successful output.
+
+   A 15/15 release self-test does **not** establish these round trips. An
+   untouched Python-state backup rejected by restore blocks the release even
+   when the base matrix is green.
+
 Record the results in a release-qualification issue using
 [`.github/ISSUE_TEMPLATE/release-qualification.yml`](../.github/ISSUE_TEMPLATE/release-qualification.yml).
 
 ## What CI already covers vs. what only this matrix proves
+
+The Linux verification job additionally runs an opt-in real Docker regression
+using pinned Python/helper images and fresh, ownership-checked project and
+compatibility volumes. It covers new/legacy/partially migrated venv round trips,
+non-empty refusal, package preservation, stdin/EOF, split streams and exit
+codes. This is Linux Docker Engine evidence, not Windows shell, Docker Desktop
+or native WSL qualification. The ordinary Go suite skips that integration
+fixture unless `CB_STATE_DOCKER_TEST=1`; CI explicitly enables it in its
+dedicated step and fails if an expected disposable volume already exists.
 
 The x64 `test-windows` job in `.github/workflows/ci.yml` is equivalent to the
 following example. For a self-contained snippet, `GOTOOLCHAIN: local` is shown

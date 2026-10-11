@@ -14,6 +14,7 @@ import (
 	"github.com/AviBackToBlack/container-bin/internal/hostenv"
 	"github.com/AviBackToBlack/container-bin/internal/lockfile"
 	"github.com/AviBackToBlack/container-bin/internal/policy"
+	"github.com/AviBackToBlack/container-bin/internal/pythonenv"
 	"github.com/AviBackToBlack/container-bin/internal/registry"
 	"github.com/AviBackToBlack/container-bin/internal/wsldocker"
 	"github.com/AviBackToBlack/container-bin/internal/wslpathmap"
@@ -24,8 +25,9 @@ import (
 const (
 	projectWorkspace  = "/workspace/project"
 	isolatedWorkspace = "/root"
-	pythonBootstrap   = `if [ ! -x /venv/bin/python ]; then python -m venv /venv || exit $?; fi; if [ "$1" = "__CB_PIP__" ]; then shift; exec /venv/bin/python -m pip "$@"; else exec /venv/bin/python "$@"; fi`
 )
+
+var pythonBootstrap = pythonenv.Bootstrap
 
 type toolPlan struct {
 	layout  hostenv.WSLLayout

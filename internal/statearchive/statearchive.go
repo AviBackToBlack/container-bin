@@ -359,7 +359,10 @@ func validateManagedIdentity(name string, labels map[string]string) (string, str
 		if labels["cb.project_path"] != "" || labels["cb.project_hash"] != "" {
 			return "", "", fmt.Errorf("volume %q is %s state but carries project identity labels", name, kind)
 		}
-		if name != "cb-python-313-global" || owner != "python313/global" {
+		// The runtime labels this exact compatibility volume as
+		// python313/venv; state inspection also knows it as python313/global.
+		// Preserve both existing identities without accepting other volumes.
+		if name != "cb-python-313-global" || (owner != "python313/global" && owner != "python313/venv") {
 			return "", "", fmt.Errorf("compat volume %q has unsupported owner identity %q", name, owner)
 		}
 		return "", "", nil
