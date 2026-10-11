@@ -55,6 +55,7 @@ expect_failure() {
 expect_failure env SCAN_EXIT=3 bash "$gate" bundle v0.0.0-test reports
 test "$(wc -l < "$SCAN_LOG")" -eq 6 # all targets scanned despite findings
 expect_failure env SCANNER_VERSION=v0.0.0 bash "$gate" bundle v0.0.0-test reports
+grep -Fq 'scanner version mismatch: expected golang.org/x/vuln v1.8.0;' failure.log
 expect_failure env EMBEDDED_GO=go1.23.12 bash "$gate" bundle v0.0.0-test reports
 expect_failure env TARGET_ARCH=386 bash "$gate" bundle v0.0.0-test reports
 expect_failure env CGO_FLAG=1 bash "$gate" bundle v0.0.0-test reports

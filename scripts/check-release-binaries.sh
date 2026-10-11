@@ -15,7 +15,10 @@ expected="$(tr -d '\r\n' < .go-version)"
 [[ "$expected" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
 test "$(go env GOVERSION)" = "go${expected}"
 go version -m "$(command -v govulncheck)" > "$reports/scanner-buildinfo.txt"
-grep -Eq '^[[:space:]]+mod[[:space:]]+golang.org/x/vuln[[:space:]]+v1\.8\.0[[:space:]]' "$reports/scanner-buildinfo.txt"
+if ! grep -Eq '^[[:space:]]+mod[[:space:]]+golang.org/x/vuln[[:space:]]+v1\.8\.0[[:space:]]' "$reports/scanner-buildinfo.txt"; then
+  echo "scanner version mismatch: expected golang.org/x/vuln v1.8.0; see $reports/scanner-buildinfo.txt and docs/roadmap-implementation-requirements.md" >&2
+  exit 1
+fi
 (
   cd "$bundle"
   sha256sum -c SHA256SUMS
