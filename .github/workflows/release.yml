@@ -13,6 +13,9 @@ on:
 permissions:
   contents: read
 
+env:
+  GOTOOLCHAIN: local
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -31,8 +34,8 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
-          check-latest: true
+          go-version-file: .go-version
+          check-latest: false
           cache: false
 
       - name: Validate release tag
@@ -132,6 +135,25 @@ jobs:
             sha256sum -c SHA256SUMS-WSL
           )
 
+      - name: Install pinned release vulnerability scanner
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+
+      - name: Scan packaged release executables
+        id: release-scan
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/check-release-binaries.sh dist "${VERSION}" "$RUNNER_TEMP/release-vulnerability"
+
+      - name: Preserve release vulnerability evidence
+        if: always() && (steps.release-scan.outcome == 'success' || steps.release-scan.outcome == 'failure')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-vulnerability-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-vulnerability
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Verify reproducibility
         shell: bash
         run: |
@@ -220,8 +242,8 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
-          check-latest: true
+          go-version-file: .go-version
+          check-latest: false
           cache: false
 
       - name: Download first-run bundle

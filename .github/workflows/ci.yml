@@ -9,6 +9,9 @@ on:
 permissions:
   contents: read
 
+env:
+  GOTOOLCHAIN: local
+
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -24,8 +27,8 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
-          check-latest: true
+          go-version-file: .go-version
+          check-latest: false
       - name: gofmt
         run: |
           out="$(gofmt -l .)"
@@ -34,10 +37,16 @@ jobs:
             echo "$out" >&2
             exit 1
           fi
+      - name: Verify shipping compiler and defaults
+        run: |
+          test "$(go env GOVERSION)" = "go$(tr -d '\r\n' < .go-version)"
+          test -z "$(go list -f '{{.DefaultGODEBUG}}' .)"
       - name: go vet
         run: go vet ./...
       - name: go test (race)
         run: go test -race ./...
+      - name: Test packaged-binary vulnerability gate
+        run: bash scripts/test-check-release-binaries.sh
       - name: Test embedded pipx wrapper
         run: python3 -m unittest -v internal/registry/pipx_wrapper_test.py internal/cli/pipx_discovery_test.py
       - name: Verify release-style version injection
@@ -70,8 +79,8 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
-          check-latest: true
+          go-version-file: .go-version
+          check-latest: false
           cache: false
       - name: Fuzz parser and argv boundaries
         shell: bash
@@ -100,8 +109,8 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
-          check-latest: true
+          go-version-file: .go-version
+          check-latest: false
       - name: go test
         run: go test -v ./...
       - name: Test benchmark comparison (Windows PowerShell 5.1)
@@ -126,8 +135,8 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
-          check-latest: true
+          go-version-file: .go-version
+          check-latest: false
       - name: Verify native ARM64 runner
         shell: pwsh
         run: |
@@ -194,8 +203,8 @@ jobs:
           # after asserting it so pwsh reports this validation step as passed.
           exit 0
 
-  govulncheck:
-    name: govulncheck
+  source-compatibility:
+    name: Source compatibility (Go 1.24; not release)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -204,9 +213,39 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          # govulncheck tooling tracks the latest Go toolchain, which can be
-          # newer than the module's minimum version in go.mod.
-          go-version: stable
+          # Existing Go shim compatibility only; never upload these outputs.
+          go-version: '1.24.13'
+          check-latest: false
+      - name: Check offline source compatibility
+        env:
+          GOPROXY: 'off'
+          GOSUMDB: 'off'
+          CGO_ENABLED: '0'
+        run: |
+          go test ./...
+          GOOS=windows GOARCH=amd64 go build -buildvcs=false -o "$RUNNER_TEMP/cb-amd64.exe" .
+          GOOS=windows GOARCH=arm64 go build -buildvcs=false -o "$RUNNER_TEMP/cb-arm64.exe" .
+
+  govulncheck-targets:
+    name: govulncheck (${{ matrix.target.goos }}/${{ matrix.target.goarch }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - { goos: windows, goarch: amd64 }
+          - { goos: windows, goarch: arm64 }
+          - { goos: linux, goarch: amd64 }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          # Analyze the standard library that actually builds the releases.
+          go-version-file: .go-version
+          check-latest: false
       - name: Install govulncheck
         # Pinned like every other supply-chain input. Freshness of results is
         # unaffected: govulncheck downloads the live vulnerability database at
@@ -214,4 +253,21 @@ jobs:
         # (Dependabot cannot track `go install` versions inside workflows).
         run: go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
       - name: Run govulncheck
-        run: govulncheck ./...
+        env:
+          GOOS: ${{ matrix.target.goos }}
+          GOARCH: ${{ matrix.target.goarch }}
+          CGO_ENABLED: '0'
+        run: govulncheck -show version ./...
+
+  govulncheck:
+    # Preserve the existing check name for repositories requiring this gate.
+    name: govulncheck
+    needs: govulncheck-targets
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every supported target scan
+        env:
+          SCAN_RESULT: ${{ needs.govulncheck-targets.result }}
+        run: test "$SCAN_RESULT" = success

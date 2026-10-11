@@ -21,22 +21,26 @@ Thanks for your interest in improving ContainerBin.
 All validation runs in a disposable container:
 
 ```powershell
-docker run --rm -v "${PWD}:/src" -w /src golang:1.24 sh -c "gofmt -l . ; go vet ./... && go test ./..."
+docker run --rm -v "${PWD}:/src" -w /src -e GOTOOLCHAIN=local golang:1.27.2 sh -c "gofmt -l . ; go vet ./... && go test ./..."
 ```
 
 Cross-compile the Windows binary the same way:
 
 ```powershell
-docker run --rm -v "${PWD}:/src" -w /src -e GOFLAGS=-buildvcs=false golang:1.24 sh -c "GOOS=windows GOARCH=amd64 go build -trimpath -o cb.exe ."
+docker run --rm -v "${PWD}:/src" -w /src -e GOFLAGS=-buildvcs=false -e GOTOOLCHAIN=local golang:1.27.2 sh -c "GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o cb.exe ."
 ```
 
 If you *do* have Go installed, plain `gofmt`, `go vet ./...` and `go test ./...`
 work too. CI runs tests on both Linux and Windows, with the race detector on Linux.
 
-Note on versions: the `golang:1.24` image intentionally leads the module's
-declared minimum (`go 1.23` in `go.mod`); CI resolves its toolchain from
-`go.mod`, so code must not rely on stdlib additions newer than the module
-minimum even if it passes in the newer local container.
+The exact Go patch in `.go-version` is the supported contributor, CI, vulnerability
+scan and release-build toolchain. `GOTOOLCHAIN=local` prevents silent toolchain
+downloads; use that exact version, not `stable`, for release/security validation.
+`go.mod` retains Go 1.24 source compatibility because ContainerBin's built-in Go
+shim uses that series. Compatibility builds through the shim are not patched
+release builds or vulnerability evidence. The Go 1.27-only defaults directive
+keeps shipping security defaults independent of the older language minimum.
+See [release toolchain policy](docs/release-toolchain.md).
 
 ## Fuzzing security-sensitive inputs
 

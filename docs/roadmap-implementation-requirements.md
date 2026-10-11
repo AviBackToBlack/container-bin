@@ -91,19 +91,30 @@ The minimum delivery gate for a code change is:
 
 ## Recurring govulncheck pin maintenance
 
-This is maintenance, not a one-time feature. The workflow currently installs
+This is maintenance, not a one-time feature. Both CI and release workflows install
 `golang.org/x/vuln/cmd/govulncheck@v1.8.0` because Dependabot cannot update a
-version embedded in a `go install` command.
+version embedded in a `go install` command. The release gate independently
+checks the installed scanner's module version and fails closed on a mismatch.
 
 Implementation requirements:
 
 - Establish the candidate from an upstream stable module tag. Do not track a
   branch, pseudo-version or mutable tag.
-- Change only the full version pin and directly related comments unless the
-  upstream release requires a separately reviewed workflow change.
+- Update all four pin locations together in one PR:
+  - `.github/workflows/ci.yml`: the scanner installation version;
+  - `.github/workflows/release.yml`: the scanner installation version;
+  - `scripts/check-release-binaries.sh`: the expected module-version pattern
+    and its mismatch diagnostic;
+  - `scripts/test-check-release-binaries.sh`: the mock scanner's default module
+    version and expected mismatch diagnostic.
+  Update directly related version documentation too; other workflow changes
+  require their own justification.
 - Verify that the tag resolves through the Go module proxy and that the
   installed binary reports the expected version.
-- Run `govulncheck ./...` and the normal repository validation. A clean result
+- Run `bash scripts/test-check-release-binaries.sh`, all three target source
+  scans and the packaged release-binary gate, plus normal repository validation.
+  Confirm the mismatch fixture fails with the expected version in its diagnostic.
+  A clean result
   means no called vulnerability was found; it is not a general security
   certification.
 - Keep the vulnerability database live at scan time. Do not pin or cache an

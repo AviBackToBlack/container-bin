@@ -6,6 +6,11 @@ It is what `docs/shell-contract.md` and `docs/windows-paths.md` are validated
 against on a real host: a set of documented steps a maintainer runs before a
 release because GitHub-hosted CI cannot cover this ground.
 
+The exact build toolchain and packaged-binary vulnerability gates are defined
+in [release-toolchain.md](release-toolchain.md). A compiler upgrade requires
+fresh qualification of its actual candidate outputs; a prior release's green
+matrix is not evidence for binaries built with a different standard library.
+
 The roadmap text for RM-7b is:
 
 > Define and maintain the validation matrix: Windows 11; Windows PowerShell 5.1;
@@ -120,21 +125,25 @@ Record the results in a release-qualification issue using
 
 ## What CI already covers vs. what only this matrix proves
 
-The x64 `test-windows` job in `.github/workflows/ci.yml` is:
+The x64 `test-windows` job in `.github/workflows/ci.yml` is equivalent to the
+following example. For a self-contained snippet, `GOTOOLCHAIN: local` is shown
+at job level; the actual workflow sets it once at workflow level for every job.
 
 ```yaml
   test-windows:
     name: Test and build (Windows)
     runs-on: windows-latest
     timeout-minutes: 20
+    env:
+      GOTOOLCHAIN: local
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
-          check-latest: true
+          go-version-file: .go-version
+          check-latest: false
       - name: go test
         run: go test -v ./...
       - name: Test benchmark comparison (Windows PowerShell 5.1)
