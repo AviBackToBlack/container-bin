@@ -125,7 +125,9 @@ Record the results in a release-qualification issue using
 
 ## What CI already covers vs. what only this matrix proves
 
-The x64 `test-windows` job in `.github/workflows/ci.yml` is:
+The x64 `test-windows` job in `.github/workflows/ci.yml` is equivalent to the
+following example. For a self-contained snippet, `GOTOOLCHAIN: local` is shown
+at job level; the actual workflow sets it once at workflow level for every job.
 
 ```yaml
   test-windows:

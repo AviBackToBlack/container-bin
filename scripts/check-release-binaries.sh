@@ -3,7 +3,7 @@
 set -euo pipefail
 
 if [[ $# -ne 3 || ! "$2" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-  echo 'usage: check-release-binaries.sh BUNDLE VERSION REPORT_DIRECTORY' >&2
+  echo 'usage: check-release-binaries.sh BUNDLE VERSION REPORT_DIRECTORY (run from repository root)' >&2
   exit 1
 fi
 bundle="$(realpath "$1")"
