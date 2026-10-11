@@ -24,11 +24,16 @@ def tag(name):
     return f"{{{NS}}}{name}"
 
 
+def require(condition, message):
+    if not condition:
+        raise ValueError(message)
+
+
 def write(name, root):
     ET.indent(root, space="  ")
     data = (ET.tostring(root, encoding="unicode") + "\n").encode("utf-8")
     if "--check" in sys.argv:
-        assert (ROOT / name).read_bytes() == data, f"{name} is stale"
+        require((ROOT / name).read_bytes() == data, f"{name} is stale")
     else:
         (ROOT / name).write_bytes(data)
 
@@ -107,24 +112,24 @@ def validate():
     allowed = {tag(n) for n in ("svg", "title", "desc", "defs", "linearGradient", "stop", "g", "path")}
     for file in ROOT.glob("*.svg"):
         root = ET.parse(file).getroot()
-        assert root.tag == tag("svg"), file
+        require(root.tag == tag("svg"), f"{file}: invalid SVG root")
         ids = {e.attrib["id"] for e in root.iter() if "id" in e.attrib}
         for e in root.iter():
-            assert e.tag in allowed, (file, e.tag)
+            require(e.tag in allowed, f"{file}: unexpected element {e.tag}")
             for key, value in e.attrib.items():
-                assert key not in ("href", "style") and not key.startswith("on"), (file, key)
+                require(key not in ("href", "style") and not key.startswith("on"), f"{file}: unexpected attribute {key}")
                 if "url(" in value:
-                    assert value.startswith("url(#") and value.endswith(")"), (file, value)
-                    assert value[5:-1] in ids, (file, value)
-        assert len(list(root.iter(tag("path")))) <= 30, file
+                    require(value.startswith("url(#") and value.endswith(")"), f"{file}: external resource {value}")
+                    require(value[5:-1] in ids, f"{file}: missing resource {value}")
+        require(len(list(root.iter(tag("path")))) <= 30, f"{file}: excessive path count")
     light = ET.parse(ROOT / "logo-light.svg").getroot()
     dark = ET.parse(ROOT / "logo-dark.svg").getroot()
     dark.find(f".//*[@id='Container']").set("fill", "#111b24")
-    assert ET.tostring(light) == ET.tostring(dark), "Theme geometry differs"
+    require(ET.tostring(light) == ET.tostring(dark), "Theme geometry differs")
     for group in ("top-ribs", "side-ribs"):
-        assert len(list(ET.parse(ROOT / "icon.svg").find(f".//*[@id='{group}']"))) == 4
-    assert len(light.find(".//*[@id='Container']")) == 9
-    assert len(light.find(".//*[@id='Bin']")) == 3
+        require(len(list(ET.parse(ROOT / "icon.svg").find(f".//*[@id='{group}']"))) == 4, f"{group}: expected four ribs")
+    require(len(light.find(".//*[@id='Container']")) == 9, "Expected nine Container glyphs")
+    require(len(light.find(".//*[@id='Bin']")) == 3, "Expected three Bin glyphs")
     print("Validated six native SVGs, four + four ribs, 12 glyphs, identical theme geometry")
 
 
