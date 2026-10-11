@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="170 210 910 910" role="img" aria-labelledby="title desc">
+  <title id="title">ContainerBin</title>
+  <desc id="desc">Graphite isometric container with four cyan top ribs, four side ribs and a turquoise terminal prompt.</desc>
+  <defs>
+    <linearGradient id="graphite" x1="190" y1="240" x2="1070" y2="1070" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#131d28" />
+      <stop offset="1" stop-color="#141e29" />
+    </linearGradient>
+    <linearGradient id="cyan" x1="270" y1="280" x2="1020" y2="990" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#05b8f9" />
+      <stop offset="1" stop-color="#01b5fc" />
+    </linearGradient>
+    <linearGradient id="recess" x1="902" y1="680" x2="988" y2="680" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#014680" />
+      <stop offset="1" stop-color="#034678" />
+    </linearGradient>
+    <linearGradient id="turquoise" x1="650" y1="660" x2="925" y2="840" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#07eee8" />
+      <stop offset="1" stop-color="#00dfdf" />
+    </linearGradient>
+  </defs>
+  <path id="container" fill="url(#graphite)" d="M220 370 617 228 Q638 218 657 227 L1039 408 Q1070 423 1070 454 L1070 891 Q1070 925 1037 936 L554 1066 Q533 1073 516 1063 L218 881 Q185 862 185 831 L185 418 Q185 385 220 370Z" />
+  <g id="top-ribs" fill="url(#cyan)">
+    <path d="M269 396 308 383 Q317 379 326 384 L574 517 Q581 521 573 524 L531 536 Q520 540 511 535 L268 405 Q260 400 269 396Z" />
+    <path d="M374 362 415 349 Q425 345 434 350 L695 486 Q703 490 694 493 L639 507 Q630 510 622 506 L373 371 Q365 366 374 362Z" />
+    <path d="M485 327 530 312 Q540 308 549 313 L827 449 Q835 453 826 456 L762 473 Q755 476 748 472 L485 337 Q475 332 485 327Z" />
+    <path d="M599 291 640 277 Q648 274 656 278 L957 415 897 435 Q889 439 883 436 L598 301 Q589 296 599 291Z" />
+  </g>
+  <g id="side-ribs" fill="url(#cyan)">
+    <path d="M230 472 Q231 450 245 457 L272 473 Q285 481 285 494 L285 838 Q284 857 271 849 L242 832 Q230 825 230 810Z" />
+    <path d="M318 518 Q319 496 333 503 L360 518 Q373 526 373 540 L373 886 Q372 905 359 898 L331 881 Q318 873 318 857Z" />
+    <path d="M407 565 Q408 543 422 551 L449 566 Q461 574 461 588 L461 938 Q461 957 447 950 L420 933 Q407 925 407 909Z" />
+    <path d="M494 608 Q495 585 508 593 L521 600 Q533 608 533 621 L533 984 Q533 1002 520 994 L507 986 Q494 978 494 963Z" />
+  </g>
+  <path id="terminal-frame" fill="url(#cyan)" fill-rule="evenodd" d="M590 581 1009 466 Q1023 462 1023 477 L1023 878 Q1023 889 1012 892 L591 999 Q577 1003 577 989 L577 599 Q577 585 590 581Z M612 606 Q605 608 605 616 L606 932 988 836 988 519 Q988 505 977 509Z" />
+  <path id="terminal-recess" fill="url(#recess)" d="M902 530 977 509 Q988 505 988 519 L988 877 952 857 952 816 Q952 792 932 781 L902 766Z" />
+  <g id="prompt" fill="url(#turquoise)" transform="translate(-140.4 -136.8) scale(1.18)">
+    <path d="M681 663 786 733 Q809 749 785 767 L681 843 Q647 860 647 829 L647 824 Q647 813 658 805 L730 753 658 704 Q647 697 647 685 L647 680 Q648 649 681 663Z" />
+    <path d="M808 798 911 798 Q927 798 927 814 L927 826 Q927 841 912 841 L808 841 Q786 841 786 820 Q786 798 808 798Z" />
+  </g>
+</svg>

@@ -1,5 +1,11 @@
 # ContainerBin
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/branding/logo-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="assets/branding/logo-light.svg">
+  <img src="assets/branding/logo-light.svg" alt="ContainerBin" width="720">
+</picture>
+
 **Run CLI tools on Windows through Docker-backed executable shims — without
 installing the runtimes on the host.**
 

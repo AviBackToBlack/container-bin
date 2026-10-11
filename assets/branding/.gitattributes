@@ -1,0 +1,8 @@
+# SVG derivatives must survive a Windows checkout byte-for-byte for -Check.
+*.svg text eol=lf
+*.png binary
+*.ttf binary
+source/OFL.txt text eol=lf
+source/*.json text eol=lf
+source/requirements.txt text eol=lf
+source/.gitignore text eol=lf
