@@ -38,6 +38,32 @@ declared minimum (`go 1.23` in `go.mod`); CI resolves its toolchain from
 `go.mod`, so code must not rely on stdlib additions newer than the module
 minimum even if it passes in the newer local container.
 
+## Fuzzing security-sensitive inputs
+
+Native Go fuzz targets exercise registry parsing, immutable image lockfile
+round-trips, self-update checksum acceptance against an independent format
+oracle, Windows argv normalization, and WSL workspace confinement with an
+injected classifier. They do not launch Docker, inspect the real filesystem,
+download releases, or mutate installed configuration. No additional test or
+runtime dependencies are required.
+
+`go test ./...` runs the checked-in seed corpora. CI additionally runs every
+target for 30 seconds with two workers on both Linux and Windows. To run a
+longer campaign from the repository root (or through the configured Go shim):
+
+```powershell
+go test ./internal/registry -run '^$' -fuzz '^FuzzParseTOML$' -fuzztime=5m -parallel=2
+go test ./internal/lockfile -run '^$' -fuzz '^FuzzParseLockFile$' -fuzztime=5m -parallel=2
+go test ./internal/selfupdate -run '^$' -fuzz '^FuzzChecksumManifest$' -fuzztime=5m -parallel=2
+go test ./internal/pathmap -run '^$' -fuzz '^FuzzNormalizeWindowsToolArgs$' -fuzztime=5m -parallel=2
+go test ./internal/wslpathmap -run '^$' -fuzz '^FuzzMapToolArgs$' -fuzztime=5m -parallel=2
+```
+
+Preserve minimized failures under the corresponding `testdata/fuzz/FuzzNAME/`
+directory as regression inputs, fix the cause, and rerun the corpus and full
+tests. Review inputs for secrets before committing them. A bounded campaign
+is additional evidence, not proof that a parser or platform is vulnerability-free.
+
 ## What unit tests can and cannot prove
 
 Unit tests cover pure logic: registry parsing, lockfile round-trips, path
