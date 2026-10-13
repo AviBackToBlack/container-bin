@@ -17,7 +17,7 @@ A custom path such as `D:\Tools\ContainerBin` can also work, **but inspect every
 | Trusted installing/updating account | Write/create/rename/delete (usually `Modify` or `Full control`) | Read/execute **and write** (usually `Modify` or `Full control`) | `cb setup`/`install`/`expose` reconcile files and must create temporary files and replace shims; NTFS hardlink creation also requires sufficient rights on the **source** `cb.exe` |
 | `SYSTEM` and `Administrators` | Usually `Full control` | Usually `Full control` | Standard Windows management and recovery access |
 | Other users who only need to invoke the shims | At most `Read & execute` | At most `Read & execute` | Invocation does not require the right to replace the executable or registry |
-| Untrusted accounts/groups (`Everyone`, `Authenticated Users`, `BUILTIN\Users`) | **No `Modify`, `Write`, `Full control`, or delete-child rights** | **No write/replace rights** | Prevent another local account from altering commands or configuration |
+| Untrusted accounts/groups (`Everyone`, `Authenticated Users`, `BUILTIN\Users`) | **No write/create, `Modify`, `Full control`, `Delete`/`DeleteChild`, `ChangePermissions` (`WRITE_DAC`), or `TakeOwnership` (`WRITE_OWNER`) rights** | **No write/replace, `Delete`, `ChangePermissions`, or `TakeOwnership` rights** | Prevent another local account from altering commands, configuration, ownership or ACLs |
 
 **Important:** `Authenticated Users` includes the current user *and* other authenticated users. Grant required write access to the **specific trusted account SID**, not to `Authenticated Users` or `BUILTIN\Users`. If multiple accounts must manage one installation, treat every manager as fully trusted and use an intentionally administered ACL.
 
@@ -50,7 +50,7 @@ fsutil.exe hardlink list (Join-Path $dir 'cb.exe')
 cb doctor
 ```
 
-Look for dangerous `:(M)`, `:(W)` or `:(F)` allow entries for broad groups on the installation directory **or its parents**, not just the shim file. Also check unusual object-level `Delete`/parent-level `DeleteChild` grants and deny entries. An inherited ACE marked `(I)` still applies; `(IO)` means *inherit-only* and does not grant access to the directory itself.
+Look for dangerous allow rights granted to broad groups on the installation directory **or its parents**, and on `cb.exe` and other managed files. This includes `Modify` (`M`), `Write` (`W`), `Full control` (`F`), object-level `Delete` (`DE`), parent-level `DeleteChild` (`DC`), `ChangePermissions` / `WRITE_DAC` (`WD`), and `TakeOwnership` / `WRITE_OWNER` (`WO`). Also inspect deny entries: interpreting effective access requires more than matching one ACE. An inherited ACE marked `(I)` still applies; `(IO)` means *inherit-only* and does not grant access to the directory itself.
 
 Do not interpret a hardlink list as a security audit. Hardlinks identify the same NTFS file; copies can work correctly but are not the preferred deployment mode.
 
@@ -65,11 +65,19 @@ $dir = 'D:\Tools\ContainerBin' # Only after reviewing the ancestor ACLs
 $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 
 # Run from an appropriately authorized account; grant to this exact SID.
-icacls.exe $dir /grant "*${me}:(OI)(CI)M"
-icacls.exe (Join-Path $dir 'cb.exe') /grant "*${me}:M"
+# Native commands need explicit exit-code checks in Windows PowerShell and pwsh.
+& icacls.exe $dir /grant "*${me}:(OI)(CI)M"
+if ($LASTEXITCODE -ne 0) { throw "icacls directory grant failed (exit $LASTEXITCODE); stopping" }
 
-cb install
-fsutil.exe hardlink list (Join-Path $dir 'cb.exe')
+& icacls.exe (Join-Path $dir 'cb.exe') /grant "*${me}:M"
+if ($LASTEXITCODE -ne 0) { throw "icacls cb.exe grant failed (exit $LASTEXITCODE); stopping" }
+
+& cb install
+if ($LASTEXITCODE -ne 0) { throw "cb install failed (exit $LASTEXITCODE); stopping" }
+
+& fsutil.exe hardlink list (Join-Path $dir 'cb.exe')
+if ($LASTEXITCODE -ne 0) { throw "hardlink inspection failed (exit $LASTEXITCODE); stopping" }
+
 cb doctor
 ```
 
