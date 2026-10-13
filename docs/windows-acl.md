@@ -1,0 +1,107 @@
+# Windows installation directory ACLs
+
+ContainerBin's Windows executables and configuration belong to the **local code-execution trust boundary**. A user who can replace a shim, `cb.exe`, `container-bin.toml`, or `container-bin.lock` can potentially control commands launched by other users of that installation. `cb doctor` checks part of this boundary; a clean doctor result is **not** a complete ACL audit.
+
+This guide covers the **native Windows installation**. The WSL frontend has a separate Linux permission model; see [WSL](wsl.md).
+
+## Choose a location with a trusted parent chain
+
+Prefer a **per-user installation** below an appropriately protected user-profile directory, for example `%LOCALAPPDATA%\Programs\ContainerBin`, when the user will run `cb setup`, `cb install`, `cb expose`, or `cb self-update` without elevation. A machine-wide installation under `C:\Program Files\ContainerBin` normally requires elevation for mutations, unless a deliberately managed administrator-approved access policy exists.
+
+A custom path such as `D:\Tools\ContainerBin` can also work, **but inspect every ancestor**. If `Authenticated Users` has `Modify` on `D:\` or `D:\Tools`, locking down only `D:\Tools\ContainerBin` is insufficient: rights to delete or replace children in the parent directory may allow the whole installation directory to be replaced. In particular, `DELETE_CHILD` on a parent and `DELETE` on the object are separate Windows access rights. Avoid changing permissions on an entire drive just to fix ContainerBin; changing `D:\` can affect unrelated software and data. Prefer moving the installation to a path with a trusted parent chain, or have an administrator review the parent ACLs.
+
+## Required access, by principal
+
+| Principal | Installation directory | `cb.exe` and managed files | Reason |
+| --- | --- | --- | --- |
+| Trusted installing/updating account | Write/create/rename/delete (usually `Modify` or `Full control`) | Read/execute **and write** (usually `Modify` or `Full control`) | `cb setup`/`install`/`expose` reconcile files and must create temporary files and replace shims; NTFS hardlink creation also requires sufficient rights on the **source** `cb.exe` |
+| `SYSTEM` and `Administrators` | Usually `Full control` | Usually `Full control` | Standard Windows management and recovery access |
+| Other users who only need to invoke the shims | At most `Read & execute` | At most `Read & execute` | Invocation does not require the right to replace the executable or registry |
+| Untrusted accounts/groups (`Everyone`, `Authenticated Users`, `BUILTIN\Users`) | **No `Modify`, `Write`, `Full control`, or delete-child rights** | **No write/replace rights** | Prevent another local account from altering commands or configuration |
+
+**Important:** `Authenticated Users` includes the current user *and* other authenticated users. Grant required write access to the **specific trusted account SID**, not to `Authenticated Users` or `BUILTIN\Users`. If multiple accounts must manage one installation, treat every manager as fully trusted and use an intentionally administered ACL.
+
+On NTFS, test results showed that `Read & execute` on the source `cb.exe` is **not sufficient** to create a hardlink, whereas granting the trusted account `Write`, `Modify`, or `Full control` on that source allows hardlink creation when the destination directory is writable. `Modify` is a convenient default; `Full control` was also validated. The source-file rights requirement is separate from write access to the installation directory.
+
+## Read-only diagnosis
+
+Use PowerShell (no elevation needed for readable ACLs):
+
+```powershell
+$dir = 'D:\Tools\ContainerBin' # Change to your installation directory
+
+# See both the directory and the hardlink source's ACL.
+icacls.exe $dir
+icacls.exe (Join-Path $dir 'cb.exe')
+
+# Inspect each directory in the ancestor chain, including the volume root.
+$p = (Get-Item -LiteralPath $dir -ErrorAction Stop).FullName
+while ($p) {
+    Write-Host "--- $p ---"
+    icacls.exe $p
+    $parent = Split-Path -Path $p -Parent
+    if (-not $parent -or $parent -eq $p) { break }
+    $p = $parent
+}
+
+# Inspect whether shims share the same NTFS file with cb.exe.
+fsutil.exe hardlink list (Join-Path $dir 'cb.exe')
+
+cb doctor
+```
+
+Look for dangerous `:(M)`, `:(W)` or `:(F)` allow entries for broad groups on the installation directory **or its parents**, not just the shim file. Also check unusual object-level `Delete`/parent-level `DeleteChild` grants and deny entries. An inherited ACE marked `(I)` still applies; `(IO)` means *inherit-only* and does not grant access to the directory itself.
+
+Do not interpret a hardlink list as a security audit. Hardlinks identify the same NTFS file; copies can work correctly but are not the preferred deployment mode.
+
+## `cb install` reports `(copy fallback)` for every shim
+
+This can happen **after hardening ACLs**. The `cb install` code first attempts an NTFS hardlink from `cb.exe` to a temporary filename in the same directory, then copies the bytes if linking fails. If the trusted user can write the directory but only has `Read & execute` on **`cb.exe` itself**, the hardlink attempt can fail with access denied. `cb doctor` then reports warnings such as `shim cargo is a copy, not a hardlink`.
+
+Do not recursively grant access to `Authenticated Users` to make this warning disappear. First verify the installation lives under a trusted parent chain, close processes using shims if necessary, and restore rights to the **trusted account only**. For a per-user installation, a focused repair might be:
+
+```powershell
+$dir = 'D:\Tools\ContainerBin' # Only after reviewing the ancestor ACLs
+$me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+
+# Run from an appropriately authorized account; grant to this exact SID.
+icacls.exe $dir /grant "*${me}:(OI)(CI)M"
+icacls.exe (Join-Path $dir 'cb.exe') /grant "*${me}:M"
+
+cb install
+fsutil.exe hardlink list (Join-Path $dir 'cb.exe')
+cb doctor
+```
+
+Review ACL changes before making them; save a backup with `icacls.exe <directory> /save <file> /T` when modifying existing installations. If any `icacls` command fails, **stop** rather than continuing. The example does **not** fix writable parent directories or repair unrelated ACEs. Do not apply `icacls /reset /T` or blanket drive-wide ACL changes as a ContainerBin workaround.
+
+The source `cb.exe` and existing hardlinks share one NTFS file and thus its file-level ACL. The copy-fallback shims created earlier are separate files until successfully replaced by `cb install`.
+
+## `cb doctor` says `could not determine shim directory permissions`
+
+This warning means the probe **could not classify** the directory; it is **not** proof that the ACL is safe or unsafe. One confirmed issue in **v2.0.1** is Windows PowerShell 5.1 inheriting a PowerShell 7 `PSModulePath` from its parent process. The Windows PowerShell child may fail to load `Microsoft.PowerShell.Security` / `Get-Acl`, return exit code 0 with invalid output, and produce this warning. See [issue #141](https://github.com/AviBackToBlack/container-bin/issues/141).
+
+Temporary diagnostic workaround (modifies the environment of **only the current PowerShell process**, and restores it immediately afterward):
+
+```powershell
+$previous = $env:PSModulePath
+try {
+    Remove-Item Env:PSModulePath -ErrorAction SilentlyContinue
+    cb doctor
+}
+finally {
+    $env:PSModulePath = $previous
+}
+```
+
+If this changes the result to `OK shim directory is not writable by other users`, that is strong evidence of the **probe environment issue**; it does **not** certify the parent directories. Do not delete `PSModulePath` permanently or disable the ACL check. Inspect ACLs with `icacls` independently.
+
+## Verification checklist
+
+1. The executable resolves to the intended installation: `Get-Command cb, cargo | Select-Object Name, Source`.
+2. The directory, registry, lockfile and shims cannot be modified or replaced by untrusted accounts; the **entire parent chain** has been reviewed.
+3. The trusted updating account can modify the directory **and the hardlink source `cb.exe`**.
+4. `cb install` reports `(hardlink)` for managed shims, and `fsutil hardlink list` shows the expected executable names.
+5. `cb doctor` reports no ACL or shim warnings (after accounting for the documented `PSModulePath` issue), and tool execution succeeds.
+
+For the broader execution and image-trust boundaries, see [security model](security-model.md).

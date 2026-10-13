@@ -120,6 +120,11 @@ cb setup
 cb lock
 ```
 
+> **Windows ACLs:** Keep the shim directory, `cb.exe`, registry and lockfile
+> writable only by trusted principals; check ancestor directories as well.
+> `cb install` needs write access to `cb.exe` to create NTFS hardlinks. See
+> [Windows installation ACLs and troubleshooting](docs/windows-acl.md).
+
 ## Default tools
 
 | Shim | Image | Provider |
