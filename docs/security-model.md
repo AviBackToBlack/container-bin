@@ -25,6 +25,12 @@ Inside the boundary (whoever controls these controls execution):
   need ContainerBin to attack you.
 - Docker Desktop itself, and every image you configure or `docker pull`.
 
+For native Windows installations, this includes NTFS permissions on the
+**entire parent-directory chain**, not just the immediate shim directory.
+See [Windows installation ACLs and troubleshooting](windows-acl.md) for
+recommended principals, hardlink source-file permissions, inspection commands
+and `cb doctor` limitations.
+
 An optional administrator-owned machine policy sits above this user-controlled
 boundary. Its fixed path, owner and permissions are validated before use. It
 can require locking, restrict image origins and authenticate exact registry
