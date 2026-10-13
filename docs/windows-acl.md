@@ -34,14 +34,36 @@ $dir = 'D:\Tools\ContainerBin' # Change to your installation directory
 icacls.exe $dir
 icacls.exe (Join-Path $dir 'cb.exe')
 
-# Inspect each directory in the ancestor chain, including the volume root.
-$p = (Get-Item -LiteralPath $dir -ErrorAction Stop).FullName
+# Inspect the literal ancestor chain, including the drive root.
+# A reparse point or SUBST drive needs an additional resolved-path audit.
+$reparseFound = $false
+$p = (Get-Item -LiteralPath $dir -Force -ErrorAction Stop).FullName
 while ($p) {
-    Write-Host "--- $p ---"
-    icacls.exe $p
+    $entry = Get-Item -LiteralPath $p -Force -ErrorAction Stop
+    Write-Host "--- literal path: $p ---"
+    if ($entry.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+        $reparseFound = $true
+        Write-Warning "Reparse point: $p (target: $($entry.Target -join ', '))"
+        & icacls.exe $p /L # Inspect the link object, not just its target.
+        if ($LASTEXITCODE -ne 0) { throw "Failed to inspect reparse point ACL: $p" }
+    }
+    & icacls.exe $p
+    if ($LASTEXITCODE -ne 0) { throw "Failed to inspect ACL: $p" }
     $parent = Split-Path -Path $p -Parent
     if (-not $parent -or $parent -eq $p) { break }
     $p = $parent
+}
+
+# SUBST drive letters redirect the root without appearing as reparse points.
+$root = [System.IO.Path]::GetPathRoot($dir)
+$substMappings = @(& subst.exe)
+if ($LASTEXITCODE -ne 0) { throw 'Failed to inspect SUBST mappings' }
+$substForRoot = @($substMappings | Where-Object {
+    $_ -match ('^\s*' + [regex]::Escape($root) + '\s*:')
+})
+if ($substForRoot.Count -gt 0) { Write-Warning ($substForRoot -join '; ') }
+if ($reparseFound -or $substForRoot.Count -gt 0) {
+    throw 'ACL audit incomplete: inspect link/mapping objects and the resolved target ancestor chain separately.'
 }
 
 # Inspect whether shims share the same NTFS file with cb.exe.
@@ -50,6 +72,7 @@ fsutil.exe hardlink list (Join-Path $dir 'cb.exe')
 cb doctor
 ```
 
+**Reparse points and redirected drives:** This literal-path walk is **not** a complete physical-path audit when a directory junction, symlink, mount point, or `subst` drive is involved. The code flags such cases and deliberately stops instead of reporting an incomplete audit as safe. Inspect the link object using `icacls.exe <link-path> /L` and review its containing literal parents; separately resolve its actual target (including relative link targets) and inspect **every directory in the resolved target's ancestor chain**, up to that volume root. `Get-Item.FullName` and a string-parent walk are not evidence that a junction target was fully resolved. If the full mapping or effective access cannot be established, choose a non-redirected, trusted installation path or ask an administrator to review it.
 Look for dangerous allow rights granted to broad groups on the installation directory **or its parents**, and on `cb.exe` and other managed files. This includes `Modify` (`M`), `Write` (`W`), `Full control` (`F`), object-level `Delete` (`DE`), parent-level `DeleteChild` (`DC`), `ChangePermissions` / `WRITE_DAC` (`WDAC`), and `TakeOwnership` / `WRITE_OWNER` (`WO`). The specific rights `WD` (**write data/add file**) and `AD` (**append data/add subdirectory**) are also unsafe grants to untrusted principals; unlike `WDAC`, `WD` does **not** mean change permissions. Also inspect deny entries: interpreting effective access requires more than matching one ACE. An inherited ACE marked `(I)` still applies; `(IO)` means *inherit-only* and does not grant access to the directory itself.
 
 Do not interpret a hardlink list as a security audit. Hardlinks identify the same NTFS file; copies can work correctly but are not the preferred deployment mode.
