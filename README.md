@@ -125,6 +125,10 @@ cb lock
 > `cb install` needs write access to `cb.exe` to create NTFS hardlinks. See
 > [Windows installation ACLs and troubleshooting](docs/windows-acl.md).
 
+The current-source `cb doctor` ACL probe isolates its Windows PowerShell module
+environment, including when launched from PowerShell 7. Probe failures remain
+warnings; see the [ACL troubleshooting guide](docs/windows-acl.md).
+
 ## Default tools
 
 | Shim | Image | Provider |
