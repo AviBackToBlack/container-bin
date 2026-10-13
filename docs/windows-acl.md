@@ -50,7 +50,7 @@ fsutil.exe hardlink list (Join-Path $dir 'cb.exe')
 cb doctor
 ```
 
-Look for dangerous allow rights granted to broad groups on the installation directory **or its parents**, and on `cb.exe` and other managed files. This includes `Modify` (`M`), `Write` (`W`), `Full control` (`F`), object-level `Delete` (`DE`), parent-level `DeleteChild` (`DC`), `ChangePermissions` / `WRITE_DAC` (`WD`), and `TakeOwnership` / `WRITE_OWNER` (`WO`). Also inspect deny entries: interpreting effective access requires more than matching one ACE. An inherited ACE marked `(I)` still applies; `(IO)` means *inherit-only* and does not grant access to the directory itself.
+Look for dangerous allow rights granted to broad groups on the installation directory **or its parents**, and on `cb.exe` and other managed files. This includes `Modify` (`M`), `Write` (`W`), `Full control` (`F`), object-level `Delete` (`DE`), parent-level `DeleteChild` (`DC`), `ChangePermissions` / `WRITE_DAC` (`WDAC`), and `TakeOwnership` / `WRITE_OWNER` (`WO`). The specific rights `WD` (**write data/add file**) and `AD` (**append data/add subdirectory**) are also unsafe grants to untrusted principals; unlike `WDAC`, `WD` does **not** mean change permissions. Also inspect deny entries: interpreting effective access requires more than matching one ACE. An inherited ACE marked `(I)` still applies; `(IO)` means *inherit-only* and does not grant access to the directory itself.
 
 Do not interpret a hardlink list as a security audit. Hardlinks identify the same NTFS file; copies can work correctly but are not the preferred deployment mode.
 
