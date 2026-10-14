@@ -113,6 +113,9 @@ func TestNativeReaderPreservesNumericDescriptorAndDoesNotMutate(t *testing.T) {
 
 func TestNativeQualificationDoesNotTrustArbitraryCallerPaths(t *testing.T) {
 	dir, _ := nativeFixture(t)
+	if _, err := readSnapshot(filepath.VolumeName(dir) + `\`); err != nil {
+		t.Fatalf("native volume-root metadata under qualification token: %v", err)
+	}
 	s, r := qualify(context.Background(), Request{Directory: dir})
 	if !s.Qualified || len(r.incomplete) != 0 {
 		t.Fatal("owned per-user scope did not qualify: " + textOf(r))
@@ -155,6 +158,9 @@ func checkNonElevatedQualification(t *testing.T) {
 		t.Fatal("qualification child is still elevated")
 	}
 	dir, _ := nativeFixture(t)
+	if _, err := readSnapshot(filepath.VolumeName(dir) + `\`); err != nil {
+		t.Fatalf("native volume-root metadata under qualification token: %v", err)
+	}
 	s, r := qualify(context.Background(), Request{Directory: dir})
 	if !s.Qualified || len(r.incomplete) != 0 {
 		t.Fatal("nonelevated native qualification failed: " + textOf(r))
@@ -194,7 +200,6 @@ func TestNativeNonElevatedQualification(t *testing.T) {
 	}
 	if elevated == 0 {
 		checkNonElevatedQualification(t)
-		return
 	}
 	// Elevated CI must qualify the real native reader under a reduced primary
 	// token too. This removes privileges/Admin authority; it creates no account
