@@ -154,8 +154,8 @@ func TestInstallShimAtomicallyReplacesExistingShim(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mode != "hardlink" {
-		t.Fatalf("mode = %q, want hardlink", mode)
+	if mode.mode != "hardlink" || mode.linkFailure != "" {
+		t.Fatalf("result = %+v, want hardlink without failure", mode)
 	}
 	data, err := os.ReadFile(dst)
 	if err != nil {

@@ -82,6 +82,14 @@ Do not interpret a hardlink list as a security audit. Hardlinks identify the sam
 
 This can happen **after hardening ACLs**. The `cb install` code first attempts an NTFS hardlink from `cb.exe` to a temporary filename in the same directory, then copies the bytes if linking fails. If the trusted user can write the directory but only has `Read & execute` on **`cb.exe` itself**, the hardlink attempt can fail with access denied. `cb doctor` then reports warnings such as `shim cargo is a copy, not a hardlink`.
 
+Current source reports the hardlink failure after successful installation,
+grouped by reason with a shim count. Access-denied diagnostics identify the
+source `cb.exe` permission prerequisite; other OS errors retain their numeric
+code and system message. Source and temporary paths from the link error are
+omitted. If copying also fails, installation fails and labels both failures
+separately. A successful copy remains usable, but uses separate files that need
+reconciliation during updates; it does not establish a trusted parent chain.
+
 Do not recursively grant access to `Authenticated Users` to make this warning disappear. First verify the installation lives under a trusted parent chain, close processes using shims if necessary, and restore rights to the **trusted account only**. For a per-user installation, a focused repair might be:
 
 ```powershell
