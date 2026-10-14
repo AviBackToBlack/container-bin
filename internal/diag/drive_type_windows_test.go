@@ -13,6 +13,14 @@ import (
 // An owned copy of the test executable makes any PATH/environment selection
 // regression observable before Go tries to parse PowerShell's command flags.
 func TestMain(m *testing.M) {
+	if os.Getenv("CB_TEST_HOST_VERSION_CHILD") == "1" {
+		if err := os.WriteFile(os.Getenv("CB_TEST_HOST_VERSION_MARKER"), []byte("shadow executed"), 0600); err != nil {
+			os.Exit(2)
+		}
+		fmt.Println("windows=owned PATH shadow")
+		fmt.Println("powershell=0.0.0.154")
+		os.Exit(0)
+	}
 	if os.Getenv("CB_TEST_DRIVE_PATH_CHILD") == "1" {
 		if err := os.WriteFile(os.Getenv("CB_TEST_DRIVE_PATH_MARKER"), []byte("shadow executed"), 0600); err != nil {
 			os.Exit(2)
