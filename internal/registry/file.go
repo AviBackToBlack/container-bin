@@ -501,8 +501,14 @@ func installShimNames(names []string, refuseUnrelated bool) error {
 	if err != nil {
 		return err
 	}
+	return installShimNamesAt(exe, names, refuseUnrelated, func(source, destination string) (shimInstallResult, error) {
+		return installShim(source, destination, os.Link, copyFile, os.Rename)
+	}, os.Stdout)
+}
+
+func installShimNamesAt(exe string, names []string, refuseUnrelated bool, install func(string, string) (shimInstallResult, error), out io.Writer) error {
 	dir := filepath.Dir(exe)
-	names, err = normalizedShimNames(names)
+	names, err := normalizedShimNames(names)
 	if err != nil {
 		return err
 	}
@@ -515,31 +521,36 @@ func installShimNames(names []string, refuseUnrelated bool) error {
 		}
 	}
 	fallbacks := make(map[string]int)
+	// Preserve explanations for completed copies even if a later shim fails.
+	defer writeShimFallbackSummary(out, fallbacks)
 	for _, name := range names {
 		if !ValidToolName(name) || ReservedToolName(name) {
 			return fmt.Errorf("refusing to install invalid or reserved shim name %q", name)
 		}
 		dst := filepath.Join(dir, name+".exe")
-		result, err := installShim(exe, dst, os.Link, copyFile, os.Rename)
+		result, err := install(exe, dst)
 		if err != nil {
 			return err
 		}
 		if result.mode == "hardlink" {
-			fmt.Printf("installed %-10s (hardlink)      -> %s\n", name, dst)
+			fmt.Fprintf(out, "installed %-10s (hardlink)      -> %s\n", name, dst)
 		} else {
-			fmt.Printf("installed %-10s (copy fallback) -> %s\n", name, dst)
+			fmt.Fprintf(out, "installed %-10s (copy fallback) -> %s\n", name, dst)
 			fallbacks[result.linkFailure]++
 		}
 	}
+	return nil
+}
+
+func writeShimFallbackSummary(out io.Writer, fallbacks map[string]int) {
 	reasons := make([]string, 0, len(fallbacks))
 	for reason := range fallbacks {
 		reasons = append(reasons, reason)
 	}
 	sort.Strings(reasons)
 	for _, reason := range reasons {
-		fmt.Printf("copy fallback for %d shim(s): hardlink failed: %s; copied shims remain usable; see docs/windows-acl.md\n", fallbacks[reason], reason)
+		fmt.Fprintf(out, "copy fallback for %d shim(s): hardlink failed: %s; copied shims remain usable; see docs/windows-acl.md\n", fallbacks[reason], reason)
 	}
-	return nil
 }
 
 func normalizedShimNames(names []string) ([]string, error) {

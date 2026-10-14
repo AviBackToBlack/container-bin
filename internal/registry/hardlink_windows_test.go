@@ -5,9 +5,56 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
+	"unsafe"
 )
+
+// Elevated CI runners can have privileges that bypass source-file ACL checks.
+// Restrict only the test thread: remove privileges and make Administrators
+// deny-only. Revert before releasing the OS thread; never alter the process's
+// token or create another account.
+func withUnprivilegedHardlinkToken(t *testing.T, run func()) {
+	t.Helper()
+	process, err := syscall.GetCurrentProcess()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var current syscall.Token
+	if err := syscall.OpenProcessToken(process, syscall.TOKEN_DUPLICATE|syscall.TOKEN_QUERY, &current); err != nil {
+		t.Fatal(err)
+	}
+	defer current.Close()
+	admin, err := syscall.StringToSid("S-1-5-32-544")
+	if err != nil {
+		t.Fatal(err)
+	}
+	disabled := syscall.SIDAndAttributes{Sid: admin}
+	advapi := syscall.NewLazyDLL("advapi32.dll")
+	var restricted syscall.Token
+	ok, _, callErr := advapi.NewProc("CreateRestrictedToken").Call(uintptr(current), 1, 1, uintptr(unsafe.Pointer(&disabled)), 0, 0, 0, 0, uintptr(unsafe.Pointer(&restricted)))
+	if ok == 0 {
+		t.Fatalf("restrict test token: %v", callErr)
+	}
+	defer restricted.Close()
+	runtime.LockOSThread()
+	ok, _, callErr = advapi.NewProc("ImpersonateLoggedOnUser").Call(uintptr(restricted))
+	if ok == 0 {
+		runtime.UnlockOSThread()
+		t.Fatalf("impersonate test token: %v", callErr)
+	}
+	defer func() {
+		ok, _, err := advapi.NewProc("RevertToSelf").Call()
+		if ok == 0 {
+			// A still-impersonating thread must never return to Go's pool.
+			panic("cannot revert hardlink test token: " + err.Error())
+		}
+		runtime.UnlockOSThread()
+	}()
+	run()
+}
 
 func TestInstallShimWindowsSourcePermissions(t *testing.T) {
 	dir := t.TempDir()
@@ -18,6 +65,12 @@ func TestInstallShimWindowsSourcePermissions(t *testing.T) {
 	u, err := user.Current()
 	if err != nil {
 		t.Fatal(err)
+	}
+	// The reduced token must have destination access independently of any
+	// inherited Administrators grant on an elevated runner's temporary root.
+	grant := exec.Command("icacls.exe", dir, "/grant", "*"+u.Uid+":(OI)(CI)F")
+	if out, err := grant.CombinedOutput(); err != nil {
+		t.Fatalf("fixture destination ACL: %v: %s", err, out)
 	}
 	setRights := func(t *testing.T, rights string) {
 		t.Helper()
@@ -34,7 +87,18 @@ func TestInstallShimWindowsSourcePermissions(t *testing.T) {
 	for _, rights := range []string{"RX", "(GR,GE,GW)"} {
 		t.Run(rights, func(t *testing.T) {
 			setRights(t, rights)
-			result, err := installShim(exe, dst, os.Link, copyFile, os.Rename)
+			var result shimInstallResult
+			var err error
+			withUnprivilegedHardlinkToken(t, func() {
+				f, writeErr := os.OpenFile(exe, os.O_WRONLY, 0)
+				if f != nil {
+					f.Close()
+				}
+				if (rights == "RX" && !os.IsPermission(writeErr)) || (rights != "RX" && writeErr != nil) {
+					t.Fatalf("source write access for %s: %v", rights, writeErr)
+				}
+				result, err = installShim(exe, dst, os.Link, copyFile, os.Rename)
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
