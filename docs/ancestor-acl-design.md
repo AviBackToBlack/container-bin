@@ -3,7 +3,7 @@
 Status: **proposal; maintainer approval required before implementation**.
 Baseline: main `5c27388912d47cc19ef36aba2afab58fe2644641`, including #144.
 Reviewed 2026-10-14. No security enforcement or runtime behavior changes are
-part of this document. The field report is a potential misleading diagnostic,
+part of this document. The field report is a potentially misleading diagnostic,
 not a demonstrated exploit under a separate attacker's token.
 
 ## Threat model and scope
@@ -216,6 +216,6 @@ handling of filter-defined reparse points; resistance to adversarial races;
 and host-path redaction across doctor/bugreport. These are reasons to limit
 claims or report incomplete, never reasons to infer a safe result.
 
-Task C stops at this document. Tasks #141 and #143 neither implement nor
-approve these semantics. No implementation should begin until the human
+This document completes the design proposal. Issues #141 and #143 neither
+implement nor approve these semantics. No implementation should begin until the human
 maintainer explicitly approves the design.
