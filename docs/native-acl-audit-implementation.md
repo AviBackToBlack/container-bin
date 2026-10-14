@@ -60,24 +60,33 @@ nonelevated host, and native Windows ARM64/x64 CI. Elevated CI must exercise
 scope rejection explicitly; synthetic descriptors/reduced-token fixtures do not
 constitute an independently authenticated second-user exploit demonstration.
 CI also launches a same-user reduced-primary-token child and asserts native
-`TokenElevation=0` before qualifying and auditing its owned per-user fixture.
-Failure to obtain or verify that token fails qualification rather than being
-silently skipped. It creates no account and grants no new authority.
+`TokenElevation=0`. A namespace inspection failure must produce incomplete WARN,
+not successful qualification. Failure to create or verify that token fails the
+test. This particular fixture creates no account and grants no new authority.
 
 The initial x64 and ARM64 CI runs exposed a limit of this test token: after
 removing Administrators authority, `QueryDosDevice` returns access denied for
 its DOS-device namespace. The audit correctly reports incomplete coverage;
 this token does not prove a successful ordinary non-elevated ARM64 scan. The
-local non-elevated x64 token and its reduced child pass. A successful ARM64
-qualification needs an existing ordinary non-elevated login or separately
-authorized disposable CI account. Do not relax the reader, mutate namespace
-ACLs, or describe the reduced-token failure as successful full qualification.
+local non-elevated x64 token and its reduced child pass. The maintainer separately
+authorized temporary non-admin accounts on disposable GitHub-hosted runners
+only, on 2026-10-14. A required x64/ARM64 CI step compiles the native tests,
+creates one randomly named account with an ephemeral masked password, loads its
+profile and runs the native suite under that login. The child verifies its exact
+expected SID, lack of Administrators membership and TokenElevation=0 before
+requiring successful native qualification. Cleanup removes and verifies removal
+of the owned account/profile/staging tree, including on test failure. Cleanup
+failure fails the step. The script rejects non-hosted environments before any
+mutation. This adds no account, privilege or policy change on maintainer PCs.
+Do not relax the reader, mutate namespace ACLs, or describe the reduced-token
+failure as successful full qualification.
 
 Before the final stack retarget to main, remove the two temporary named stack
 bases from CI after their dependent validation is no longer needed, and rerun
 all main-targeted security/integration checks. No dependency PR is merged here.
 
-No account creation, elevation, production ACL/policy changes, destructive
+Apart from the separately authorized disposable CI test accounts above, no
+account creation, elevation, production ACL/policy changes, destructive
 replacement experiments, new VM, or Z-LAPTOP work is authorized by this plan.
 Machine-wide manager declarations and full qualification of redirection targets
 remain future scope, explicitly incomplete in C1.

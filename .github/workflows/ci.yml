@@ -124,6 +124,9 @@ jobs:
       - name: Test benchmark comparison (Windows PowerShell 5.1)
         run: powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-compare-startup-benchmarks.ps1
         shell: pwsh
+      - name: Qualify native ACL audit as a disposable standard user
+        shell: pwsh
+        run: ./scripts/test-native-acl-standard-user.ps1
       - name: Build cb.exe
         run: go build -trimpath -o cb.exe .
       - name: Smoke-test version output
@@ -159,6 +162,9 @@ jobs:
           }
       - name: go test
         run: go test -v ./...
+      - name: Qualify native ACL audit as a disposable standard user
+        shell: pwsh
+        run: ./scripts/test-native-acl-standard-user.ps1
       - name: Build release-style cb.exe
         run: go build -trimpath -buildvcs=false -ldflags "-s -w -X main.version=v0.0.0-arm64-citest" -o cb.exe .
       - name: Smoke-test native management and shim dispatch

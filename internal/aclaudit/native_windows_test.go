@@ -201,8 +201,35 @@ func checkNonElevatedQualification(t *testing.T) {
 	if elevated != 0 {
 		t.Fatal("qualification child is still elevated")
 	}
+	if os.Getenv("CB_ACL_STANDARD_USER") == "1" {
+		user, err := token.GetTokenUser()
+		if err != nil {
+			t.Fatal(err)
+		}
+		sid, err := user.User.Sid.String()
+		if err != nil || sid != os.Getenv("CB_ACL_EXPECTED_SID") || sid == "" {
+			t.Fatal("qualification process does not use the expected disposable account")
+		}
+		admin, err := syscall.StringToSid("S-1-5-32-544")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var member int32
+		ok, _, err := advapi.NewProc("CheckTokenMembership").Call(0, uintptr(unsafe.Pointer(admin)), uintptr(unsafe.Pointer(&member)))
+		if ok == 0 || member != 0 {
+			t.Fatalf("standard-user qualification has administrator membership: %v", err)
+		}
+	}
 	dir, _ := nativeFixture(t)
 	if _, err := readSnapshot(filepath.VolumeName(dir) + `\`); err != nil {
+		if os.Getenv("CB_ACL_EXPECT_INCOMPLETE") == "1" && os.Getenv("CB_ACL_STANDARD_USER") != "1" {
+			r := Inspect(context.Background(), Request{Directory: dir})
+			if len(r.incomplete) == 0 || strings.Contains(textOf(r), "ok ") {
+				t.Fatal("restricted-token namespace failure reported complete: " + textOf(r))
+			}
+			t.Log("reduced administrator token cannot inspect its namespace: incomplete WARN verified; full non-elevated qualification is a separate required CI step")
+			return
+		}
 		t.Fatalf("native volume-root metadata under qualification token: %v", err)
 	}
 	s, r := qualify(context.Background(), Request{Directory: dir})
@@ -244,10 +271,13 @@ func TestNativeNonElevatedQualification(t *testing.T) {
 	}
 	if elevated == 0 {
 		checkNonElevatedQualification(t)
+		if os.Getenv("CB_ACL_STANDARD_USER") == "1" {
+			return
+		}
 	}
-	// Elevated CI must qualify the real native reader under a reduced primary
-	// token too. This removes privileges/Admin authority; it creates no account
-	// and never elevates a child or modifies the parent's token.
+	// A synthetic reduced administrator token can lose DOS-namespace access.
+	// Verify fail-closed behavior there; a separate standard-user login is the
+	// required hosted CI success qualification. No parent token is modified.
 	admin, err := syscall.StringToSid("S-1-5-32-544")
 	if err != nil {
 		t.Fatal(err)
@@ -264,7 +294,7 @@ func TestNativeNonElevatedQualification(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(exe, "-test.run=^TestNativeNonElevatedAuditChild$", "-test.v", "-test.timeout=60s")
-	cmd.Env = append(os.Environ(), "CB_ACL_AUDIT_CHILD=1")
+	cmd.Env = append(os.Environ(), "CB_ACL_AUDIT_CHILD=1", "CB_ACL_EXPECT_INCOMPLETE=1")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Token: reduced}
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("nonelevated native qualification child: %v\n%s", err, out)
