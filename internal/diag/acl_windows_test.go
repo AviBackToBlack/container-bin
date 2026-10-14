@@ -91,7 +91,10 @@ Microsoft.PowerShell.Security\Set-Acl -LiteralPath $env:CB_TEST_ACL_DIR -AclObje
 	// Unlike the old nonterminating probe, a missing directory must fail the
 	// process and carry a sanitized actionable reason instead of stdout "||".
 	missing := filepath.Join(root, "missing-private-path")
-	cmd := shimDirACLCommand(context.Background(), missing)
+	cmd, err := shimDirACLCommand(context.Background(), missing)
+	if err != nil {
+		t.Fatal(err)
+	}
 	out, err := cmd.Output()
 	if err == nil || len(out) != 0 {
 		t.Fatalf("missing ACL: stdout %q, error %v", out, err)

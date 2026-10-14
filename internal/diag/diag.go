@@ -29,8 +29,12 @@ import (
 // Windows PowerShell must not autoload PowerShell 7's incompatible modules.
 // Only the child environment changes; import the inbox module by absolute path
 // so user module directories cannot shadow the ACL cmdlet either.
-func shimDirACLCommand(ctx context.Context, dir string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", `
+func shimDirACLCommand(ctx context.Context, dir string) (*exec.Cmd, error) {
+	powerShell, err := aclPowerShellExecutable()
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.CommandContext(ctx, powerShell, "-NoProfile", "-NonInteractive", "-Command", `
 $ErrorActionPreference = 'Stop'
 $stage = 'module-load'
 try {
@@ -46,24 +50,33 @@ try {
     [Console]::Error.WriteLine('CB_ACL_ERROR|' + $stage)
     exit 1
 }`)
+	cmd.Env = shimDirACLEnvironment(dir)
+	return cmd, nil
+}
+
+func shimDirACLEnvironment(dir string) []string {
+	var env []string
 	for _, entry := range os.Environ() {
 		key, _, _ := strings.Cut(entry, "=")
 		if !strings.EqualFold(key, "PSModulePath") && !strings.EqualFold(key, "CB_DOCTOR_ACL_DIR") {
-			cmd.Env = append(cmd.Env, entry)
+			env = append(env, entry)
 		}
 	}
-	cmd.Env = append(cmd.Env, "CB_DOCTOR_ACL_DIR="+dir)
-	return cmd
+	return append(env, "CB_DOCTOR_ACL_DIR="+dir)
 }
 
 func inspectShimDirACL(dir, currentUserSID string) (string, string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	out, err := shimDirACLCommand(ctx, dir).Output()
-	if ctx.Err() != nil {
-		return "warn", "could not inspect shim directory permissions: Windows PowerShell ACL probe timed out"
-	}
+	cmd, err := shimDirACLCommand(ctx, dir)
 	if err != nil {
+		return "warn", shimDirACLProbeError(err)
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		if ctx.Err() != nil {
+			return "warn", "could not inspect shim directory permissions: Windows PowerShell ACL probe timed out"
+		}
 		return "warn", shimDirACLProbeError(err)
 	}
 	return shimDirACLVerdict(string(out), currentUserSID)

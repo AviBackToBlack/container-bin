@@ -1,7 +1,6 @@
 package diag
 
 import (
-	"context"
 	"os/exec"
 	"strings"
 	"testing"
@@ -10,9 +9,8 @@ import (
 func TestShimDirACLChildEnvironment(t *testing.T) {
 	t.Setenv("PSModulePath", "private incompatible module path")
 	t.Setenv("CB_DOCTOR_ACL_DIR", "stale directory")
-	cmd := shimDirACLCommand(context.Background(), "requested directory")
 	count := 0
-	for _, entry := range cmd.Env {
+	for _, entry := range shimDirACLEnvironment("requested directory") {
 		key, value, _ := strings.Cut(entry, "=")
 		if strings.EqualFold(key, "PSModulePath") {
 			t.Fatal("child inherits PSModulePath")
