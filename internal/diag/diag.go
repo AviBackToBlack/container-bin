@@ -230,14 +230,50 @@ func networkStorageVerdict(subject, path, driveType string) (status, message str
 }
 
 func windowsDriveType(driveLetter string) (string, error) {
-	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command",
-		`try { [System.IO.DriveInfo]::new($env:CB_DOCTOR_DRIVE).DriveType } catch { '' }`)
-	cmd.Env = append(os.Environ(), "CB_DOCTOR_DRIVE="+driveLetter)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd, err := windowsDriveTypeCommand(ctx, driveLetter)
+	if err != nil {
+		return "", errors.New("Windows drive-type inspector is unavailable")
+	}
 	out, err := cmd.Output()
 	if err != nil {
-		return "", err
+		if ctx.Err() != nil {
+			return "", errors.New("Windows drive-type inspection timed out")
+		}
+		return "", errors.New("Windows drive-type inspection failed")
 	}
-	return strings.TrimSpace(string(out)), nil
+	return windowsDriveTypeOutput(string(out))
+}
+
+func windowsDriveTypeCommand(ctx context.Context, driveLetter string) (*exec.Cmd, error) {
+	// Reuse the native system-directory resolver; no environment variable or
+	// PATH entry is an authority for selecting this executable.
+	powerShell, err := aclPowerShellExecutable()
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.CommandContext(ctx, powerShell, "-NoProfile", "-NonInteractive", "-Command",
+		`$ErrorActionPreference = 'Stop'; try { [System.IO.DriveInfo]::new($env:CB_DOCTOR_DRIVE).DriveType } catch { exit 1 }`)
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		if !strings.EqualFold(key, "CB_DOCTOR_DRIVE") {
+			cmd.Env = append(cmd.Env, entry)
+		}
+	}
+	cmd.Env = append(cmd.Env, "CB_DOCTOR_DRIVE="+driveLetter)
+	cmd.WaitDelay = time.Second
+	return cmd, nil
+}
+
+func windowsDriveTypeOutput(raw string) (string, error) {
+	driveType := strings.TrimSpace(raw)
+	switch driveType {
+	case "Unknown", "NoRootDirectory", "Removable", "Fixed", "Network", "CDRom", "Ram":
+		return driveType, nil
+	default:
+		return "", errors.New("Windows drive-type inspection returned an invalid classification")
+	}
 }
 
 func registrySchemaVerdict(version int) (status, message string) {

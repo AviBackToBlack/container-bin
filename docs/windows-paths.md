@@ -139,6 +139,13 @@ drives are per-session, per-user constructs invisible to the Docker service.
 The remedy is to work from the underlying real path. A doctor warning for this
 is **RM-5c**.
 
+Doctor classifies drive-letter storage using Windows PowerShell resolved from
+the native system Windows directory and its fixed System32 path. `PATH`,
+`SystemRoot`, and `WINDIR` do not select that executable. The probe is bounded;
+failed, unknown, or invalid classifications remain warnings rather than being
+reported as safe local storage. Fixed-drive and mapped-network-drive diagnostic
+meanings are unchanged.
+
 ### P11 — Trailing dots and spaces
 
 `filepath.Abs` on Windows goes through `GetFullPathNameW`, which strips
