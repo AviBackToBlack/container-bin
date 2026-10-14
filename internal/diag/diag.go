@@ -387,10 +387,12 @@ func Doctor(reg registry.Registry, cfgPath string, machinePolicy policy.Policy) 
 			currentUserSID = u.Uid
 		}
 		status, msg := inspectShimDirACL(dir, currentUserSID)
-		if status == "ok" {
-			ok("%s", msg)
-		} else {
-			warn("%s", msg)
+		for _, check := range shimACLDiagnostics(status, msg) {
+			if check.status == "ok" {
+				ok("%s", check.message)
+			} else {
+				warn("%s", check.message)
+			}
 		}
 	}
 
