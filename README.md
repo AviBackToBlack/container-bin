@@ -966,10 +966,11 @@ The current-source `cb doctor` ACL probe isolates its Windows PowerShell module
 environment, including when launched from PowerShell 7. Probe failures remain
 warnings; see the [ACL troubleshooting guide](docs/windows-acl.md).
 
-Windows doctor also emits one explicit warning that ancestor/redirection/managed
-file coverage is incomplete, even if the immediate-directory probe succeeds.
-See [ACL diagnostic coverage](docs/windows-acl-audit.md) for warning-count and
-compatibility details.
+Windows doctor also reports a bounded native ACL candidate audit for qualified
+per-user NTFS installations. Candidate authority and incomplete/unsupported
+coverage produce warnings, even if the immediate-directory probe succeeds.
+See [ACL diagnostic coverage](docs/windows-acl-audit.md) for the declared model,
+warning-count changes and compatibility limits.
 
 `cb bugreport` assembles `cb version`, the Windows and PowerShell versions
 (on Windows), a compact registry inventory and `cb doctor` output into one
