@@ -125,6 +125,10 @@ cb lock
 > `cb install` needs write access to `cb.exe` to create NTFS hardlinks. See
 > [Windows installation ACLs and troubleshooting](docs/windows-acl.md).
 
+When hardlink creation fails, current-source installation preserves the copy
+fallback and reports a summary of the original failure reasons. See the
+[ACL troubleshooting guide](docs/windows-acl.md) before changing permissions.
+
 ## Default tools
 
 | Shim | Image | Provider |

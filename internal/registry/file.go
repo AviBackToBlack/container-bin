@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/AviBackToBlack/container-bin/internal/atomicio"
 	"github.com/AviBackToBlack/container-bin/internal/toml"
@@ -500,8 +501,14 @@ func installShimNames(names []string, refuseUnrelated bool) error {
 	if err != nil {
 		return err
 	}
+	return installShimNamesAt(exe, names, refuseUnrelated, func(source, destination string) (shimInstallResult, error) {
+		return installShim(source, destination, os.Link, copyFile, os.Rename)
+	}, os.Stdout)
+}
+
+func installShimNamesAt(exe string, names []string, refuseUnrelated bool, install func(string, string) (shimInstallResult, error), out io.Writer) error {
 	dir := filepath.Dir(exe)
-	names, err = normalizedShimNames(names)
+	names, err := normalizedShimNames(names)
 	if err != nil {
 		return err
 	}
@@ -513,22 +520,37 @@ func installShimNames(names []string, refuseUnrelated bool) error {
 			}
 		}
 	}
+	fallbacks := make(map[string]int)
+	// Preserve explanations for completed copies even if a later shim fails.
+	defer writeShimFallbackSummary(out, fallbacks)
 	for _, name := range names {
 		if !ValidToolName(name) || ReservedToolName(name) {
 			return fmt.Errorf("refusing to install invalid or reserved shim name %q", name)
 		}
 		dst := filepath.Join(dir, name+".exe")
-		mode, err := installShim(exe, dst, os.Link, copyFile, os.Rename)
+		result, err := install(exe, dst)
 		if err != nil {
 			return err
 		}
-		if mode == "hardlink" {
-			fmt.Printf("installed %-10s (hardlink)      -> %s\n", name, dst)
+		if result.mode == "hardlink" {
+			fmt.Fprintf(out, "installed %-10s (hardlink)      -> %s\n", name, dst)
 		} else {
-			fmt.Printf("installed %-10s (copy fallback) -> %s\n", name, dst)
+			fmt.Fprintf(out, "installed %-10s (copy fallback) -> %s\n", name, dst)
+			fallbacks[result.linkFailure]++
 		}
 	}
 	return nil
+}
+
+func writeShimFallbackSummary(out io.Writer, fallbacks map[string]int) {
+	reasons := make([]string, 0, len(fallbacks))
+	for reason := range fallbacks {
+		reasons = append(reasons, reason)
+	}
+	sort.Strings(reasons)
+	for _, reason := range reasons {
+		fmt.Fprintf(out, "copy fallback for %d shim(s): hardlink failed: %s; copied shims remain usable; see docs/windows-acl.md\n", fallbacks[reason], reason)
+	}
 }
 
 func normalizedShimNames(names []string) ([]string, error) {
@@ -595,34 +617,54 @@ func fileSHA256(path string) ([sha256.Size]byte, error) {
 
 type fileOperation func(string, string) error
 
-func installShim(exe, dst string, linkFile, copyFallback, replaceFile fileOperation) (string, error) {
+type shimInstallResult struct {
+	mode        string
+	linkFailure string
+}
+
+// Keep error categories and OS error codes/messages, but never expose LinkError
+// source/temporary paths or arbitrary implementation-supplied error text.
+func hardlinkFailureReason(err error) string {
+	if errors.Is(err, os.ErrPermission) {
+		return "access denied; the trusted updater needs write access to source cb.exe as well as the destination directory"
+	}
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		return fmt.Sprintf("OS error %d (%s)", errno, errno.Error())
+	}
+	return "unclassified filesystem error"
+}
+
+func installShim(exe, dst string, linkFile, copyFallback, replaceFile fileOperation) (shimInstallResult, error) {
+	var result shimInstallResult
 	tmp, err := os.CreateTemp(filepath.Dir(dst), "."+filepath.Base(dst)+"-*.tmp")
 	if err != nil {
-		return "", fmt.Errorf("create temporary shim for %s: %w", dst, err)
+		return result, fmt.Errorf("create temporary shim for %s: %w", dst, err)
 	}
 	tmpPath := tmp.Name()
 	if err := tmp.Close(); err != nil {
 		_ = os.Remove(tmpPath)
-		return "", fmt.Errorf("close temporary shim for %s: %w", dst, err)
+		return result, fmt.Errorf("close temporary shim for %s: %w", dst, err)
 	}
 	if err := os.Remove(tmpPath); err != nil {
-		return "", fmt.Errorf("prepare temporary shim for %s: %w", dst, err)
+		return result, fmt.Errorf("prepare temporary shim for %s: %w", dst, err)
 	}
 	defer os.Remove(tmpPath)
 
-	mode := "hardlink"
+	result.mode = "hardlink"
 	linkErr := linkFile(exe, tmpPath)
 	if linkErr != nil {
-		mode = "copy"
+		result.mode = "copy"
+		result.linkFailure = hardlinkFailureReason(linkErr)
 		_ = os.Remove(tmpPath)
 		if err := copyFallback(exe, tmpPath); err != nil {
-			return "", fmt.Errorf("create %s: hardlink failed (%v) and copy fallback failed: %w", dst, linkErr, err)
+			return result, fmt.Errorf("create %s: hardlink failed (%s); copy fallback failed: %w", dst, result.linkFailure, err)
 		}
 	}
 	if err := replaceFile(tmpPath, dst); err != nil {
-		return "", fmt.Errorf("replace %s: %w", dst, err)
+		return result, fmt.Errorf("replace %s: %w", dst, err)
 	}
-	return mode, nil
+	return result, nil
 }
 
 func copyFile(src, dst string) error {
