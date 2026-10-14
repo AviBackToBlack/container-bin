@@ -859,16 +859,6 @@ func dockerEngineVersionCheck(dockerCheck selfTestCheck) selfTestCheck {
 	return selfTestCheck{ID: "docker-engine-version", Status: "pass", Message: dockerCheck.Message}
 }
 
-func windowsHostVersionInfo() (string, error) {
-	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command",
-		`"windows=$([System.Environment]::OSVersion.VersionString)"; "powershell=$($PSVersionTable.PSVersion.ToString())"`)
-	out, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-	return string(out), nil
-}
-
 func parseWindowsHostVersionInfo(raw string) (windowsVersion, powershellVersion string) {
 	for _, line := range strings.Split(strings.ReplaceAll(raw, "\r", ""), "\n") {
 		line = strings.TrimSpace(line)

@@ -1142,6 +1142,12 @@ The four PowerShell-dependent entries (`windows-version`, `powershell-version`,
 hosts; `docker-engine-version`, `docker-os-type`, and `cwd-reparse-point` are
 not PowerShell-dependent and still run.
 
+On Windows, the host-version probe selects inbox PowerShell from the native
+system Windows directory, independently of `PATH`, `SystemRoot`, and `WINDIR`.
+It has a 15-second deadline, a one-second pipe wait, and a 4 KiB limit for each
+output stream. Failed, oversized, or malformed responses leave both version
+entries skipped; private executable paths and child error output are not reported.
+
 A `skip` status covers two different situations that share the same status
 value but not the same message shape: a genuine "could not determine" (e.g.
 not on Windows, Docker unreachable) is always messaged `skipped: ...`, while
