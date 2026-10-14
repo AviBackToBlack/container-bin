@@ -4,7 +4,9 @@
 package diag
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -23,6 +25,82 @@ import (
 	"github.com/AviBackToBlack/container-bin/internal/policy"
 	"github.com/AviBackToBlack/container-bin/internal/registry"
 )
+
+// Windows PowerShell must not autoload PowerShell 7's incompatible modules.
+// Only the child environment changes; import the inbox module by absolute path
+// so user module directories cannot shadow the ACL cmdlet either.
+func shimDirACLCommand(ctx context.Context, dir string) (*exec.Cmd, error) {
+	powerShell, err := aclPowerShellExecutable()
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.CommandContext(ctx, powerShell, "-NoProfile", "-NonInteractive", "-Command", `
+$ErrorActionPreference = 'Stop'
+$stage = 'module-load'
+try {
+    Import-Module ($PSHOME + '\Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1') -ErrorAction Stop
+    $stage = 'acl-read'
+    $acl = Microsoft.PowerShell.Security\Get-Acl -LiteralPath $env:CB_DOCTOR_ACL_DIR -ErrorAction Stop
+    $stage = 'identity-translation'
+    $rules = $acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])
+    foreach ($rule in $rules) {
+        "$($rule.IdentityReference.Value)|$($rule.AccessControlType)|$($rule.FileSystemRights)"
+    }
+} catch {
+    [Console]::Error.WriteLine('CB_ACL_ERROR|' + $stage)
+    exit 1
+}`)
+	cmd.Env = shimDirACLEnvironment(dir)
+	return cmd, nil
+}
+
+func shimDirACLEnvironment(dir string) []string {
+	var env []string
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		if !strings.EqualFold(key, "PSModulePath") && !strings.EqualFold(key, "CB_DOCTOR_ACL_DIR") {
+			env = append(env, entry)
+		}
+	}
+	return append(env, "CB_DOCTOR_ACL_DIR="+dir)
+}
+
+func inspectShimDirACL(dir, currentUserSID string) (string, string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd, err := shimDirACLCommand(ctx, dir)
+	if err != nil {
+		return "warn", shimDirACLProbeError(err)
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		if ctx.Err() != nil {
+			return "warn", "could not inspect shim directory permissions: Windows PowerShell ACL probe timed out"
+		}
+		return "warn", shimDirACLProbeError(err)
+	}
+	return shimDirACLVerdict(string(out), currentUserSID)
+}
+
+// Report only our fixed stage identifiers, never arbitrary PowerShell stderr
+// (which may contain private paths, identities or module-supplied text).
+func shimDirACLProbeError(err error) string {
+	reason := "Windows PowerShell ACL probe could not run; verify Windows PowerShell 5.1 is available"
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		switch strings.TrimSpace(string(exitErr.Stderr)) {
+		case "CB_ACL_ERROR|module-load":
+			reason = "Windows PowerShell inbox security module could not load"
+		case "CB_ACL_ERROR|acl-read":
+			reason = "Get-Acl failed; verify the shim directory exists and the current account can read its permissions"
+		case "CB_ACL_ERROR|identity-translation":
+			reason = "ACL identities could not be translated to SIDs"
+		default:
+			reason = "Windows PowerShell ACL probe failed; verify Windows PowerShell and directory access"
+		}
+	}
+	return "could not inspect shim directory permissions: " + reason
+}
 
 func dockerOSTypeVerdict(raw string) (status, message string) {
 	normalized := strings.Join(strings.Fields(raw), " ")
@@ -308,23 +386,11 @@ func Doctor(reg registry.Registry, cfgPath string, machinePolicy policy.Policy) 
 		if u, err := user.Current(); err == nil {
 			currentUserSID = u.Uid
 		}
-		cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command",
-			`$acl = Get-Acl -LiteralPath $env:CB_DOCTOR_ACL_DIR; `+
-				`$acl.Access | ForEach-Object { `+
-				`$sid = $_.IdentityReference.Value; `+
-				`try { $sid = $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch {}; `+
-				`"$sid|$($_.AccessControlType)|$($_.FileSystemRights)" }`)
-		cmd.Env = append(os.Environ(), "CB_DOCTOR_ACL_DIR="+dir)
-		out, err := cmd.Output()
-		if err != nil {
-			warn("could not inspect shim directory permissions: %v", err)
+		status, msg := inspectShimDirACL(dir, currentUserSID)
+		if status == "ok" {
+			ok("%s", msg)
 		} else {
-			status, msg := shimDirACLVerdict(string(out), currentUserSID)
-			if status == "ok" {
-				ok("%s", msg)
-			} else {
-				warn("%s", msg)
-			}
+			warn("%s", msg)
 		}
 	}
 

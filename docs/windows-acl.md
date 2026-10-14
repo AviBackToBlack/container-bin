@@ -113,7 +113,16 @@ The source `cb.exe` and existing hardlinks share one NTFS file and thus its file
 
 This warning means the probe **could not classify** the directory; it is **not** proof that the ACL is safe or unsafe. One confirmed issue in **v2.0.1** is Windows PowerShell 5.1 inheriting a PowerShell 7 `PSModulePath` from its parent process. The Windows PowerShell child may fail to load `Microsoft.PowerShell.Security` / `Get-Acl`, return exit code 0 with invalid output, and produce this warning. See [issue #141](https://github.com/AviBackToBlack/container-bin/issues/141).
 
-Temporary diagnostic workaround (modifies the environment of **only the current PowerShell process**, and restores it immediately afterward):
+Current source fixes this probe by removing inherited `PSModulePath` only from
+the Windows PowerShell child, explicitly importing its inbox security module,
+and terminating on module, ACL-read or identity-translation errors. Failures
+remain warnings with a fixed failure stage and no raw PowerShell stderr. The
+parent process and persistent environment are unchanged. This does not expand
+the check to ancestor directories or certify effective access.
+
+For the published **v2.0.1** binary, a temporary diagnostic workaround modifies
+the environment of **only the current PowerShell process** and restores it
+immediately afterward:
 
 ```powershell
 $previous = $env:PSModulePath

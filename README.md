@@ -958,6 +958,10 @@ cb gc [TOOL|STATE_GROUP]           # native WSL: dry-run current project cleanup
 cb gc [TOOL|STATE_GROUP] --orphans # native WSL: dry-run missing-project cleanup
 ```
 
+The current-source `cb doctor` ACL probe isolates its Windows PowerShell module
+environment, including when launched from PowerShell 7. Probe failures remain
+warnings; see the [ACL troubleshooting guide](docs/windows-acl.md).
+
 `cb bugreport` assembles `cb version`, the Windows and PowerShell versions
 (on Windows), a compact registry inventory and `cb doctor` output into one
 block that is easy to paste into an issue. It applies a small, fixed set of
