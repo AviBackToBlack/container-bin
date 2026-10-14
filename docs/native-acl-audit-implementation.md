@@ -76,8 +76,12 @@ profile and runs the native suite under that login. The child verifies its exact
 expected SID, lack of Administrators membership and TokenElevation=0 before
 requiring successful native qualification. Cleanup removes and verifies removal
 of the owned account/profile/staging tree, including on test failure. Cleanup
-failure fails the step. The script rejects non-hosted environments before any
-mutation. This adds no account, privilege or policy change on maintainer PCs.
+failure fails the step. Before any mutation, the script checks the declared
+GitHub-hosted Windows runner environment. Those mutable environment checks are
+an accidental-invocation guard, not host attestation or an authorization
+boundary. Account creation is authorized only in the disposable hosted CI jobs;
+do not spoof the checks or run the account fixture on maintainer PCs. No such
+local invocation, account, privilege or policy change is part of qualification.
 Do not relax the reader, mutate namespace ACLs, or describe the reduced-token
 failure as successful full qualification.
 
