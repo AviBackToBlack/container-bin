@@ -23,6 +23,30 @@ func textOf(r Report) string {
 	return strings.Join(lines, "\n")
 }
 
+func TestRedirectionOwnerQualificationIsObjectScoped(t *testing.T) {
+	for _, tc := range []struct {
+		name, owner string
+		broad       bool
+		candidates  int
+	}{
+		{"caller-owned", updater, false, 0},
+		{"other-owned", "S-1-5-21-1-2-3-1002", false, 2},
+		{"caller-owned-broad-grant", updater, true, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			node := snapshot{Directory: true, Reparse: 1, Security: descriptor{Owner: tc.owner, ACEs: []ace{{Mask: 0x40000, SID: updater}}}}
+			if tc.broad {
+				node.Security.ACEs = append(node.Security.ACEs, ace{Mask: 0x40000, SID: "S-1-1-0"})
+			}
+			r := Report{objects: 1}
+			classifyRedirection(&r, "qualification ancestor[0]", node, updater)
+			if r.candidates != tc.candidates || len(r.incomplete) == 0 || strings.Contains(textOf(r), "ok ") {
+				t.Fatal(textOf(r))
+			}
+		})
+	}
+}
+
 func TestCandidateRightsAreNotEffectiveAccess(t *testing.T) {
 	for _, tc := range []struct {
 		name      string

@@ -133,6 +133,17 @@ func knownIdentity(sid, updater string) bool {
 	return false
 }
 
+// A native profile path and matching object owner can validate the caller only
+// for this redirection object. This does not qualify its target installation.
+func classifyRedirection(r *Report, label string, node snapshot, caller string) {
+	updater := ""
+	if caller != "" && node.Security.Owner == caller {
+		updater = caller
+	}
+	classify(r, label, node, updater)
+	r.missing("redirection object/target chain is not qualified")
+}
+
 // Deliberately never subtract deny ACEs. These are conservative candidates,
 // not Windows AccessCheck results. Inherit-only grants do not apply here.
 func classify(r *Report, label string, node snapshot, updater string) {

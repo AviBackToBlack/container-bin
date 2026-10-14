@@ -111,6 +111,50 @@ func TestNativeReaderPreservesNumericDescriptorAndDoesNotMutate(t *testing.T) {
 	}
 }
 
+func TestNativeHardlinkedShimUsesOpenedNameAndSharedIdentity(t *testing.T) {
+	dir, sid := nativeFixture(t)
+	binary := filepath.Join(dir, "cb.exe")
+	shim := filepath.Join(dir, "python.exe")
+	if err := os.WriteFile(binary, []byte("owned hardlink fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	fixtureSecurity(t, binary, fmt.Sprintf("O:%sD:P(A;;FA;;;%s)(A;;0x2;;;WD)", sid, sid), true)
+	if err := os.Link(binary, shim); err != nil {
+		t.Fatal(err)
+	}
+	first, err := readSnapshot(binary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := readSnapshot(shim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Identity != second.Identity || !strings.EqualFold(first.Resolved, binary) || !strings.EqualFold(second.Resolved, shim) || first.Security.Hash != second.Security.Hash {
+		t.Fatal("hardlink opened names or shared native identity not preserved")
+	}
+	r := Inspect(context.Background(), Request{Directory: dir, Assets: []Asset{{binary, "cb.exe"}, {shim, "shim python"}}})
+	text := textOf(r)
+	if strings.Contains(text, "resolved path identity differs") || !strings.Contains(text, "cb.exe: ACE[") || !strings.Contains(text, "shim python: ACE[") {
+		t.Fatal(text)
+	}
+	after, err := readSnapshot(shim)
+	if err != nil || !sameSnapshot(second, after) {
+		t.Fatal("hardlink snapshot changed during read-only audit")
+	}
+}
+
+func TestNativeOrdinaryAbsentLockfileIsOptional(t *testing.T) {
+	dir, _ := nativeFixture(t)
+	lock := Asset{filepath.Join(dir, "container-bin.lock"), "lockfile"}
+	r := Inspect(context.Background(), Request{Directory: dir, OptionalAssets: []Asset{lock}})
+	for _, reason := range r.incomplete {
+		if strings.Contains(reason, "lockfile") {
+			t.Fatal("ordinary absent lockfile reported as inspection failure: " + reason)
+		}
+	}
+}
+
 func TestNativeQualificationDoesNotTrustArbitraryCallerPaths(t *testing.T) {
 	dir, _ := nativeFixture(t)
 	if _, err := readSnapshot(filepath.VolumeName(dir) + `\`); err != nil {
@@ -288,7 +332,7 @@ func TestNativeNullAndEmptyDACLRemainDistinct(t *testing.T) {
 }
 
 func TestNativeJunctionAndSymlinkCoverageIsIncomplete(t *testing.T) {
-	dir, _ := nativeFixture(t)
+	dir, sid := nativeFixture(t)
 	target := filepath.Join(dir, "target")
 	if err := os.Mkdir(target, 0700); err != nil {
 		t.Fatal(err)
@@ -320,9 +364,16 @@ func TestNativeJunctionAndSymlinkCoverageIsIncomplete(t *testing.T) {
 					t.Fatalf("owned junction fixture: %v %s", err, out)
 				}
 			}
+			node, err := readSnapshot(link)
+			if err != nil {
+				t.Fatal(err)
+			}
 			r := Inspect(context.Background(), Request{Directory: link})
 			if len(r.incomplete) == 0 || !strings.Contains(textOf(r), "redirection") {
 				t.Fatal("redirection reported safe: " + textOf(r))
+			}
+			if node.Security.Owner == sid && strings.Contains(textOf(r), "owner SID "+sid+" may control") {
+				t.Fatal("validated redirection owner reported untrusted: " + textOf(r))
 			}
 		})
 	}

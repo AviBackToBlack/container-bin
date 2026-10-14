@@ -17,7 +17,8 @@ following C0. C0 and C1 remain separate dependent PRs; neither approves merging
 - Inspect local NTFS only. Walk components from volume root toward each target,
   opening the component itself rather than following a final reparse point.
   Include executable, registered shims, registry and lockfile and their chains.
-  Include the registry recovery backup when present; recheck ordinary absence.
+  Include the lockfile and registry recovery backup when present; recheck
+  ordinary absence. The existing lock-policy check still enforces RequireLock.
   Query volume/object identity and resolved handle paths, then re-read identities
   and descriptors to detect sampled changes.
 - Preserve owner, DACL control bits, ordered ACE type/flags/numeric masks and
@@ -30,7 +31,9 @@ following C0. C0 and C1 remain separate dependent PRs; neither approves merging
 - Junctions/symlinks/mount points are inspected as redirection objects and remain
   incomplete. Do not follow unqualified targets, which could introduce remote or
   uncontrolled I/O. SUBST/network roots remain incomplete before traversal.
-  Ordinary paths require resolved-path/volume identity agreement. This does not
+  Ordinary directory chains require normalized-path/volume identity agreement.
+  Regular-file handles use FILE_NAME_OPENED so hardlinked shim names retain
+  their opened name while their shared volume/file identity is verified. This does not
   reject those paths for dispatch or claim their target chains were audited.
 - Bound targets/components/ACE data and output. A single read-only worker per
   process has an eight-second caller deadline; a stalled native call can finish
@@ -60,6 +63,15 @@ CI also launches a same-user reduced-primary-token child and asserts native
 `TokenElevation=0` before qualifying and auditing its owned per-user fixture.
 Failure to obtain or verify that token fails qualification rather than being
 silently skipped. It creates no account and grants no new authority.
+
+The initial x64 and ARM64 CI runs exposed a limit of this test token: after
+removing Administrators authority, `QueryDosDevice` returns access denied for
+its DOS-device namespace. The audit correctly reports incomplete coverage;
+this token does not prove a successful ordinary non-elevated ARM64 scan. The
+local non-elevated x64 token and its reduced child pass. A successful ARM64
+qualification needs an existing ordinary non-elevated login or separately
+authorized disposable CI account. Do not relax the reader, mutate namespace
+ACLs, or describe the reduced-token failure as successful full qualification.
 
 Before the final stack retarget to main, remove the two temporary named stack
 bases from CI after their dependent validation is no longer needed, and rerun

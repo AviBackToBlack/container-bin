@@ -39,8 +39,10 @@ installation receives an incomplete result; no manager list is inferred.
 
 The audit reads local NTFS security descriptors through handles and inspects the
 literal ancestor chain, ordinary resolved handle paths, volume GUID/file IDs,
-`cb.exe`, registered shims, registry and lockfile. The registry recovery backup
-is included if present, with absence rechecked. Numeric owner SIDs, ordered ACE
+`cb.exe`, registered shims and registry. The lockfile and registry recovery backup
+are included if present, with absence rechecked; lock-policy enforcement remains
+separate. Hardlinked files retain their opened names and shared native identity.
+Numeric owner SIDs, ordered ACE
 types, flags, masks and descriptor hashes are retained for classification and
 sampled rechecks. Unsupported identities (including undeclared service/domain
 principals), ACE semantics, inaccessible/missing objects and changed snapshots

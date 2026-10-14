@@ -113,8 +113,7 @@ func qualify(ctx context.Context, req Request, updates ...func(Report)) (scope, 
 			updates[0](r.copy())
 		}
 		if node.Reparse != 0 || !strings.EqualFold(filepath.Clean(node.Resolved), chain[i]) {
-			classify(&r, fmt.Sprintf("qualification ancestor[%d]", i), node, "")
-			r.missing("redirection object/target chain is not qualified")
+			classifyRedirection(&r, fmt.Sprintf("qualification ancestor[%d]", i), node, s.Updater)
 			return s, r
 		}
 		if node.Filesystem != "NTFS" || !node.Directory {
@@ -224,7 +223,15 @@ func readSnapshot(path string) (snapshot, error) {
 		return node, fmt.Errorf("volume inspection: %v", callErr)
 	}
 	node.Filesystem = syscall.UTF16ToString(filesystem[:])
-	resolved, err := handlePath(h, 0)
+	// A regular file may have several hardlink names. Ask for the opened leaf
+	// name instead of comparing an arbitrary normalized sibling link name.
+	// Directory chains still require normalized identity agreement; reparse
+	// objects remain explicitly blocked regardless of their returned name.
+	nameFlags := uintptr(0)
+	if !node.Directory {
+		nameFlags = 8 // FILE_NAME_OPENED
+	}
+	resolved, err := handlePath(h, nameFlags)
 	if err != nil {
 		return node, err
 	}
