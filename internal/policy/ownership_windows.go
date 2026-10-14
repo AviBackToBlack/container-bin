@@ -3,32 +3,105 @@
 package policy
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
 func verifyOwnership(path string) error {
-	powerShell, err := powerShellExecutable()
-	if err != nil {
-		return err
-	}
-	for _, candidate := range []string{filepath.Dir(path), path} {
-		cmd := exec.Command(powerShell, "-NoProfile", "-NonInteractive", "-Command", `$item = Get-Item -LiteralPath $env:CB_POLICY_ACL_PATH -Force; if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'reparse point' }; $acl = Get-Acl -LiteralPath $env:CB_POLICY_ACL_PATH; $owner = $acl.Owner; try { $owner = ([System.Security.Principal.NTAccount]$acl.Owner).Translate([System.Security.Principal.SecurityIdentifier]).Value } catch {}; "OWNER|$owner"; $acl.Access | ForEach-Object { $sid = $_.IdentityReference.Value; try { $sid = $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch {}; "$sid|$($_.AccessControlType)|$($_.FileSystemRights)" }`)
-		cmd.Env = append(os.Environ(), "CB_POLICY_ACL_PATH="+candidate)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	for i, candidate := range []string{filepath.Dir(path), path} {
+		label := []string{"directory", "file"}[i]
+		cmd, err := policyOwnershipCommand(ctx, candidate)
+		if err != nil {
+			return fmt.Errorf("machine-policy ownership inspector is unavailable")
+		}
 		out, err := cmd.Output()
 		if err != nil {
-			return fmt.Errorf("inspect %s permissions: %w", candidate, err)
+			if ctx.Err() != nil {
+				return fmt.Errorf("machine-policy %s inspection timed out", label)
+			}
+			return fmt.Errorf("machine-policy %s inspection failed: %s", label, policyOwnershipProbeError(err))
 		}
 		if err := secureWindowsACLVerdict(string(out), candidate == path); err != nil {
-			return fmt.Errorf("%s: %w", candidate, err)
+			return fmt.Errorf("machine-policy %s ownership or permissions are not trusted", label)
 		}
 	}
 	return nil
+}
+
+// Keep this authorization probe independent of doctor's warning-only boundary.
+func policyOwnershipCommand(ctx context.Context, path string) (*exec.Cmd, error) {
+	powerShell, err := powerShellExecutable()
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.CommandContext(ctx, powerShell, "-NoProfile", "-NonInteractive", "-Command", `
+$ErrorActionPreference = 'Stop'
+$stage = 'module'
+try {
+    Import-Module ($PSHOME + '\Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1') -ErrorAction Stop
+    Import-Module ($PSHOME + '\Modules\Microsoft.PowerShell.Management\Microsoft.PowerShell.Management.psd1') -ErrorAction Stop
+    $stage = 'item'
+    $item = Microsoft.PowerShell.Management\Get-Item -LiteralPath $env:CB_POLICY_ACL_PATH -Force -ErrorAction Stop
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'reparse point' }
+    $stage = 'acl'
+    $acl = Microsoft.PowerShell.Security\Get-Acl -LiteralPath $env:CB_POLICY_ACL_PATH -ErrorAction Stop
+    $stage = 'identity'
+    $owner = $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
+    if ([string]::IsNullOrEmpty($owner)) { throw 'missing owner' }
+    $lines = @("OWNER|$owner")
+    foreach ($rule in $acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
+        $sid = $rule.IdentityReference.Value
+        if ([string]::IsNullOrEmpty($sid)) { throw 'missing identity' }
+        $lines += "$sid|$($rule.AccessControlType)|$($rule.FileSystemRights)"
+    }
+    $lines
+} catch {
+    [Console]::Error.WriteLine('CB_POLICY_ACL_' + $stage)
+    exit 1
+}
+`)
+	cmd.Env = policyOwnershipEnvironment(os.Environ(), path)
+	cmd.WaitDelay = time.Second
+	return cmd, nil
+}
+
+func policyOwnershipEnvironment(parent []string, path string) []string {
+	child := make([]string, 0, len(parent)+1)
+	for _, entry := range parent {
+		key, _, _ := strings.Cut(entry, "=")
+		if strings.EqualFold(key, "PSModulePath") || strings.EqualFold(key, "CB_POLICY_ACL_PATH") {
+			continue
+		}
+		child = append(child, entry)
+	}
+	return append(child, "CB_POLICY_ACL_PATH="+path)
+}
+
+func policyOwnershipProbeError(err error) string {
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		switch strings.TrimSpace(string(exit.Stderr)) {
+		case "CB_POLICY_ACL_module":
+			return "inbox Windows PowerShell modules could not load"
+		case "CB_POLICY_ACL_item":
+			return "object could not be inspected or is a reparse point"
+		case "CB_POLICY_ACL_acl":
+			return "security descriptor could not be read"
+		case "CB_POLICY_ACL_identity":
+			return "security identity could not be determined"
+		}
+	}
+	return "Windows PowerShell ownership probe could not complete"
 }
 
 var getSystemWindowsDirectoryW = syscall.NewLazyDLL("kernel32.dll").NewProc("GetSystemWindowsDirectoryW")
