@@ -25,6 +25,13 @@ rights to another principal. The parent may allow users to create entries, but
 may not let them delete or replace protected children or change ownership or
 permissions. A user-created lookalike still fails the file-owner check.
 
+The Windows ownership probe resolves Windows PowerShell from the native system
+directory and loads its inbox security/management modules explicitly. It removes
+inherited `PSModulePath` only from the child environment, including when invoked
+from PowerShell 7. Module, inspection and identity failures remain terminating
+`policy.ownership` errors; they never bypass policy checks. Diagnostics classify
+the failure without including arbitrary PowerShell stderr or private identities.
+
 On Linux/WSL, both the file and parent directory must be real paths owned by
 root and may not be group- or world-writable.
 
