@@ -96,6 +96,7 @@ jobs:
           # One target per invocation; regular tests also run all seed corpora.
           # Two workers bound CPU/memory use on both runner platforms.
           for target in \
+            aclaudit:FuzzDecodeDescriptor \
             registry:FuzzParseTOML \
             lockfile:FuzzParseLockFile \
             selfupdate:FuzzChecksumManifest \
