@@ -135,7 +135,13 @@ finally {
 }
 ```
 
-If this changes the result to `OK shim directory is not writable by other users`, that is strong evidence of the **probe environment issue**; it does **not** certify the parent directories. Do not delete `PSModulePath` permanently or disable the ACL check. Inspect ACLs with `icacls` independently.
+If this changes the immediate-directory result to `OK` (current source prefixes
+it with `immediate shim-directory ACL check:`), that is strong evidence of the
+**probe environment issue**; it does **not** certify the parent directories.
+Current source separately reports `ancestor ACL coverage incomplete`; that
+notice is expected even when the immediate probe succeeds. Do not delete
+`PSModulePath` permanently or disable the ACL check. Inspect ACLs with `icacls`
+independently. See [ACL diagnostic coverage](windows-acl-audit.md).
 
 ## Verification checklist
 
@@ -143,6 +149,10 @@ If this changes the result to `OK shim directory is not writable by other users`
 2. The directory, registry, lockfile and shims cannot be modified or replaced by untrusted accounts; the **entire parent chain** has been reviewed.
 3. The trusted updating account can modify the directory **and the hardlink source `cb.exe`**.
 4. `cb install` reports `(hardlink)` for managed shims, and `fsutil hardlink list` shows the expected executable names.
-5. `cb doctor` reports no ACL or shim warnings (after accounting for the documented `PSModulePath` issue), and tool execution succeeds.
+5. `cb doctor` reports no unresolved immediate-directory ACL or shim problems,
+   and tool execution succeeds. The expected `ancestor ACL coverage incomplete`
+   notice is a limitation of the assessment, not an installation fault or a
+   request to change ACLs until warnings reach zero. Review the remaining
+   coverage manually as described above; see [coverage details](windows-acl-audit.md).
 
 For the broader execution and image-trust boundaries, see [security model](security-model.md).

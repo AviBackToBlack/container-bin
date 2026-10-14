@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, codex/doctor-powershell-modulepath, codex/acl-coverage-c0]
 
 permissions:
   contents: read
