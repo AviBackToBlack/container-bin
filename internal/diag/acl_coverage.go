@@ -1,8 +1,18 @@
 package diag
 
+import "github.com/AviBackToBlack/container-bin/internal/aclaudit"
+
 type aclDiagnostic struct {
 	status  string
 	message string
+}
+
+func installationACLDiagnostics(status, message string, report aclaudit.Report) []aclDiagnostic {
+	checks := shimACLDiagnostics(status, message)[:1]
+	for _, finding := range report.Diagnostics() {
+		checks = append(checks, aclDiagnostic{finding.Status, finding.Message})
+	}
+	return checks
 }
 
 // An immediate-directory result must never stand in for an installation audit.
