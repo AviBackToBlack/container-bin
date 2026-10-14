@@ -74,7 +74,12 @@ func policyFixture(t *testing.T, administratorOwner, writableFile, writableParen
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, "policy.toml")
-	if err := os.WriteFile(path, []byte("schema_version = 1\nrequire_lock = true\n"), 0600); err != nil {
+	contents := []byte("policy_version = 1\nrequire_lock = true\n")
+	parsed, err := parse(path, contents, time.Now())
+	if err != nil || !parsed.RequireLock {
+		t.Fatal("policy fixture must parse before ACL setup")
+	}
+	if err := os.WriteFile(path, contents, 0600); err != nil {
 		t.Fatal(err)
 	}
 	ps, err := powerShellExecutable()
@@ -110,6 +115,26 @@ foreach ($file in @($false, $true)) {
 	return path
 }
 
+func policyPowerShell7Parent(t *testing.T, path string, valid bool) {
+	t.Helper()
+	pwsh, err := exec.LookPath("pwsh.exe")
+	if err != nil {
+		if os.Getenv("GITHUB_ACTIONS") == "true" {
+			t.Fatal("PowerShell 7 parent qualification is required in native CI")
+		}
+		t.Skip("optional PowerShell 7 parent is unavailable; direct policy checks still run")
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := exec.Command(pwsh, "-NoProfile", "-NonInteractive", "-Command", `$env:PSModulePath = $PSHOME + '\Modules'; & $env:CB_POLICY_TEST_EXE '-test.run=^TestPolicyOwnershipPowerShell7Child$' '-test.v'; exit $LASTEXITCODE`)
+	parent.Env = append(os.Environ(), "CB_POLICY_TEST_CHILD=1", "CB_POLICY_TEST_PATH="+path, "CB_POLICY_TEST_EXE="+exe, "CB_POLICY_TEST_VALID="+map[bool]string{true: "true", false: "false"}[valid])
+	if err := parent.Run(); err != nil {
+		t.Fatal("PowerShell 7 inherited policy qualification failed")
+	}
+}
+
 func TestPolicyOwnershipInboxModulesAndTerminatingFailures(t *testing.T) {
 	path := policyFixture(t, false, false, false)
 	poison := filepath.Join(t.TempDir(), "modules", "Microsoft.PowerShell.Security")
@@ -132,19 +157,7 @@ func TestPolicyOwnershipInboxModulesAndTerminatingFailures(t *testing.T) {
 	if os.Getenv("PSModulePath") != filepath.Dir(poison) || os.Getenv("CB_POLICY_ACL_PATH") != "stale-private-path" {
 		t.Fatal("parent environment changed")
 	}
-	pwsh, err := exec.LookPath("pwsh.exe")
-	if err != nil {
-		t.Fatal("PowerShell 7 is required for native qualification")
-	}
-	exe, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	parent := exec.Command(pwsh, "-NoProfile", "-NonInteractive", "-Command", `$env:PSModulePath = $PSHOME + '\Modules'; & $env:CB_POLICY_TEST_EXE '-test.run=^TestPolicyOwnershipPowerShell7Child$' '-test.v'; exit $LASTEXITCODE`)
-	parent.Env = append(os.Environ(), "CB_POLICY_TEST_CHILD=1", "CB_POLICY_TEST_PATH="+path, "CB_POLICY_TEST_EXE="+exe, "CB_POLICY_TEST_VALID=false")
-	if err := parent.Run(); err != nil {
-		t.Fatal("PowerShell 7 inherited inspection failed")
-	}
+	t.Run("PowerShell7_parent", func(t *testing.T) { policyPowerShell7Parent(t, path, false) })
 	if err := verifyOwnership(path); err == nil || strings.Contains(err.Error(), path) || strings.Contains(err.Error(), "S-1-") {
 		t.Fatal("untrusted owner was accepted or leaked private evidence")
 	}
@@ -193,8 +206,8 @@ func TestPolicyOwnershipPowerShell7Child(t *testing.T) {
 	if wantValid && (err != nil || !p.RequireLock) {
 		t.Fatal("legitimate policy was rejected under PowerShell 7 inheritance")
 	}
-	if !wantValid && err == nil {
-		t.Fatal("invalid policy was accepted under PowerShell 7 inheritance")
+	if !wantValid && (err == nil || !strings.Contains(err.Error(), "ownership or permissions are not trusted")) {
+		t.Fatal("invalid policy did not reach the strict ownership verdict under PowerShell 7 inheritance")
 	}
 	if os.Getenv("PSModulePath") != before {
 		t.Fatal("PowerShell 7 parent environment changed")
@@ -217,14 +230,6 @@ func TestPolicyOwnershipAdministratorFixturesAndPowerShell7(t *testing.T) {
 		}
 		t.Skip("administrator-owned fixture requires an existing elevated test context; no elevation attempted")
 	}
-	pwsh, err := exec.LookPath("pwsh.exe")
-	if err != nil {
-		t.Fatal("PowerShell 7 is required for native qualification")
-	}
-	exe, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
 	for _, tc := range []struct {
 		name                                 string
 		owner, fileWrite, parentWrite, valid bool
@@ -237,14 +242,10 @@ func TestPolicyOwnershipAdministratorFixturesAndPowerShell7(t *testing.T) {
 			if tc.valid && (err != nil || !p.RequireLock) {
 				t.Fatal("legitimate fixture rejected")
 			}
-			if !tc.valid && err == nil {
-				t.Fatal("invalid fixture accepted")
+			if !tc.valid && (err == nil || !strings.Contains(err.Error(), "ownership or permissions are not trusted")) {
+				t.Fatal("invalid fixture did not reach the strict ownership verdict")
 			}
-			parent := exec.Command(pwsh, "-NoProfile", "-NonInteractive", "-Command", `$env:PSModulePath = $PSHOME + '\Modules'; & $env:CB_POLICY_TEST_EXE '-test.run=^TestPolicyOwnershipPowerShell7Child$' '-test.v'; exit $LASTEXITCODE`)
-			parent.Env = append(os.Environ(), "CB_POLICY_TEST_CHILD=1", "CB_POLICY_TEST_PATH="+path, "CB_POLICY_TEST_EXE="+exe, "CB_POLICY_TEST_VALID="+map[bool]string{true: "true", false: "false"}[tc.valid])
-			if err := parent.Run(); err != nil {
-				t.Fatal("PowerShell 7 inherited policy qualification failed")
-			}
+			t.Run("PowerShell7_parent", func(t *testing.T) { policyPowerShell7Parent(t, path, tc.valid) })
 		})
 	}
 }
