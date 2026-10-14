@@ -146,8 +146,9 @@ finally {
 If this changes the immediate-directory result to `OK` (current source prefixes
 it with `immediate shim-directory ACL check:`), that is strong evidence of the
 **probe environment issue**; it does **not** certify the parent directories.
-Current source separately reports `ancestor ACL coverage incomplete`; that
-notice is expected even when the immediate probe succeeds. Do not delete
+Current C0 source separately reports `ancestor ACL coverage incomplete`; C1
+instead provides a limited native report, warning on candidates or incomplete
+coverage even when the immediate probe succeeds. Do not delete
 `PSModulePath` permanently or disable the ACL check. Inspect ACLs with `icacls`
 independently. See [ACL diagnostic coverage](windows-acl-audit.md).
 
@@ -158,8 +159,9 @@ independently. See [ACL diagnostic coverage](windows-acl-audit.md).
 3. The trusted updating account can modify the directory **and the hardlink source `cb.exe`**.
 4. `cb install` reports `(hardlink)` for managed shims, and `fsutil hardlink list` shows the expected executable names.
 5. `cb doctor` reports no unresolved immediate-directory ACL or shim problems,
-   and tool execution succeeds. The expected `ancestor ACL coverage incomplete`
-   notice is a limitation of the assessment, not an installation fault or a
+   and tool execution succeeds. Review native candidate findings. An
+   `ancestor ACL coverage incomplete` notice, when present, is a limitation of
+   the assessment, not an installation fault or a
    request to change ACLs until warnings reach zero. Review the remaining
    coverage manually as described above; see [coverage details](windows-acl-audit.md).
 

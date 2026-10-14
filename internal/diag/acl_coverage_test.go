@@ -1,9 +1,12 @@
 package diag
 
 import (
+	"context"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/AviBackToBlack/container-bin/internal/aclaudit"
 )
 
 func TestShimACLDiagnosticsPreserveProbeAndWarnOnceForCoverage(t *testing.T) {
@@ -33,5 +36,27 @@ func TestShimACLDiagnosticsPreserveProbeAndWarnOnceForCoverage(t *testing.T) {
 				t.Fatal("nondeterministic diagnostic")
 			}
 		})
+	}
+}
+
+func TestNativeIncompleteCoverageDoesNotHideProbeFailure(t *testing.T) {
+	report := aclaudit.Inspect(context.Background(), aclaudit.Request{Directory: "relative-unqualified-path"})
+	for _, status := range []string{"ok", "warn"} {
+		checks := installationACLDiagnostics(status, "probe evidence", report)
+		if len(checks) < 2 || checks[0].status != status || !strings.Contains(checks[0].message, "probe evidence") {
+			t.Fatalf("probe evidence lost: %+v", checks)
+		}
+		found := false
+		for _, check := range checks[1:] {
+			if check.status == "ok" {
+				t.Fatal("incomplete native audit upgraded to OK")
+			}
+			if strings.Contains(check.message, "ancestor ACL coverage incomplete") {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatal("missing coverage warning")
+		}
 	}
 }

@@ -18,6 +18,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AviBackToBlack/container-bin/internal/aclaudit"
+
 	"github.com/AviBackToBlack/container-bin/internal/dockerrun"
 	"github.com/AviBackToBlack/container-bin/internal/dockervol"
 	"github.com/AviBackToBlack/container-bin/internal/lockfile"
@@ -387,7 +389,14 @@ func Doctor(reg registry.Registry, cfgPath string, machinePolicy policy.Policy) 
 			currentUserSID = u.Uid
 		}
 		status, msg := inspectShimDirACL(dir, currentUserSID)
-		for _, check := range shimACLDiagnostics(status, msg) {
+		assets := []aclaudit.Asset{{Path: exe, Label: "cb.exe"}, {Path: cfgPath, Label: "registry"}}
+		for _, name := range shimNames {
+			assets = append(assets, aclaudit.Asset{Path: filepath.Join(dir, name+".exe"), Label: "shim " + name})
+		}
+		// Unlocked installations are supported; the existing lock-policy check
+		// handles RequireLock. Audit a present lockfile and recheck its absence.
+		request := aclaudit.Request{Directory: dir, Assets: assets, OptionalAssets: []aclaudit.Asset{{Path: lockfile.PathFor(cfgPath), Label: "lockfile"}, {Path: cfgPath + ".bak", Label: "registry recovery backup"}}}
+		for _, check := range installationACLDiagnostics(status, msg, aclaudit.Inspect(context.Background(), request)) {
 			if check.status == "ok" {
 				ok("%s", check.message)
 			} else {
