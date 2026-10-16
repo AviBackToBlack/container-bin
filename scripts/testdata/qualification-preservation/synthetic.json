@@ -1,0 +1,17 @@
+{
+  "identity": {
+    "context": "synthetic-linux",
+    "endpoint": "npipe:////./pipe/syntheticEngine",
+    "engine_id": "synthetic-engine-001",
+    "version": "29.0.0"
+  },
+  "networks": [
+    {"Name":"bridge","Id":"bridge-before","Created":"2030-01-01T00:00:00+00:00","Driver":"bridge","Options":{"synthetic":"true"},"Containers":{}},
+    {"Name":"host","Id":"host-original","Created":"2030-01-01T00:00:00+00:00","Driver":"host","Options":{},"Containers":{}}
+  ],
+  "timestamp_label": "2030-01-01T02:24:57+00:00",
+  "path": "C:\\Synthetic\\Tools;; C:\\Synthetic\\Other ;C:\\Synthetic\\Tools;",
+  "empty_array": [],
+  "null_array": [null],
+  "case_sensitive_keys": {"A":"upper","a":"lower"}
+}
