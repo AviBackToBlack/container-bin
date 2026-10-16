@@ -133,7 +133,8 @@ function Assert-QPFields {
 }
 
 function New-QPPathValue {
-    param([AllowNull()][AllowEmptyString()][string]$Raw, [bool]$Present, [string]$RegistryKind)
+    param([AllowNull()]$Raw, [bool]$Present, [string]$RegistryKind)
+    if ($Present -and ($Raw -isnot [string] -or $RegistryKind -notin @('process', 'String', 'ExpandString'))) { throw 'STOP: non-string/unsupported PATH value' }
     if (-not $Present -and -not [string]::IsNullOrEmpty($Raw)) { throw 'STOP: absent PATH has a value' }
     return [ordered]@{
         present = $Present; raw = $(if ($Present) { $Raw } else { $null }); encoding = 'UTF-8/no-BOM/strict'
@@ -201,6 +202,8 @@ function Assert-QPPathPreserved {
             if (@($value.Keys) -cnotcontains 'raw') { throw 'STOP: missing raw PATH evidence' }
             Assert-QPFields $value @('present', 'registry_kind')
             if ($value.present -and $null -eq $value.raw) { throw 'STOP: present PATH has no raw value' }
+            if ($scope -ne 'process' -and (($value.present -and $value.registry_kind -notin @('String', 'ExpandString')) -or
+                (-not $value.present -and $value.registry_kind -cne 'absent'))) { throw 'STOP: unsupported registry PATH kind' }
             Assert-QPEqual (New-QPPathValue -Raw $value.raw -Present $value.present -RegistryKind $value.registry_kind) $value 'PATH fingerprint/segments'
         }
     }
@@ -418,7 +421,9 @@ function Assert-QPFreshEngine {
 }
 
 function Assert-QPObservationCoverage {
-    param($Coverage, [long]$StartTicks, [long]$EndTicks, $ProtectedInventory)
+    param($Coverage, $StartTicks, $EndTicks, $ProtectedInventory)
+    Assert-QPTick $StartTicks
+    Assert-QPTick $EndTicks
     if ($EndTicks -lt $StartTicks) { throw 'STOP: invalid coverage window' }
     foreach ($kind in @('container', 'network', 'lifecycle')) {
         $streams = @($Coverage | Where-Object { $_.kind -ceq $kind })
@@ -463,7 +468,7 @@ function Assert-QPTick {
 }
 
 function New-QPPreservationSession {
-    param($ColdInventory, $Identity, [string]$AuthorizationSha256, [long]$ObservationStartTicks = -1)
+    param($ColdInventory, $Identity, [string]$AuthorizationSha256, $ObservationStartTicks = -1)
     if ($AuthorizationSha256 -notmatch '^[0-9a-f]{64}$') { throw 'STOP: authorization digest required' }
     Assert-QPTick $ObservationStartTicks
     return [ordered]@{
@@ -479,6 +484,8 @@ function Assert-QPInventory {
     param($Inventory, $Identity)
     Assert-QPFields $Inventory @('engine', 'images', 'containers', 'volumes', 'networks', 'protected_host', 'capture_window')
     Assert-QPFields $Inventory['capture_window'] @('start_ticks', 'end_ticks', 'frequency')
+    Assert-QPTick $Inventory['capture_window']['start_ticks']
+    Assert-QPTick $Inventory['capture_window']['end_ticks']
     if ($Inventory['capture_window']['end_ticks'] -lt $Inventory['capture_window']['start_ticks']) { throw 'STOP: invalid inventory capture window' }
     Assert-QPEqual $Identity $Inventory['engine'] 'inventory Engine identity'
     Assert-QPFields $Inventory['protected_host'] @('path')
@@ -489,7 +496,8 @@ function Assert-QPInventory {
 }
 
 function Assert-QPNewObservations {
-    param($Session, [array]$Observations, [long]$Ticks, $InventoryWindow)
+    param($Session, [array]$Observations, $Ticks, $InventoryWindow)
+    Assert-QPTick $Ticks
     Assert-QPFreshEngine $Observations $Session.identity
     $last = $Observations[-1].capture.end
     if ($last.ticks -gt $Ticks -or ($Ticks - $last.ticks) / [double]$last.frequency -gt 2) { throw 'STOP: inventory freshness gate expired or clock inconsistent' }
@@ -506,8 +514,9 @@ function Assert-QPNewObservations {
 }
 
 function Set-QPWarmBaseline {
-    param($Session, $WarmInventory, [array]$Observations, [long]$Ticks, $WakeReceipt = $null)
+    param($Session, $WarmInventory, [array]$Observations, $Ticks, $WakeReceipt = $null)
     try {
+        Assert-QPTick $Ticks
         if ($Session.phase -cne 'cold' -or $Session.baseline_count -ne 0) { throw 'STOP: baseline already captured or session stopped' }
         Assert-QPInventory $Session.cold $Session.identity
         Assert-QPInventory $WarmInventory $Session.identity
@@ -539,8 +548,9 @@ function Set-QPWarmBaseline {
 }
 
 function Assert-QPPreservation {
-    param($Session, $Inventory, [array]$Observations, $Coverage, [long]$Ticks, [switch]$Final)
+    param($Session, $Inventory, [array]$Observations, $Coverage, $Ticks, [switch]$Final)
     try {
+        Assert-QPTick $Ticks
         if ($Session.phase -cne 'observing' -or $Ticks -lt $Session.last_ticks) { throw 'STOP: inactive session or invalid clock' }
         Assert-QPInventory $Inventory $Session.identity
         Assert-QPNewObservations $Session $Observations $Ticks $Inventory['capture_window']

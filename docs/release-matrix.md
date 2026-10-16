@@ -163,6 +163,10 @@ authority. Reconcile cleanup and preservation as separate outcomes.
 
 `Get-QPPathSnapshot` retains exact process and unexpanded registry User/Machine
 PATH values, presence, registry kinds, UTF-8/no-BOM hashes and ordered segments.
+Present values must be strings; User/Machine kinds must be String or ExpandString.
+MultiString, Binary, DWord/QWord and other kinds STOP without being coerced into
+fabricated raw text. Public clock arguments are validated as integral values
+before any conversion; fractional caller ticks are never rounded into acceptance.
 Empty entries, duplicate entries, whitespace and spelling remain significant.
 An absent value has `present=false`, null raw/hash and no segments; a present
 empty value retains its empty-string hash and one empty segment. They differ.

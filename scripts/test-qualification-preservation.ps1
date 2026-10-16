@@ -244,6 +244,14 @@ Test-QPCase 'untimed or ambiguous events are never skipped as out of window' {
     Seal-Coverage $coverage
     Assert-Stop { Assert-QPObservationCoverage $coverage 900 12000 (New-Inventory) }
 }
+Test-QPCase 'public clock arguments are validated without binding-time rounding' {
+    Assert-Stop { New-QPPreservationSession (New-Inventory) $fixture['identity'] ('c' * 64) 900.5 }
+    Assert-Stop { Assert-QPObservationCoverage (New-Coverage) 900.5 12000 (New-Inventory) }
+    Assert-Stop { Assert-QPObservationCoverage (New-Coverage) 900 12000.5 (New-Inventory) }
+    $s = New-QPPreservationSession (New-Inventory) $fixture['identity'] ('c' * 64) 900
+    Assert-Stop { Set-QPWarmBaseline $s (New-Inventory) (New-Observations) 11000.5 }
+    Assert-Stop { Assert-QPPreservation (New-ReadySession) (New-Inventory -StartTicks 11000) (New-Observations -StartTicks 11000) (New-Coverage) 21000.5 }
+}
 Test-QPCase 'matching inventories cannot compensate for missing/gapped/interrupted observers' {
     foreach ($kind in @('container', 'network', 'lifecycle')) {
         $allStreams = New-Coverage
@@ -310,6 +318,21 @@ Test-QPCase 'absent and present-empty PATH have distinct canonical representatio
     $after = Copy-Fixture $before; $after['paths']['user'] = $empty
     Assert-Stop { Assert-QPPathPreserved $before $after }
 }
+Test-QPCase 'non-string registry PATH is rejected without coercion' {
+    $values = New-Object 'System.Collections.Generic.List[object]'
+    $values.Add([string[]]@('C:\Synthetic\A', 'C:\Synthetic\B'))
+    $values.Add([byte[]]@(1, 2, 3))
+    $values.Add([int]7); $values.Add([long]9)
+    foreach ($value in $values) {
+        Assert-Stop { New-QPPathValue -Raw $value -Present $true -RegistryKind 'String' }
+    }
+    foreach ($kind in @('MultiString', 'Binary', 'DWord', 'QWord', 'None')) {
+        Assert-Stop { New-QPPathValue -Raw 'fabricated text' -Present $true -RegistryKind $kind }
+    }
+    Assert-Stop { New-QPPathValue -Raw $null -Present $true -RegistryKind 'String' }
+    $p = New-PathFixture; $p.paths.user.registry_kind = 'process'
+    Assert-Stop { Assert-QPPathPreserved $p $p }
+}
 Test-QPCase 'PATH reordering, duplicates, empty entries and whitespace remain meaningful' {
     foreach ($raw in @('B;A', 'A;B', 'A;A;B', 'A;;B', 'A; B', 'A;B;')) {
         $before = New-PathFixture; $after = Copy-Fixture $before
@@ -360,9 +383,16 @@ Test-QPCase 'sealed records are append-only and hash-bound' {
         Assert-True ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $record.sha256) 'FAIL record changed'
         Assert-QPPrivateEvidenceChain $root @($record) $record.sha256
         Assert-Stop { Assert-QPPrivateEvidenceChain $root @($record) ('f' * 64) }
+        $second = Write-QPPrivateEvidence $root 'second.json' @{ result = 'STOP'; synthetic = $true } $record.sha256
+        Assert-QPPrivateEvidenceChain $root @($record, $second) $second.sha256
+        Assert-Stop { Assert-QPPrivateEvidenceChain $root @($second, $record) $record.sha256 }
+        $bad = Write-QPPrivateEvidence $root 'bad.json' @{ synthetic = $true } ('0' * 64)
+        Assert-Stop { Assert-QPPrivateEvidenceChain $root @($record, $bad) $bad.sha256 }
     } finally {
         # Exact files created by this test only. No recursive/prefix deletion.
-        if ([IO.File]::Exists((Join-Path $root 'synthetic.json'))) { [IO.File]::Delete((Join-Path $root 'synthetic.json')) }
+        foreach ($name in @('synthetic.json', 'second.json', 'bad.json')) {
+            if ([IO.File]::Exists((Join-Path $root $name))) { [IO.File]::Delete((Join-Path $root $name)) }
+        }
         [IO.Directory]::Delete($root)
     }
 }
