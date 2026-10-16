@@ -396,6 +396,8 @@ function Assert-QPFreshEngine {
         Assert-QPEqual $rawInfo['ServerVersion'] $o.version 'raw Engine version'
         $time = [DateTimeOffset]::Parse($o.system_time, [Globalization.CultureInfo]::InvariantCulture)
         $start = $o.capture.start; $end = $o.capture.end
+        Assert-QPTick $start.ticks
+        Assert-QPTick $end.ticks
         if ($o.capture.pid -le 0) { throw 'STOP: missing capture process identity' }
         if ($start.frequency -le 0 -or $start.frequency -ne $end.frequency -or $end.ticks -lt $start.ticks) { throw 'STOP: invalid monotonic request clock' }
         if ($o.transport -eq 'cli') {
@@ -499,7 +501,7 @@ function Assert-QPNewObservations {
     param($Session, [array]$Observations, $Ticks, $InventoryWindow)
     Assert-QPTick $Ticks
     Assert-QPFreshEngine $Observations $Session.identity
-    $last = $Observations[-1].capture.end
+    $last = (Get-QPObservationBounds $Observations).last_end
     if ($last.ticks -gt $Ticks -or ($Ticks - $last.ticks) / [double]$last.frequency -gt 2) { throw 'STOP: inventory freshness gate expired or clock inconsistent' }
     foreach ($o in $Observations) {
         if ($Session.used_requests.ContainsKey($o.request_id) -or ($Session.baseline_count -gt 0 -and $o.capture.start.ticks -lt $Session.last_ticks)) { throw 'STOP: historical observation reused' }
@@ -513,6 +515,19 @@ function Assert-QPNewObservations {
     }
 }
 
+function Get-QPObservationBounds {
+    param([array]$Observations)
+    # Preserve exact integer ticks; Measure-Object can render numeric extrema as
+    # doubles, and array position is not chronological across transports.
+    $first = $Observations[0].capture.start.ticks
+    $last = $Observations[0].capture.end
+    foreach ($o in $Observations) {
+        if ($o.capture.start.ticks -lt $first) { $first = $o.capture.start.ticks }
+        if ($o.capture.end.ticks -gt $last.ticks) { $last = $o.capture.end }
+    }
+    return @{ first_start = $first; last_end = $last }
+}
+
 function Set-QPWarmBaseline {
     param($Session, $WarmInventory, [array]$Observations, $Ticks, $WakeReceipt = $null)
     try {
@@ -521,7 +536,7 @@ function Set-QPWarmBaseline {
         Assert-QPInventory $Session.cold $Session.identity
         Assert-QPInventory $WarmInventory $Session.identity
         Assert-QPNewObservations $Session $Observations $Ticks $WarmInventory['capture_window']
-        if ($Session.coverage_start_ticks -gt $Observations[0].capture.start.ticks -or
+        if ($Session.coverage_start_ticks -gt (Get-QPObservationBounds $Observations).first_start -or
             $Session.coverage_start_ticks -gt $WarmInventory['capture_window']['start_ticks']) { throw 'STOP: observation starts after baseline readiness/capture began' }
         foreach ($area in @('engine', 'images', 'containers', 'volumes', 'protected_host')) { Assert-QPEqual $Session.cold[$area] $WarmInventory[$area] "prebaseline $area" }
         $coldNetworks = $Session.cold['networks']; $warmNetworks = $WarmInventory['networks']

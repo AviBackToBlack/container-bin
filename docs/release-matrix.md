@@ -129,6 +129,8 @@ continuous observer records. Missing inputs must STOP the run.
    authorized wake must be completed and recorded before this strict interval.
    Coverage checks start at that recorded tick, not at baseline completion;
    lifecycle/protected-object events during readiness or capture therefore STOP.
+   Batch bounds use the earliest request and latest completion across both
+   transports, preserving integer ticks regardless of cross-transport ordering.
    The driver needs container and network event streams plus independent backend
    lifecycle/cache observation. Engine ID or Desktop backend PID alone does not
    identify a continuously running daemon epoch. Record raw event/log sources,

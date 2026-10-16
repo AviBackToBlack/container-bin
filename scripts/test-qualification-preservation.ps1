@@ -231,6 +231,19 @@ Test-QPCase 'coverage includes readiness and warm capture, not just baseline com
     }
     Assert-Stop { New-QPPreservationSession (New-Inventory) $fixture['identity'] ('c' * 64) }
 }
+Test-QPCase 'batched transports use earliest request and latest completion, not array position' {
+    $inventory = New-Inventory; $o = New-Observations
+    $grouped = @($o[1], $o[3], $o[0], $o[2]) # CLI pair, then earlier pipe pair
+    $s = New-QPPreservationSession $inventory $fixture['identity'] ('c' * 64) 900
+    Set-QPWarmBaseline $s $inventory $grouped 11000
+    Assert-True ($s.phase -ceq 'observing') 'Valid transport batching rejected'
+    $s = New-QPPreservationSession $inventory $fixture['identity'] ('c' * 64) 2000
+    Assert-Stop { Set-QPWarmBaseline $s $inventory $grouped 11000 }
+    Assert-True ($s.stop_reason -match 'observation starts after') 'Earliest readiness gap not detected'
+    $s = New-QPPreservationSession $inventory $fixture['identity'] ('c' * 64) 900
+    Assert-Stop { Set-QPWarmBaseline $s $inventory $grouped 8000 }
+    Assert-True ($s.stop_reason -match 'freshness gate expired or clock inconsistent') 'Future completion hidden by array order'
+}
 Test-QPCase 'untimed or ambiguous events are never skipped as out of window' {
     foreach ($ticks in @($null, 'not-a-clock', '11500', 11500.5, -1)) {
         $coverage = New-Coverage
