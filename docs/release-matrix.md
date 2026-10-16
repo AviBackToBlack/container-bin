@@ -88,6 +88,145 @@ with Linux-containers mode as a shared precondition.
 
 ## Per-cell procedure
 
+### Preservation evidence on a persistent qualification host
+
+The clean-host procedure below does not authorize adopting an existing install,
+volume, account or protected path. A persistent host needs an explicitly approved
+isolation and preservation plan. An occupied fixed compatibility store remains
+blocked. Do not relax an invariant to obtain a green cell.
+
+Use `scripts/qualification-preservation.ps1` as a dot-sourced evidence library.
+Importing it does not contact Docker, capture host data or write files. It has no
+wake, restart, cleanup, qualification, automatic reconnect or rebaseline command.
+Its offline suite uses only synthetic fixtures and requires neither Docker nor
+network access. This library is **not** a release-qualification runner: the
+approved run driver must supply full inventories, receipt verification and
+continuous observer records. Missing inputs must STOP the run.
+
+1. Finish offline preparation first. Retain a separate cold inventory and exact
+   authorization digest. If a wake is needed, obtain the applicable authorization
+   and retain its original operation receipts. Do not assume read-only Docker
+   commands wake the Engine: Desktop can serve cached responses in Resource Saver.
+2. Establish live readiness on the expected context, endpoint, Engine ID and
+   version. `Get-QPEngineObservation` captures one direct named-pipe `/info`
+   response and one independently started CLI `info` response, with raw bodies,
+   HTTP bytes, executable identity, host UTC, monotonic ticks and process/request
+   provenance. It rejects Docker environment overrides and context/endpoint drift.
+   Call it before and after inventory capture, separated by at least one second;
+   pass the concatenated observations to `Set-QPWarmBaseline`. Both transports
+   must advance consistently. A constant guest clock offset alone is not a
+   failure; frozen body time, conflicting transports, reused requests or ambiguous
+   timing are. HTTP Date, ping success and CLI exit zero alone prove no freshness.
+3. Reconcile the cold inventory with protected resources while live. An explicitly
+   receipt-bound prebaseline default-bridge ID/Created transition can be recorded
+   separately; its configuration and every other network must match exactly.
+   This is a recorded lifecycle transition, **not a preservation PASS**. Missing
+   wake authority or any other protected change means STOP. Capture exactly one
+   warm baseline after reconciliation; never discard the cold record.
+4. Observe the entire interval from before baseline through final reconciliation.
+   The driver needs container and network event streams plus independent backend
+   lifecycle/cache observation. Engine ID or Desktop backend PID alone does not
+   identify a continuously running daemon epoch. Record raw event/log sources,
+   observer process identities, continuous coverage intervals, stream exits,
+   deadlines, log rotation/truncation and every gap. Do not infer continuous
+   coverage from matching endpoint inventories or an existing summary file.
+5. At quiescent checkpoints, bracket inventories with new live observations and
+   call `Assert-QPPreservation`. All baseline network identities, including
+   `bridge`, must remain identical throughout the interval. Identical network
+   configuration does not prove unchanged identity. Receipt-verified test-object
+   events are the only allowed resource events; no events on protected objects
+   are authorized. Unexpected lifecycle/cache transitions, changed bridge IDs,
+   interrupted/missing observers, missed coverage, unknown objects or uncertain
+   results mean STOP. Never silently reconnect, wake, resume or create a new
+   baseline after drift. A subsequent run requires separate authorization.
+
+Keep checks strict for all existing image identities/references/configuration,
+network identities/configuration/attachments, volume creation identity/full
+labels/driver/scope/options, containers including stopped mount references,
+protected installations/registries/locks/shims, ACLs, settings and persistent
+PATH. The library compares full supplied protected inventories; it does not
+discover every installation or certify volume contents. Retain the discovery
+scope and content checks required by the approved plan. Collect full inventories
+before classifying any resource as test-owned. Do not filter by name prefix or
+silently omit unknown resources. Quiescent checkpoints require test resources
+already reconciled under their separate receipts; this library grants no removal
+authority. Reconcile cleanup and preservation as separate outcomes.
+
+#### PATH and private evidence
+
+`Get-QPPathSnapshot` retains exact process and unexpanded registry User/Machine
+PATH values, presence, registry kinds, UTF-8/no-BOM hashes and ordered segments.
+Empty entries, duplicate entries, whitespace and spelling remain significant.
+It records UTC, coordinator PID/start time, executable/hash, SID, CWD, shell/profile
+mode, command line and observed parent provenance. Supply the actual launcher
+recipe and intentional child-environment overlays; ancestry alone cannot recover
+them. Command lines and environment values may contain secrets.
+
+Compare the coordinator before/after in the same demonstrably consistent process
+context using `Assert-QPPathPreserved`. A process restart or different launcher is
+not an automatic exception. Missing historical raw PATH, incomplete provenance,
+hash disagreement or differing persistent values must never yield PASS. Keep
+intentional child PATH overlays separate using `Get-QPChildEnvironment`; it
+returns a recipe without modifying the parent or launching a process. Do not
+normalize PATH or exclude Codex-related entries to excuse a mismatch.
+
+Provision an owner-private evidence directory outside the repository in advance.
+`Write-QPPrivateEvidence` checks for broad access grants, repositories and reparse
+ancestors, uses exclusive `CreateNew` writes, and records SHA-256 payload and
+previous-record hashes. It does not change ACLs. Retain each returned record
+digest and independently seal the final anchor; `Assert-QPPrivateEvidenceChain`
+checks an explicit ordered record list against that anchor. Hashes detect changes
+relative to the retained anchor; they do not authenticate an untrusted collector.
+Never upload raw host/environment evidence as CI artifacts or commit it. Public
+summaries should contain only deliberately reviewed, sanitized results/digests.
+Append new records; never edit sealed evidence or reclassify historical FAILs.
+
+#### Driver data contract
+
+The library accepts dictionaries/JSON data, retaining ISO timestamp labels as
+strings on PowerShell 5.1 and 7. Converted DateTime values are rejected rather
+than silently reserialized. Dictionary keys are case-sensitive, arrays retain
+order, and `[]` differs from `[null]`. The driver must order inventory arrays
+deterministically by exact object identity without dropping fields or objects.
+
+- Identity fields: `context`, `endpoint`, `engine_id`, `version`.
+- Inventory fields: `engine` (that identity), `images`, `networks`, `containers`,
+  `volumes`, `protected_host` (including `path`), and `capture_window` with
+  `start_ticks`, `end_ticks`, `frequency` from the coordinator monotonic clock.
+  Capture starts after the first pipe/CLI pair and finishes before the second.
+- Optional wake receipt: exact `before_networks`/`after_networks`,
+  `authorization_sha256`, and `live_verified` based on the retained wake evidence.
+  This is supplied proof, not permission for the library to wake anything.
+- Coverage: one record each for `container`, `network`, `lifecycle`, including
+  `observer_id`, `provenance` (PID/start/executable digest/source), `start_ticks`,
+  `end_ticks`, `complete`, `exit_reason`, `gaps`, `events`, plus exact `raw` record
+  JSON and `raw_sha256`. Raw records must bind those fields to retained source
+  evidence; a hash or caller assertion alone does not establish observation.
+  A successfully finalized stream uses `coordinator-finalized`, never EOF or a
+  deadline. Resource events include `ticks`, exact `object_id` and
+  `receipt_verified`; lifecycle events inside the window always STOP. The driver
+  must derive these records from actual uninterrupted observers, not manufacture
+  empty records from endpoint snapshots. The synthetic test builders are not a
+  production observer and must never be used to claim live coverage.
+
+Record the driver revision/hash, authorization, source/candidate identity, all
+capture/observer provenance, state transitions and final outcomes in the private
+append-only packet. These helpers validate supplied evidence; they are not a
+security boundary against a dishonest or compromised driver.
+
+#### Immutable RC versus harness revision
+
+Published `v2.1.0-rc.1` is built from
+`84b5ff7f3fc7e5c237616a324359704a6db6bb52`. These later harness/documentation/CI
+changes do not modify that release, its assets, provenance or historical results.
+Future qualification must separately record the exact published candidate hashes
+and the harness commit used. A future stable source containing this revision is
+a different source tree; do not claim it is byte-identical to the RC or reuse RC
+qualification as proof for a different candidate. Follow the release gates for
+the actual stable source and artifacts.
+
+### Commands in each cell
+
 For each cell, on a clean Windows 11 host with Docker Desktop in Linux-containers
 mode:
 

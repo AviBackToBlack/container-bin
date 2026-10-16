@@ -124,6 +124,12 @@ jobs:
       - name: Test benchmark comparison (Windows PowerShell 5.1)
         run: powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-compare-startup-benchmarks.ps1
         shell: pwsh
+      - name: Offline preservation evidence (Windows PowerShell 5.1)
+        run: powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-qualification-preservation.ps1
+        shell: pwsh
+      - name: Offline preservation evidence (PowerShell 7)
+        run: ./scripts/test-qualification-preservation.ps1
+        shell: pwsh
       - name: Qualify native ACL audit as a disposable standard user
         shell: pwsh
         run: ./scripts/test-native-acl-standard-user.ps1
