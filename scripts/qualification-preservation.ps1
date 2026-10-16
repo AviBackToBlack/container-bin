@@ -143,6 +143,13 @@ function New-QPPathValue {
     }
 }
 
+function Assert-QPUtcTimestamp {
+    param($Value)
+    $parsed = [DateTimeOffset]::MinValue
+    if ($Value -isnot [string] -or $Value -cnotmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?(?:Z|\+00:00)$' -or
+        -not [DateTimeOffset]::TryParse($Value, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$parsed)) { throw 'STOP: missing/invalid UTC provenance' }
+}
+
 function Get-QPPathSnapshot {
     [CmdletBinding()]
     param(
@@ -187,11 +194,16 @@ function Get-QPPathSnapshot {
 function Assert-QPPathPreserved {
     param($Before, $After)
     foreach ($snapshot in @($Before, $After)) {
-        Assert-QPFields $snapshot @('context', 'paths')
+        Assert-QPFields $snapshot @('captured_utc', 'context', 'paths')
+        Assert-QPUtcTimestamp $snapshot.captured_utc
         foreach ($key in @('pid', 'start_utc', 'executable', 'executable_sha256', 'user_sid', 'cwd', 'shell_version', 'profile_mode', 'command_line', 'parent', 'launcher', 'child_overlays')) {
             Assert-QPFields $snapshot.context @($key)
         }
         Assert-QPFields $snapshot.context.parent @('pid', 'start_utc', 'executable', 'command_line')
+        Assert-QPTick $snapshot.context.pid
+        Assert-QPTick $snapshot.context.parent.pid
+        Assert-QPUtcTimestamp $snapshot.context.start_utc
+        Assert-QPUtcTimestamp $snapshot.context.parent.start_utc
         if ($snapshot.context.pid -le 0 -or $snapshot.context.parent.pid -le 0 -or
             $snapshot.context.launcher.Count -eq 0 -or $snapshot.context.executable_sha256 -notmatch '^[0-9a-f]{64}$') { throw 'STOP: incomplete process identity' }
         foreach ($key in @('start_utc', 'executable', 'user_sid', 'cwd', 'shell_version', 'profile_mode', 'command_line')) {
@@ -202,6 +214,7 @@ function Assert-QPPathPreserved {
             if (@($value.Keys) -cnotcontains 'raw') { throw 'STOP: missing raw PATH evidence' }
             Assert-QPFields $value @('present', 'registry_kind')
             if ($value.present -and $null -eq $value.raw) { throw 'STOP: present PATH has no raw value' }
+            if ($scope -eq 'process' -and $value.registry_kind -cne 'process') { throw 'STOP: invalid process PATH kind' }
             if ($scope -ne 'process' -and (($value.present -and $value.registry_kind -notin @('String', 'ExpandString')) -or
                 (-not $value.present -and $value.registry_kind -cne 'absent'))) { throw 'STOP: unsupported registry PATH kind' }
             Assert-QPEqual (New-QPPathValue -Raw $value.raw -Present $value.present -RegistryKind $value.registry_kind) $value 'PATH fingerprint/segments'
@@ -375,7 +388,7 @@ function Get-QPEngineObservation {
 
 function Assert-QPFreshEngine {
     param([array]$Observations, $Identity, [double]$TimingToleranceSeconds = 2)
-    if ($TimingToleranceSeconds -le 0 -or $TimingToleranceSeconds -gt 2) { throw 'STOP: invalid freshness tolerance' }
+    if ([double]::IsNaN($TimingToleranceSeconds) -or $TimingToleranceSeconds -le 0 -or $TimingToleranceSeconds -gt 2) { throw 'STOP: invalid freshness tolerance' }
     $ids = @{}; $previous = @{}; $counts = @{ pipe = 0; cli = 0 }; $cliStarts = @{}
     foreach ($o in $Observations) {
         Assert-QPFields $o @('request_id', 'transport', 'context', 'endpoint', 'engine_id', 'version', 'system_time', 'capture')
@@ -436,6 +449,11 @@ function Assert-QPObservationCoverage {
         Assert-QPTick $s.end_ticks
         Assert-QPFields $s @('raw', 'raw_sha256', 'provenance', 'events', 'gaps')
         Assert-QPFields $s.provenance @('pid', 'process_start_utc', 'executable_sha256', 'source')
+        Assert-QPTick $s.provenance.pid
+        Assert-QPUtcTimestamp $s.provenance.process_start_utc
+        if ($s.provenance.pid -le 0 -or $s.provenance.executable_sha256 -isnot [string] -or
+            $s.provenance.executable_sha256 -cnotmatch '^[0-9a-f]{64}$' -or $s.provenance.source -isnot [string] -or
+            [string]::IsNullOrWhiteSpace($s.provenance.source)) { throw 'STOP: incomplete observer provenance' }
         if ($s.raw_sha256 -cne (Get-QPSha256 $s.raw)) { throw 'STOP: observer evidence digest mismatch' }
         $record = Read-QPJson $s.raw
         foreach ($field in @('kind', 'observer_id', 'complete', 'exit_reason', 'start_ticks', 'end_ticks', 'gaps', 'events', 'provenance')) {

@@ -26,8 +26,12 @@ function Assert-Stop {
 function Copy-Fixture { param($Value) return ,(Read-QPJson (ConvertTo-QPCanonicalJson $Value)) }
 function New-PathFixture {
     $scopes = [ordered]@{}
-    foreach ($scope in @('process', 'user', 'machine')) { $scopes[$scope] = New-QPPathValue $fixture['path'] $true 'String' }
+    foreach ($scope in @('process', 'user', 'machine')) {
+        $kind = if ($scope -eq 'process') { 'process' } else { 'String' }
+        $scopes[$scope] = New-QPPathValue $fixture['path'] $true $kind
+    }
     return [ordered]@{
+        captured_utc = '2030-01-01T00:00:01Z'
         context = [ordered]@{
             pid = 100; start_utc = '2030-01-01T00:00:00Z'; executable = 'C:\Synthetic\shell.exe'
             executable_sha256 = 'a' * 64; user_sid = 'synthetic-user'; cwd = 'C:\Synthetic\project'
@@ -111,6 +115,13 @@ Test-QPCase 'raw timestamp labels and empty/null arrays survive parsing' {
     Assert-True ((Get-QPSha256 'abc') -ceq 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad') 'SHA-256 encoding differs'
 }
 Test-QPCase 'live independent responses pass with a constant one-hour clock offset' { Assert-QPFreshEngine (New-Observations) $fixture['identity'] }
+Test-QPCase 'freshness tolerance rejects NaN, infinity and out-of-range values' {
+    foreach ($tolerance in @([double]::NaN, [double]::PositiveInfinity, [double]::NegativeInfinity, 0, -1, 2.01)) {
+        Assert-Stop { Assert-QPFreshEngine (New-Observations) $fixture['identity'] $tolerance }
+    }
+    Assert-QPFreshEngine (New-Observations) $fixture['identity'] 0.5
+    Assert-QPFreshEngine (New-Observations) $fixture['identity'] 2
+}
 Test-QPCase 'canonical numbers are edition-independent integers; fractions fail closed' {
     Assert-True ((ConvertTo-QPCanonicalJson (Read-QPJson '[1,1.0,1e2]')) -ceq '[1,1,100]') 'Numeric canonicalization differs'
     Assert-Stop { ConvertTo-QPCanonicalJson (Read-QPJson '[1e-5]') }
@@ -290,6 +301,18 @@ Test-QPCase 'unattributed network/container events stop' {
         Assert-Stop { Assert-QPObservationCoverage $coverage 11000 12000 (New-Inventory) }
     }
 }
+Test-QPCase 'observer provenance rejects placeholder identities and invalid UTC' {
+    foreach ($change in @(
+        @{ key = 'pid'; value = 0 }, @{ key = 'pid'; value = '201' },
+        @{ key = 'process_start_utc'; value = '' }, @{ key = 'process_start_utc'; value = '2030-02-30T00:00:00Z' },
+        @{ key = 'process_start_utc'; value = '2030-01-01T00:00:00' },
+        @{ key = 'executable_sha256'; value = 'x' }, @{ key = 'source'; value = ' ' }
+    )) {
+        $coverage = New-Coverage; $coverage[0].provenance[$change.key] = $change.value
+        Seal-Coverage $coverage
+        Assert-Stop { Assert-QPObservationCoverage $coverage 900 12000 (New-Inventory) }
+    }
+}
 Test-QPCase 'receipt assertions cannot excuse events on a protected object' {
     $coverage = New-Coverage
     $coverage[1].events = @(@{ ticks = 11500; object_id = 'bridge-before'; receipt_verified = $true })
@@ -320,6 +343,18 @@ Test-QPCase 'raw PATH retains duplicates, empties and whitespace' {
     Assert-True ($p.paths.process.segments[1] -ceq '') 'Empty segment lost'
     Assert-True ($p.paths.process.segments[2] -ceq ' C:\Synthetic\Other ') 'Whitespace lost'
     Assert-QPPathPreserved $p (Copy-Fixture $p)
+}
+Test-QPCase 'PATH capture UTC and process scope provenance are mandatory' {
+    $p = New-PathFixture; [void]$p.Remove('captured_utc')
+    Assert-Stop { Assert-QPPathPreserved $p $p }
+    foreach ($stamp in @('', 'not-a-date', '2030-02-30T00:00:00Z', '2030-01-01T00:00:00')) {
+        $p = New-PathFixture; $p.captured_utc = $stamp
+        Assert-Stop { Assert-QPPathPreserved $p $p }
+    }
+    $p = New-PathFixture; $p.paths.process.registry_kind = 'String'
+    Assert-Stop { Assert-QPPathPreserved $p $p }
+    $p = New-PathFixture; $p.context.parent.start_utc = ''
+    Assert-Stop { Assert-QPPathPreserved $p $p }
 }
 Test-QPCase 'absent and present-empty PATH have distinct canonical representations' {
     $absent = New-QPPathValue $null $false 'absent'

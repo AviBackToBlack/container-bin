@@ -166,6 +166,8 @@ authority. Reconcile cleanup and preservation as separate outcomes.
 `Get-QPPathSnapshot` retains exact process and unexpanded registry User/Machine
 PATH values, presence, registry kinds, UTF-8/no-BOM hashes and ordered segments.
 Present values must be strings; User/Machine kinds must be String or ExpandString.
+The process scope must use kind `process`. Capture and process-start timestamps
+must be valid ISO UTC strings with an explicit `Z` or `+00:00` offset.
 MultiString, Binary, DWord/QWord and other kinds STOP without being coerced into
 fabricated raw text. Public clock arguments are validated as integral values
 before any conversion; fractional caller ticks are never rounded into acceptance.
@@ -209,6 +211,13 @@ than silently reserialized. Dictionary keys are case-sensitive, arrays retain
 order, and `[]` differs from `[null]`. Canonical v1 records support integral Int64
 numbers only: fractional/out-of-range values STOP rather than acquire different
 hashes under the two JSON parsers. Unmodified raw source JSON remains retained.
+For portable driver records, encode ticks as plain JSON integers, not fractional
+or exponent spellings, and use ISO timestamp strings rather than Ajax
+`\/Date(...)\/` literals. The latter may be auto-converted and rejected on 5.1;
+floating-point tick spellings may also be rejected more strictly on 5.1 than 7.
+Those spellings are outside the portable input contract; never normalize raw
+source evidence or treat an edition-specific STOP as PASS. Canonical records
+emit supported numbers as plain integers.
 The driver must order inventory arrays
 deterministically by exact object identity without dropping fields or objects.
 
@@ -225,6 +234,8 @@ deterministically by exact object identity without dropping fields or objects.
   `end_ticks`, `complete`, `exit_reason`, `gaps`, `events`, plus exact `raw` record
   JSON and `raw_sha256`. Raw records must bind those fields to retained source
   evidence; a hash or caller assertion alone does not establish observation.
+  Provenance requires a positive integral PID, valid explicit UTC process-start
+  timestamp, lowercase 64-hex executable digest and nonempty source string.
   A successfully finalized stream uses `coordinator-finalized`, never EOF or a
   deadline. Resource events include `ticks`, exact `object_id` and
   `receipt_verified`; every event needs an integral coordinator `ticks` value
