@@ -111,6 +111,11 @@ Test-QPCase 'raw timestamp labels and empty/null arrays survive parsing' {
     Assert-True ((Get-QPSha256 'abc') -ceq 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad') 'SHA-256 encoding differs'
 }
 Test-QPCase 'live independent responses pass with a constant one-hour clock offset' { Assert-QPFreshEngine (New-Observations) $fixture['identity'] }
+Test-QPCase 'canonical numbers are edition-independent integers; fractions fail closed' {
+    Assert-True ((ConvertTo-QPCanonicalJson (Read-QPJson '[1,1.0,1e2]')) -ceq '[1,1,100]') 'Numeric canonicalization differs'
+    Assert-Stop { ConvertTo-QPCanonicalJson (Read-QPJson '[1e-5]') }
+    Assert-Stop { ConvertTo-QPCanonicalJson (Read-QPJson '[0.00001]') }
+}
 Test-QPCase 'frozen body time fails despite advancing host/HTTP time' {
     $observations = New-Observations
     foreach ($o in $observations) {
@@ -165,6 +170,16 @@ Test-QPCase 'bounded native child capture and timeout need no Docker' {
     Assert-True ($capture.raw.Trim() -ceq 'synthetic' -and $capture.pid -ne $PID) 'Fresh native child not captured'
     Assert-Stop { Invoke-QPReadOnlyCli $shell '-NoLogo -NoProfile -Command "Start-Sleep -Seconds 30"' $PSScriptRoot 100 }
 }
+Test-QPCase 'a silent test-owned pipe times out without disposing a pending wait handle' {
+    $name = 'qp-offline-' + [Guid]::NewGuid().ToString('N')
+    $server = New-Object IO.Pipes.NamedPipeServerStream($name, [IO.Pipes.PipeDirection]::InOut, 1, [IO.Pipes.PipeTransmissionMode]::Byte, [IO.Pipes.PipeOptions]::Asynchronous)
+    $accept = $server.WaitForConnectionAsync()
+    try {
+        Assert-Stop { Invoke-QPReadOnlyPipe $name 200 }
+        Assert-True ($accept.Wait(1000)) 'Test pipe never connected'
+        [Threading.Thread]::Sleep(50)
+    } finally { $server.Dispose() }
+}
 Test-QPCase 'raw bytes and request provenance cannot be omitted or contradicted' {
     $o = New-Observations; $o[0].system_time = '2030-01-01T00:00:00Z'
     Assert-Stop { Assert-QPFreshEngine $o $fixture['identity'] }
@@ -178,6 +193,7 @@ Test-QPCase 'one baseline and a complete unchanged final reconciliation pass' {
     Assert-QPPreservation $s (New-Inventory -StartTicks 11000) (New-Observations -StartTicks 11000) (New-Coverage) 21000 -Final
     Assert-True ($s.phase -ceq 'complete') 'Final reconciliation not complete'
     Assert-Stop { Set-QPWarmBaseline $s (New-Inventory) (New-Observations) 13000 }
+    Assert-True ($s.phase -ceq 'complete' -and $null -eq $s.stop_reason) 'Terminal completion overwritten'
 }
 Test-QPCase 'prebaseline bridge replacement requires an exact authorized receipt' {
     $cold = New-Inventory; $warm = Copy-Fixture $cold
@@ -196,7 +212,9 @@ Test-QPCase 'postbaseline bridge replacement stops even with identical configura
     $s = New-ReadySession; $current = New-Inventory -StartTicks 11000; $current.networks[0]['Id'] = 'replacement'
     Assert-Stop { Assert-QPPreservation $s $current (New-Observations -StartTicks 11000) (New-Coverage) 21000 }
     Assert-True ($s.phase -ceq 'stopped') 'Drift not latched'
+    $reason = $s.stop_reason
     Assert-Stop { Assert-QPPreservation $s (New-Inventory) (New-Observations) (New-Coverage) 12000 }
+    Assert-True ($s.stop_reason -ceq $reason) 'Original failure reason overwritten'
 }
 Test-QPCase 'restart stops even when Engine ID and inventories are unchanged' {
     $s = New-ReadySession; $coverage = New-Coverage
@@ -217,10 +235,12 @@ Test-QPCase 'untimed or ambiguous events are never skipped as out of window' {
     foreach ($ticks in @($null, 'not-a-clock', '11500', 11500.5, -1)) {
         $coverage = New-Coverage
         $coverage[2].events = @(@{ ticks = $ticks; action = 'engine-starting' })
-        Seal-Coverage $coverage
-        Assert-Stop { Assert-QPObservationCoverage $coverage 900 12000 (New-Inventory) }
+        Assert-Stop { Seal-Coverage $coverage; Assert-QPObservationCoverage $coverage 900 12000 (New-Inventory) }
     }
     $coverage = New-Coverage; $coverage[2].events = @(@{ action = 'engine-starting' })
+    Seal-Coverage $coverage
+    Assert-Stop { Assert-QPObservationCoverage $coverage 900 12000 (New-Inventory) }
+    $coverage = New-Coverage; [void]$coverage[0].Remove('start_ticks')
     Seal-Coverage $coverage
     Assert-Stop { Assert-QPObservationCoverage $coverage 900 12000 (New-Inventory) }
 }

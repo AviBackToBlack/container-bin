@@ -144,6 +144,8 @@ continuous observer records. Missing inputs must STOP the run.
    interrupted/missing observers, missed coverage, unknown objects or uncertain
    results mean STOP. Never silently reconnect, wake, resume or create a new
    baseline after drift. A subsequent run requires separate authorization.
+   Terminal session state and the first STOP reason are retained unchanged even
+   if an accidental later call attempts to resume or recapture a baseline.
 
 Keep checks strict for all existing image identities/references/configuration,
 network identities/configuration/attachments, volume creation identity/full
@@ -198,7 +200,10 @@ Append new records; never edit sealed evidence or reclassify historical FAILs.
 The library accepts dictionaries/JSON data, retaining ISO timestamp labels as
 strings on PowerShell 5.1 and 7. Converted DateTime values are rejected rather
 than silently reserialized. Dictionary keys are case-sensitive, arrays retain
-order, and `[]` differs from `[null]`. The driver must order inventory arrays
+order, and `[]` differs from `[null]`. Canonical v1 records support integral Int64
+numbers only: fractional/out-of-range values STOP rather than acquire different
+hashes under the two JSON parsers. Unmodified raw source JSON remains retained.
+The driver must order inventory arrays
 deterministically by exact object identity without dropping fields or objects.
 
 - Identity fields: `context`, `endpoint`, `engine_id`, `version`.

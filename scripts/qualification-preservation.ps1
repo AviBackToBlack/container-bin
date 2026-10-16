@@ -54,12 +54,16 @@ function ConvertTo-QPCanonicalJson {
         return '[' + ($parts -join ',') + ']'
     }
     if ($Value -is [byte] -or $Value -is [int16] -or $Value -is [int32] -or $Value -is [int64] -or
-        $Value -is [uint16] -or $Value -is [uint32] -or $Value -is [uint64] -or $Value -is [decimal]) {
-        return $Value.ToString([Globalization.CultureInfo]::InvariantCulture)
-    }
-    if ($Value -is [double] -or $Value -is [single]) {
-        if ([double]::IsNaN($Value) -or [double]::IsInfinity($Value)) { throw 'STOP: non-finite JSON number' }
-        return $Value.ToString('R', [Globalization.CultureInfo]::InvariantCulture)
+        $Value -is [uint16] -or $Value -is [uint32] -or $Value -is [uint64] -or $Value -is [decimal] -or
+        $Value -is [double] -or $Value -is [single]) {
+        # The v1 canonical schema supports integral Int64 values only. Preserve
+        # other numbers in raw sources; never hash edition-dependent float text.
+        if ($Value -is [double] -or $Value -is [single]) {
+            $limit = if ($Value -is [single]) { 16777215 } else { 9007199254740991 }
+            if ([double]::IsNaN($Value) -or [double]::IsInfinity($Value) -or [Math]::Abs([double]$Value) -gt $limit) { throw 'STOP: ambiguous floating-point evidence number' }
+        }
+        if ($Value -lt [long]::MinValue -or $Value -gt [long]::MaxValue -or [decimal]::Truncate([decimal]$Value) -ne $Value) { throw 'STOP: canonical evidence requires integral Int64 numbers' }
+        return ([long]$Value).ToString([Globalization.CultureInfo]::InvariantCulture)
     }
     throw 'STOP: unsupported evidence value type'
 }
@@ -296,35 +300,39 @@ function Read-QPHttpResponse {
 }
 
 function Invoke-QPReadOnlyPipe {
-    param([string]$PipeName)
+    param([string]$PipeName, [ValidateRange(100, 15000)][int]$TimeoutMs = 15000)
     $pipe = New-Object IO.Pipes.NamedPipeClientStream('.', $PipeName, [IO.Pipes.PipeDirection]::InOut, [IO.Pipes.PipeOptions]::Asynchronous)
     $bytes = New-Object IO.MemoryStream
     $clock = [Diagnostics.Stopwatch]::StartNew()
     $start = Get-QPClock
+    $pending = $null
     try {
-        $pipe.Connect(3000)
+        $pipe.Connect([Math]::Min(3000, $TimeoutMs))
         $request = [Text.Encoding]::ASCII.GetBytes("GET /info HTTP/1.0`r`nHost: localhost`r`nConnection: close`r`n`r`n")
-        $write = $pipe.BeginWrite($request, 0, $request.Length, $null, $null)
-        try {
-            if (-not $write.AsyncWaitHandle.WaitOne(3000)) { throw 'STOP: pipe write timeout' }
-            $pipe.EndWrite($write)
-        } finally { $write.AsyncWaitHandle.Close() }
+        $pending = $pipe.WriteAsync($request, 0, $request.Length)
+        if (-not $pending.Wait([Math]::Min(3000, $TimeoutMs))) { throw 'STOP: pipe write timeout' }
+        [void]$pending.GetAwaiter().GetResult()
         $buffer = New-Object byte[] 8192
         while ($true) {
-            $remaining = 15000 - [int]$clock.ElapsedMilliseconds
+            $remaining = $TimeoutMs - [int]$clock.ElapsedMilliseconds
             if ($remaining -le 0) { throw 'STOP: pipe response timeout' }
-            $read = $pipe.BeginRead($buffer, 0, $buffer.Length, $null, $null)
-            try {
-                if (-not $read.AsyncWaitHandle.WaitOne($remaining)) { throw 'STOP: pipe response timeout' }
-                $count = $pipe.EndRead($read)
-            } finally { $read.AsyncWaitHandle.Close() }
+            $pending = $pipe.ReadAsync($buffer, 0, $buffer.Length)
+            if (-not $pending.Wait($remaining)) { throw 'STOP: pipe response timeout' }
+            $count = $pending.GetAwaiter().GetResult()
             if ($count -eq 0) { break }
             $bytes.Write($buffer, 0, $count)
             if ($bytes.Length -gt 16777216) { throw 'STOP: pipe response exceeded bound' }
         }
         $response = Read-QPHttpResponse $bytes.ToArray()
         return [ordered]@{ start = $start; end = Get-QPClock; pid = $PID; process_start_utc = [Diagnostics.Process]::GetCurrentProcess().StartTime.ToUniversalTime().ToString('o'); raw = $response.raw; raw_base64 = $response.raw_base64; body = $response.body }
-    } finally { $pipe.Dispose(); $bytes.Dispose() }
+    } catch { throw 'STOP: bounded direct-pipe capture failed (private response suppressed)' }
+    finally {
+        # Dispose the pipe first to cancel outstanding I/O. Task owns its wait
+        # machinery; never close an OVERLAPPED wait handle while I/O is pending.
+        $pipe.Dispose()
+        if ($null -ne $pending) { try { [void]$pending.Wait(1000) } catch { } }
+        $bytes.Dispose()
+    }
 }
 
 function Get-QPDockerOverrides {
@@ -416,6 +424,7 @@ function Assert-QPObservationCoverage {
         $streams = @($Coverage | Where-Object { $_.kind -ceq $kind })
         if ($streams.Count -ne 1) { throw 'STOP: missing or ambiguous observation stream' }
         $s = $streams[0]
+        Assert-QPFields $s @('start_ticks', 'end_ticks')
         Assert-QPTick $s.start_ticks
         Assert-QPTick $s.end_ticks
         Assert-QPFields $s @('raw', 'raw_sha256', 'provenance', 'events', 'gaps')
@@ -523,7 +532,10 @@ function Set-QPWarmBaseline {
         $Session.baseline = Read-QPJson (ConvertTo-QPCanonicalJson $WarmInventory)
         $Session.baseline_ticks = $Ticks; $Session.last_ticks = $Ticks
         $Session.baseline_count = 1; $Session.phase = 'observing'
-    } catch { $Session.phase = 'stopped'; $Session.stop_reason = $_.Exception.Message; throw }
+    } catch {
+        if ($Session.phase -notin @('stopped', 'complete')) { $Session.phase = 'stopped'; $Session.stop_reason = $_.Exception.Message }
+        throw
+    }
 }
 
 function Assert-QPPreservation {
@@ -536,7 +548,10 @@ function Assert-QPPreservation {
         foreach ($area in @('engine', 'images', 'containers', 'volumes', 'networks', 'protected_host')) { Assert-QPEqual $Session.baseline[$area] $Inventory[$area] "protected $area" }
         $Session.last_ticks = $Ticks
         if ($Final) { $Session.phase = 'complete' }
-    } catch { $Session.phase = 'stopped'; $Session.stop_reason = $_.Exception.Message; throw }
+    } catch {
+        if ($Session.phase -notin @('stopped', 'complete')) { $Session.phase = 'stopped'; $Session.stop_reason = $_.Exception.Message }
+        throw
+    }
 }
 
 function Open-QPDirectoryPins {
@@ -564,10 +579,12 @@ namespace QualificationPreservation {
     try {
         foreach ($part in $parts) {
             if ($part -cne '') { $cursor = Join-Path $cursor $part }
-            # Read attributes; share read/write, deliberately NOT delete. Pin
+            # GENERIC_READ includes directory-list access: an attributes-only
+            # handle does not reliably participate in Windows share checks.
+            # Share read/write, deliberately NOT delete. Pin
             # root through leaf before validation, holding every handle through
             # the write. OPEN_REPARSE_POINT avoids following a replaced leaf.
-            $handle = [QualificationPreservation.DirectoryPin]::CreateFileW($cursor, 0x80, 3, [IntPtr]::Zero, 3, 0x02200000, [IntPtr]::Zero)
+            $handle = [QualificationPreservation.DirectoryPin]::CreateFileW($cursor, [uint32]2147483648, 3, [IntPtr]::Zero, 3, 0x02200000, [IntPtr]::Zero)
             if ($handle.IsInvalid) { $handle.Dispose(); throw 'STOP: cannot pin evidence ancestor' }
             $pins.Add($handle)
             $item = Get-Item -LiteralPath $cursor -Force -ErrorAction Stop
