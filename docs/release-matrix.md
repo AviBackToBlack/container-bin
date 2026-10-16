@@ -124,6 +124,11 @@ continuous observer records. Missing inputs must STOP the run.
    wake authority or any other protected change means STOP. Capture exactly one
    warm baseline after reconciliation; never discard the cold record.
 4. Observe the entire interval from before baseline through final reconciliation.
+   Supply the required `ObservationStartTicks` to `New-QPPreservationSession`
+   before the first live-readiness request and warm inventory capture. Any
+   authorized wake must be completed and recorded before this strict interval.
+   Coverage checks start at that recorded tick, not at baseline completion;
+   lifecycle/protected-object events during readiness or capture therefore STOP.
    The driver needs container and network event streams plus independent backend
    lifecycle/cache observation. Engine ID or Desktop backend PID alone does not
    identify a continuously running daemon epoch. Record raw event/log sources,
@@ -157,6 +162,8 @@ authority. Reconcile cleanup and preservation as separate outcomes.
 `Get-QPPathSnapshot` retains exact process and unexpanded registry User/Machine
 PATH values, presence, registry kinds, UTF-8/no-BOM hashes and ordered segments.
 Empty entries, duplicate entries, whitespace and spelling remain significant.
+An absent value has `present=false`, null raw/hash and no segments; a present
+empty value retains its empty-string hash and one empty segment. They differ.
 It records UTC, coordinator PID/start time, executable/hash, SID, CWD, shell/profile
 mode, command line and observed parent provenance. Supply the actual launcher
 recipe and intentional child-environment overlays; ancestry alone cannot recover
@@ -171,8 +178,13 @@ returns a recipe without modifying the parent or launching a process. Do not
 normalize PATH or exclude Codex-related entries to excuse a mismatch.
 
 Provision an owner-private evidence directory outside the repository in advance.
-`Write-QPPrivateEvidence` checks for broad access grants, repositories and reparse
-ancestors, uses exclusive `CreateNew` writes, and records SHA-256 payload and
+`Write-QPPrivateEvidence` requires local drive-letter paths and owner/SYSTEM-only
+ownership/access grants, rejecting explicit Administrators grants as well as
+other identities. Windows privileged administrators can still take ownership;
+this check is not protection against a compromised privileged host. The writer
+pins every directory ancestor with native handles that deny delete/rename
+sharing, rejects repositories and reparse ancestors, uses exclusive `CreateNew`
+writes, and records SHA-256 payload and
 previous-record hashes. It does not change ACLs. Retain each returned record
 digest and independently seal the final anchor; `Assert-QPPrivateEvidenceChain`
 checks an explicit ordered record list against that anchor. Hashes detect changes
@@ -204,7 +216,10 @@ deterministically by exact object identity without dropping fields or objects.
   evidence; a hash or caller assertion alone does not establish observation.
   A successfully finalized stream uses `coordinator-finalized`, never EOF or a
   deadline. Resource events include `ticks`, exact `object_id` and
-  `receipt_verified`; lifecycle events inside the window always STOP. The driver
+  `receipt_verified`; every event needs an integral coordinator `ticks` value
+  before window filtering. Missing/null/ambiguous ticks STOP, even if the event
+  could otherwise appear outside the window. Lifecycle events inside the window
+  always STOP. The driver
   must derive these records from actual uninterrupted observers, not manufacture
   empty records from endpoint snapshots. The synthetic test builders are not a
   production observer and must never be used to claim live coverage.

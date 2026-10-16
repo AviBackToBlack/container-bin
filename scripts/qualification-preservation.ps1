@@ -130,10 +130,11 @@ function Assert-QPFields {
 
 function New-QPPathValue {
     param([AllowNull()][AllowEmptyString()][string]$Raw, [bool]$Present, [string]$RegistryKind)
+    if (-not $Present -and -not [string]::IsNullOrEmpty($Raw)) { throw 'STOP: absent PATH has a value' }
     return [ordered]@{
-        present = $Present; raw = $Raw; encoding = 'UTF-8/no-BOM/strict'
-        sha256 = Get-QPSha256 $Raw; registry_kind = $RegistryKind
-        segments = @($Raw.Split([char]';', [StringSplitOptions]::None))
+        present = $Present; raw = $(if ($Present) { $Raw } else { $null }); encoding = 'UTF-8/no-BOM/strict'
+        sha256 = $(if ($Present) { Get-QPSha256 $Raw } else { $null }); registry_kind = $RegistryKind
+        segments = @($(if ($Present) { $Raw.Split([char]';', [StringSplitOptions]::None) }))
     }
 }
 
@@ -415,6 +416,8 @@ function Assert-QPObservationCoverage {
         $streams = @($Coverage | Where-Object { $_.kind -ceq $kind })
         if ($streams.Count -ne 1) { throw 'STOP: missing or ambiguous observation stream' }
         $s = $streams[0]
+        Assert-QPTick $s.start_ticks
+        Assert-QPTick $s.end_ticks
         Assert-QPFields $s @('raw', 'raw_sha256', 'provenance', 'events', 'gaps')
         Assert-QPFields $s.provenance @('pid', 'process_start_utc', 'executable_sha256', 'source')
         if ($s.raw_sha256 -cne (Get-QPSha256 $s.raw)) { throw 'STOP: observer evidence digest mismatch' }
@@ -426,6 +429,8 @@ function Assert-QPObservationCoverage {
             $s.start_ticks -gt $StartTicks -or $s.end_ticks -lt $EndTicks -or [string]::IsNullOrWhiteSpace($s.observer_id) -or
             [string]::IsNullOrWhiteSpace($s.raw_sha256) -or $s.raw_sha256 -notmatch '^[0-9a-f]{64}$') { throw 'STOP: interrupted/incomplete observation coverage' }
         foreach ($event in $s.events) {
+            Assert-QPFields $event @('ticks')
+            Assert-QPTick $event.ticks
             if ($event.ticks -lt $StartTicks -or $event.ticks -gt $EndTicks) { continue }
             if ($kind -eq 'lifecycle') { throw 'STOP: Engine lifecycle/cache transition' }
             if ($null -eq $ProtectedInventory) { throw 'STOP: event has no protected inventory reconciliation' }
@@ -442,14 +447,22 @@ function Assert-QPObservationCoverage {
     }
 }
 
+function Assert-QPTick {
+    param($Value)
+    if (($Value -isnot [int] -and $Value -isnot [long] -and $Value -isnot [decimal]) -or
+        $Value -lt 0 -or $Value -gt [long]::MaxValue -or [decimal]::Truncate([decimal]$Value) -ne $Value) { throw 'STOP: missing/ambiguous coordinator tick' }
+}
+
 function New-QPPreservationSession {
-    param($ColdInventory, $Identity, [string]$AuthorizationSha256)
+    param($ColdInventory, $Identity, [string]$AuthorizationSha256, [long]$ObservationStartTicks = -1)
     if ($AuthorizationSha256 -notmatch '^[0-9a-f]{64}$') { throw 'STOP: authorization digest required' }
+    Assert-QPTick $ObservationStartTicks
     return [ordered]@{
         schema_version = 1; phase = 'cold'; baseline_count = 0
         cold = Read-QPJson (ConvertTo-QPCanonicalJson $ColdInventory)
         identity = $Identity; authorization_sha256 = $AuthorizationSha256
         baseline = $null; baseline_ticks = 0; last_ticks = 0; stop_reason = $null; used_requests = @{}
+        coverage_start_ticks = $ObservationStartTicks
     }
 }
 
@@ -490,6 +503,8 @@ function Set-QPWarmBaseline {
         Assert-QPInventory $Session.cold $Session.identity
         Assert-QPInventory $WarmInventory $Session.identity
         Assert-QPNewObservations $Session $Observations $Ticks $WarmInventory['capture_window']
+        if ($Session.coverage_start_ticks -gt $Observations[0].capture.start.ticks -or
+            $Session.coverage_start_ticks -gt $WarmInventory['capture_window']['start_ticks']) { throw 'STOP: observation starts after baseline readiness/capture began' }
         foreach ($area in @('engine', 'images', 'containers', 'volumes', 'protected_host')) { Assert-QPEqual $Session.cold[$area] $WarmInventory[$area] "prebaseline $area" }
         $coldNetworks = $Session.cold['networks']; $warmNetworks = $WarmInventory['networks']
         if ((ConvertTo-QPCanonicalJson $coldNetworks) -cne (ConvertTo-QPCanonicalJson $warmNetworks)) {
@@ -517,11 +532,53 @@ function Assert-QPPreservation {
         if ($Session.phase -cne 'observing' -or $Ticks -lt $Session.last_ticks) { throw 'STOP: inactive session or invalid clock' }
         Assert-QPInventory $Inventory $Session.identity
         Assert-QPNewObservations $Session $Observations $Ticks $Inventory['capture_window']
-        Assert-QPObservationCoverage $Coverage $Session.baseline_ticks $Ticks $Session.baseline
+        Assert-QPObservationCoverage $Coverage $Session.coverage_start_ticks $Ticks $Session.baseline
         foreach ($area in @('engine', 'images', 'containers', 'volumes', 'networks', 'protected_host')) { Assert-QPEqual $Session.baseline[$area] $Inventory[$area] "protected $area" }
         $Session.last_ticks = $Ticks
         if ($Final) { $Session.phase = 'complete' }
     } catch { $Session.phase = 'stopped'; $Session.stop_reason = $_.Exception.Message; throw }
+}
+
+function Open-QPDirectoryPins {
+    param([string]$Path)
+    if ($null -eq ('QualificationPreservation.DirectoryPin' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+namespace QualificationPreservation {
+    public static class DirectoryPin {
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        public static extern SafeFileHandle CreateFileW(string name, uint access,
+            uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+    }
+}
+'@
+    }
+    $full = [IO.Path]::GetFullPath($Path)
+    if ($full -notmatch '^[a-zA-Z]:\\') { throw 'STOP: local drive-letter evidence directory required' }
+    $pins = New-Object 'System.Collections.Generic.List[Microsoft.Win32.SafeHandles.SafeFileHandle]'
+    $root = [IO.Path]::GetPathRoot($full)
+    $cursor = $root
+    $parts = @('') + @($full.Substring($root.Length).Split([char]'\', [StringSplitOptions]::RemoveEmptyEntries))
+    try {
+        foreach ($part in $parts) {
+            if ($part -cne '') { $cursor = Join-Path $cursor $part }
+            # Read attributes; share read/write, deliberately NOT delete. Pin
+            # root through leaf before validation, holding every handle through
+            # the write. OPEN_REPARSE_POINT avoids following a replaced leaf.
+            $handle = [QualificationPreservation.DirectoryPin]::CreateFileW($cursor, 0x80, 3, [IntPtr]::Zero, 3, 0x02200000, [IntPtr]::Zero)
+            if ($handle.IsInvalid) { $handle.Dispose(); throw 'STOP: cannot pin evidence ancestor' }
+            $pins.Add($handle)
+            $item = Get-Item -LiteralPath $cursor -Force -ErrorAction Stop
+            if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+                (Test-Path -LiteralPath (Join-Path $cursor '.git'))) { throw 'STOP: repository/reparse evidence destination' }
+        }
+        return ,$pins.ToArray()
+    } catch {
+        foreach ($handle in $pins) { $handle.Dispose() }
+        throw 'STOP: evidence directory could not be safely pinned'
+    }
 }
 
 function Write-QPPrivateEvidence {
@@ -531,26 +588,24 @@ function Write-QPPrivateEvidence {
     # never writes inside the repository. Names are append-only, never replaced.
     if (-not [IO.Path]::IsPathRooted($ExistingPrivateDirectory) -or -not [IO.Directory]::Exists($ExistingPrivateDirectory) -or
         $Name -notmatch '^[a-zA-Z0-9][a-zA-Z0-9_.-]*\.json$' -or $PreviousSha256 -notmatch '^[0-9a-f]{64}$') { throw 'STOP: invalid private evidence destination/chain' }
-    $directory = Get-Item -LiteralPath $ExistingPrivateDirectory -Force
-    $allowedSids = @([Security.Principal.WindowsIdentity]::GetCurrent().User.Value, 'S-1-5-18', 'S-1-5-32-544')
-    $acl = Get-Acl -LiteralPath $directory.FullName
-    $descriptor = New-Object Security.AccessControl.RawSecurityDescriptor($acl.GetSecurityDescriptorBinaryForm(), 0)
-    if ($null -eq $descriptor.DiscretionaryAcl -or $allowedSids -notcontains $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value) { throw 'STOP: private evidence owner/DACL is unsafe' }
-    foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
-        if ($rule.AccessControlType -eq 'Allow' -and $allowedSids -notcontains $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value) { throw 'STOP: private evidence directory grants access to another identity' }
-    }
-    while ($null -ne $directory) {
-        if (($directory.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or (Test-Path -LiteralPath (Join-Path $directory.FullName '.git'))) { throw 'STOP: repository/reparse evidence destination' }
-        $directory = $directory.Parent
-    }
-    $payload = ConvertTo-QPCanonicalJson $Evidence
-    $record = [ordered]@{ schema_version = 1; recorded_utc = [DateTimeOffset]::UtcNow.ToString('o'); previous_sha256 = $PreviousSha256; payload_sha256 = Get-QPSha256 $payload; payload = $Evidence }
-    $text = ConvertTo-QPCanonicalJson $record
-    $path = Join-Path $ExistingPrivateDirectory $Name
-    $stream = New-Object IO.FileStream($path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
-    try { $encoding = New-Object Text.UTF8Encoding($false, $true); $bytes = $encoding.GetBytes($text); $stream.Write($bytes, 0, $bytes.Length); $stream.Flush($true) }
-    finally { $stream.Dispose() }
-    return [ordered]@{ name = $Name; sha256 = Get-QPSha256 $text }
+    $pins = Open-QPDirectoryPins $ExistingPrivateDirectory
+    try {
+        $allowedSids = @([Security.Principal.WindowsIdentity]::GetCurrent().User.Value, 'S-1-5-18')
+        $acl = Get-Acl -LiteralPath $ExistingPrivateDirectory
+        $descriptor = New-Object Security.AccessControl.RawSecurityDescriptor($acl.GetSecurityDescriptorBinaryForm(), 0)
+        if ($null -eq $descriptor.DiscretionaryAcl -or $allowedSids -notcontains $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value) { throw 'STOP: private evidence owner/DACL is unsafe' }
+        foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+            if ($rule.AccessControlType -eq 'Allow' -and $allowedSids -notcontains $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value) { throw 'STOP: private evidence directory grants access to another identity' }
+        }
+        $payload = ConvertTo-QPCanonicalJson $Evidence
+        $record = [ordered]@{ schema_version = 1; recorded_utc = [DateTimeOffset]::UtcNow.ToString('o'); previous_sha256 = $PreviousSha256; payload_sha256 = Get-QPSha256 $payload; payload = $Evidence }
+        $text = ConvertTo-QPCanonicalJson $record
+        $path = Join-Path $ExistingPrivateDirectory $Name
+        $stream = New-Object IO.FileStream($path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        try { $encoding = New-Object Text.UTF8Encoding($false, $true); $bytes = $encoding.GetBytes($text); $stream.Write($bytes, 0, $bytes.Length); $stream.Flush($true) }
+        finally { $stream.Dispose() }
+        return [ordered]@{ name = $Name; sha256 = Get-QPSha256 $text }
+    } finally { foreach ($handle in $pins) { $handle.Dispose() } }
 }
 
 function Assert-QPPrivateEvidenceChain {

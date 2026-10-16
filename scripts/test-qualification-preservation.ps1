@@ -94,7 +94,7 @@ function Seal-Coverage {
 }
 function New-ReadySession {
     $inventory = New-Inventory
-    $session = New-QPPreservationSession $inventory $fixture['identity'] ('c' * 64)
+    $session = New-QPPreservationSession $inventory $fixture['identity'] ('c' * 64) 900
     Set-QPWarmBaseline $session $inventory (New-Observations) 11000
     return $session
 }
@@ -182,14 +182,14 @@ Test-QPCase 'one baseline and a complete unchanged final reconciliation pass' {
 Test-QPCase 'prebaseline bridge replacement requires an exact authorized receipt' {
     $cold = New-Inventory; $warm = Copy-Fixture $cold
     $warm['networks'][0]['Id'] = 'bridge-after'; $warm['networks'][0]['Created'] = '2030-01-01T01:00:00Z'
-    $s = New-QPPreservationSession $cold $fixture['identity'] ('c' * 64)
+    $s = New-QPPreservationSession $cold $fixture['identity'] ('c' * 64) 900
     Assert-Stop { Set-QPWarmBaseline $s $warm (New-Observations) 11000 }
-    $s = New-QPPreservationSession $cold $fixture['identity'] ('c' * 64)
+    $s = New-QPPreservationSession $cold $fixture['identity'] ('c' * 64) 900
     $receipt = @{ authorization_sha256 = 'c' * 64; live_verified = $true; before_networks = $cold.networks; after_networks = $warm['networks'] }
     Set-QPWarmBaseline $s $warm (New-Observations) 11000 $receipt
     Assert-True ($s.phase -ceq 'observing') 'Authorized transition rejected'
     $warm['networks'][0]['Driver'] = 'unexpected'
-    $s = New-QPPreservationSession $cold $fixture['identity'] ('c' * 64)
+    $s = New-QPPreservationSession $cold $fixture['identity'] ('c' * 64) 900
     Assert-Stop { Set-QPWarmBaseline $s $warm (New-Observations) 11000 $receipt }
 }
 Test-QPCase 'postbaseline bridge replacement stops even with identical configuration' {
@@ -203,6 +203,26 @@ Test-QPCase 'restart stops even when Engine ID and inventories are unchanged' {
     $coverage[2].events = @(@{ ticks = 11500; action = 'engine-starting'; object_id = 'same-engine' })
     Seal-Coverage $coverage
     Assert-Stop { Assert-QPPreservation $s (New-Inventory -StartTicks 11000) (New-Observations -StartTicks 11000) $coverage 21000 }
+}
+Test-QPCase 'coverage includes readiness and warm capture, not just baseline completion' {
+    foreach ($kind in @(1, 2)) {
+        $s = New-ReadySession; $coverage = New-Coverage
+        $coverage[$kind].events = @(@{ ticks = 2000; action = 'restart-or-change'; object_id = 'bridge-before'; receipt_verified = $true })
+        Seal-Coverage $coverage
+        Assert-Stop { Assert-QPPreservation $s (New-Inventory -StartTicks 11000) (New-Observations -StartTicks 11000) $coverage 21000 -Final }
+    }
+    Assert-Stop { New-QPPreservationSession (New-Inventory) $fixture['identity'] ('c' * 64) }
+}
+Test-QPCase 'untimed or ambiguous events are never skipped as out of window' {
+    foreach ($ticks in @($null, 'not-a-clock', '11500', 11500.5, -1)) {
+        $coverage = New-Coverage
+        $coverage[2].events = @(@{ ticks = $ticks; action = 'engine-starting' })
+        Seal-Coverage $coverage
+        Assert-Stop { Assert-QPObservationCoverage $coverage 900 12000 (New-Inventory) }
+    }
+    $coverage = New-Coverage; $coverage[2].events = @(@{ action = 'engine-starting' })
+    Seal-Coverage $coverage
+    Assert-Stop { Assert-QPObservationCoverage $coverage 900 12000 (New-Inventory) }
 }
 Test-QPCase 'matching inventories cannot compensate for missing/gapped/interrupted observers' {
     foreach ($kind in @('container', 'network', 'lifecycle')) {
@@ -243,14 +263,14 @@ Test-QPCase 'inventory capture must be freshness-bracketed and old observations 
     $current.capture_window.end_ticks = 20500
     Assert-Stop { Assert-QPPreservation $s $current (New-Observations -StartTicks 11000) (New-Coverage) 21000 }
     $inventory = New-Inventory; $o = New-Observations
-    $s = New-QPPreservationSession $inventory $fixture['identity'] ('c' * 64)
+    $s = New-QPPreservationSession $inventory $fixture['identity'] ('c' * 64) 900
     Set-QPWarmBaseline $s $inventory $o 11000
     Assert-Stop { Assert-QPPreservation $s $inventory $o (New-Coverage) 11000 }
 }
 Test-QPCase 'missing raw PATH prevents even baseline acceptance' {
     $inventory = New-Inventory
     [void]$inventory.protected_host.path.paths.process.Remove('raw')
-    $s = New-QPPreservationSession $inventory $fixture['identity'] ('c' * 64)
+    $s = New-QPPreservationSession $inventory $fixture['identity'] ('c' * 64) 900
     Assert-Stop { Set-QPWarmBaseline $s $inventory (New-Observations) 11000 }
 }
 Test-QPCase 'raw PATH retains duplicates, empties and whitespace' {
@@ -259,6 +279,16 @@ Test-QPCase 'raw PATH retains duplicates, empties and whitespace' {
     Assert-True ($p.paths.process.segments[1] -ceq '') 'Empty segment lost'
     Assert-True ($p.paths.process.segments[2] -ceq ' C:\Synthetic\Other ') 'Whitespace lost'
     Assert-QPPathPreserved $p (Copy-Fixture $p)
+}
+Test-QPCase 'absent and present-empty PATH have distinct canonical representations' {
+    $absent = New-QPPathValue $null $false 'absent'
+    $empty = New-QPPathValue '' $true 'String'
+    Assert-True ($null -eq $absent.raw -and $null -eq $absent.sha256 -and $absent.segments.Count -eq 0) 'Absent PATH misrepresented'
+    Assert-True ($empty.raw -ceq '' -and $empty.segments.Count -eq 1) 'Empty PATH misrepresented'
+    $before = New-PathFixture; $before.paths.user = $absent
+    Assert-QPPathPreserved $before (Copy-Fixture $before)
+    $after = Copy-Fixture $before; $after['paths']['user'] = $empty
+    Assert-Stop { Assert-QPPathPreserved $before $after }
 }
 Test-QPCase 'PATH reordering, duplicates, empty entries and whitespace remain meaningful' {
     foreach ($raw in @('B;A', 'A;B', 'A;A;B', 'A;;B', 'A; B', 'A;B;')) {
@@ -326,5 +356,44 @@ Test-QPCase 'broad private-directory access is rejected without changing ACLs' {
         return $acl
     }
     Assert-Stop { Write-QPPrivateEvidence ([IO.Path]::GetTempPath()) 'must-not-write.json' @{ synthetic = $true } ('0' * 64) }
+}
+Test-QPCase 'explicit Administrators access is rejected' {
+    function Get-Acl {
+        param([string]$LiteralPath)
+        $acl = New-Object Security.AccessControl.DirectorySecurity
+        $acl.SetOwner([Security.Principal.WindowsIdentity]::GetCurrent().User)
+        $sid = New-Object Security.Principal.SecurityIdentifier('S-1-5-32-544')
+        $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid, [Security.AccessControl.FileSystemRights]::Read, [Security.AccessControl.AccessControlType]::Allow)))
+        return $acl
+    }
+    Assert-Stop { Write-QPPrivateEvidence ([IO.Path]::GetTempPath()) 'must-not-write.json' @{ synthetic = $true } ('0' * 64) }
+}
+Test-QPCase 'pinned evidence directory cannot be renamed between validation and write' {
+    $root = Join-Path ([IO.Path]::GetTempPath()) ('qp-pin-offline-' + [Guid]::NewGuid().ToString('N'))
+    $moved = $root + '-moved'
+    [void][IO.Directory]::CreateDirectory($root)
+    $script:pinBlocked = $false
+    function Get-Acl {
+        param([string]$LiteralPath)
+        try { [IO.Directory]::Move($root, $moved) } catch [IO.IOException] { $script:pinBlocked = $true }
+        $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+        $acl = New-Object Security.AccessControl.DirectorySecurity
+        $acl.SetOwner($sid)
+        $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid, [Security.AccessControl.FileSystemRights]::FullControl, [Security.AccessControl.AccessControlType]::Allow)))
+        return $acl
+    }
+    try {
+        Write-QPPrivateEvidence $root 'synthetic.json' @{ synthetic = $true } ('0' * 64) | Out-Null
+        Assert-True $script:pinBlocked 'Directory replacement was not blocked'
+        Assert-True (-not [IO.Directory]::Exists($moved)) 'Evidence directory moved'
+    } finally {
+        foreach ($owned in @($root, $moved)) {
+            if ([IO.Directory]::Exists($owned)) {
+                $file = Join-Path $owned 'synthetic.json'
+                if ([IO.File]::Exists($file)) { [IO.File]::Delete($file) }
+                [IO.Directory]::Delete($owned)
+            }
+        }
+    }
 }
 Write-Output "Offline preservation suite: $script:passed cases passed (PowerShell $($PSVersionTable.PSVersion)); no Docker/network calls."
