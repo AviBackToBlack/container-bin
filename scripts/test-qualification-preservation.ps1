@@ -103,6 +103,48 @@ function New-ReadySession {
     return $session
 }
 
+function New-AttachmentSource {
+    param($Value, [long]$Ticks)
+    $raw = ConvertTo-QPCanonicalJson $Value
+    return @{ raw = $raw; raw_sha256 = Get-QPSha256 $raw; ticks = $Ticks }
+}
+function New-AttachmentEvent {
+    param([string]$Type, [string]$Action, [string]$Id, $Attributes, [long]$Ticks, [long]$Nano)
+    return @{ ticks = $Ticks; object_id = $Id; action = $Action; receipt_verified = $true
+        docker_source = New-AttachmentSource @{ Type = $Type; Action = $Action; Actor = @{ ID = $Id; Attributes = $Attributes }; timeNano = $Nano } $Ticks }
+}
+function New-BridgeFixture {
+    $baseline = New-Inventory; $cid = 'e' * 64; $image = 'sha256:' + ('a' * 64)
+    $bridge = $baseline.networks[0]
+    $bridge['Containers']['b' * 64] = @{ Name = 'protected-original'; EndpointID = 'c' * 64; IPv4Address = '10.0.0.2/24' }
+    $plan = @{ plan_id = 'approved-private-project'; project_path = 'C:\Synthetic\Owned\project'; image_id = $image; command = @('python', '-c', 'pass') }
+    $session = New-QPPreservationSession $baseline $fixture['identity'] ('c' * 64) 900 @($plan)
+    Set-QPWarmBaseline $session $baseline (New-Observations) 11000
+    $create = New-AttachmentEvent 'container' 'create' $cid @{ name = 'qp-test'; image = $image } 11100 1893495610100000000
+    $connect = New-AttachmentEvent 'network' 'connect' $bridge.Id @{ name = 'bridge'; container = $cid } 11200 1893495610200000000
+    $disconnect = New-AttachmentEvent 'network' 'disconnect' $bridge.Id @{ name = 'bridge'; container = $cid } 11300 1893495610300000000
+    $inspection = @{ Id = $cid; Name = '/qp-test'; Created = '2030-01-01T11:00:10.100000000Z'; Image = $image
+        Config = @{ Image = $image; Cmd = @('python', '-c', 'pass') }
+        Mounts = @(@{ Type = 'bind'; Source = $plan.project_path; Destination = '/workspace'; RW = $true }) }
+    $connected = Copy-Fixture $bridge
+    $connected['Containers'][$cid] = @{ Name = 'qp-test'; EndpointID = 'f' * 64; IPv4Address = '10.0.0.3/24' }
+    $proof = @{ engine = $fixture['identity']; authorization_sha256 = 'c' * 64
+        receipts = @(@{ container_id = $cid; plan_id = $plan.plan_id; create_event_sha256 = $create.docker_source.raw_sha256; inspection = New-AttachmentSource $inspection 11150 })
+        transitions = @(
+            @{ event_sha256 = $connect.docker_source.raw_sha256; network_inspection = New-AttachmentSource $connected 11250 },
+            @{ event_sha256 = $disconnect.docker_source.raw_sha256; network_inspection = New-AttachmentSource $bridge 11350 }
+        ) }
+    $coverage = New-Coverage; $coverage[0].events = @($create); $coverage[1].events = @($connect, $disconnect)
+    Seal-Coverage $coverage
+    $current = Copy-Fixture $baseline; $current['capture_window'] = @{ start_ticks = 16000; end_ticks = 16500; frequency = 1000 }
+    return @{ session = $session; coverage = $coverage; proof = $proof; current = $current; cid = $cid }
+}
+function Assert-BridgeFixture {
+    param($Case)
+    Seal-Coverage $Case.coverage
+    Assert-QPPreservation $Case.session $Case.current (New-Observations -StartTicks 11000) $Case.coverage 21000 -Final -BridgeAttachments $Case.proof
+}
+
 Test-QPCase 'raw timestamp labels and empty/null arrays survive parsing' {
     Assert-True ($fixture['timestamp_label'] -is [string]) 'Timestamp label converted'
     Assert-True ((ConvertTo-QPCanonicalJson $fixture['timestamp_label']) -ceq '"2030-01-01T02:24:57+00:00"') 'Timestamp string changed'
@@ -321,6 +363,87 @@ Test-QPCase 'receipt assertions cannot excuse events on a protected object' {
     $coverage[1].events[0].object_id = 'receipt-owned-new-object'
     Seal-Coverage $coverage
     Assert-QPObservationCoverage $coverage 11000 12000 (New-Inventory)
+}
+Test-QPCase 'approved bridge attachment passes only after raw receipt and endpoint reconciliation' {
+    $c = New-BridgeFixture; $before = ConvertTo-QPCanonicalJson $c.coverage
+    Assert-BridgeFixture $c
+    Assert-True ($c.session.phase -ceq 'complete') 'Complete attachment reconciliation rejected'
+    Assert-True ((ConvertTo-QPCanonicalJson $c.coverage) -ceq $before) 'Raw Docker event was rewritten'
+    $c = New-BridgeFixture
+    $c.proof.receipts[0].inspection = New-AttachmentSource @((Read-QPJson $c.proof.receipts[0].inspection.raw)) 11150
+    foreach ($transition in $c.proof.transitions) {
+        $transition.network_inspection = New-AttachmentSource @((Read-QPJson $transition.network_inspection.raw)) $transition.network_inspection.ticks
+    }
+    Assert-BridgeFixture $c # Preserve ordinary one-element CLI inspect arrays.
+}
+Test-QPCase 'foreign or flag-only bridge ownership cannot pass' {
+    foreach ($change in @(
+        { param($c) $c.proof = $null },
+        { param($c) $c.proof.receipts = @() },
+        { param($c) $e = $c.coverage[1].events[0]; $raw = Read-QPJson $e.docker_source.raw; $raw['Actor']['Attributes']['container'] = 'd' * 64; $e.docker_source = New-AttachmentSource $raw 11200; $c.proof.transitions[0].event_sha256 = $e.docker_source.raw_sha256 },
+        { param($c) $c.session.test_container_plans = @() },
+        { param($c) $c.proof.receipts += $c.proof.receipts[0] },
+        { param($c) $c.proof.receipts[0].create_event_sha256 = '0' * 64 },
+        { param($c) $v = Read-QPJson $c.proof.receipts[0].inspection.raw; $v['Image'] = 'sha256:' + ('d' * 64); $c.proof.receipts[0].inspection = New-AttachmentSource $v 11150 },
+        { param($c) $v = Read-QPJson $c.proof.receipts[0].inspection.raw; $v['Config']['Cmd'] = @('foreign'); $c.proof.receipts[0].inspection = New-AttachmentSource $v 11150 },
+        { param($c) $v = Read-QPJson $c.proof.receipts[0].inspection.raw; $v['Mounts'][0]['Source'] = 'C:\Foreign'; $c.proof.receipts[0].inspection = New-AttachmentSource $v 11150 },
+        { param($c) $v = Read-QPJson $c.proof.receipts[0].inspection.raw; $v['Created'] = '2031-01-01T00:00:00Z'; $c.proof.receipts[0].inspection = New-AttachmentSource $v 11150 },
+        { param($c) $c.proof.authorization_sha256 = '0' * 64 },
+        { param($c) $c.proof.engine = @{ engine_id = 'foreign' } }
+    )) { $c = New-BridgeFixture; & $change $c; Assert-Stop { Assert-BridgeFixture $c }; Assert-True ($c.session.phase -ceq 'stopped') 'Ownership failure not latched' }
+}
+Test-QPCase 'protected bridge destruction replacement and configuration drift remain STOP' {
+    foreach ($change in @(
+        { param($c) $e = $c.coverage[1].events[0]; $raw = Read-QPJson $e.docker_source.raw; $raw['Action'] = 'destroy'; $e.action = 'destroy'; $e.docker_source = New-AttachmentSource $raw 11200; $c.proof.transitions[0].event_sha256 = $e.docker_source.raw_sha256 },
+        { param($c) $c.current['networks'][0]['Id'] = 'replaced' },
+        { param($c) $v = Read-QPJson $c.proof.transitions[0].network_inspection.raw; $v['Created'] = '2031-01-01T00:00:00Z'; $c.proof.transitions[0].network_inspection = New-AttachmentSource $v 11250 },
+        { param($c) $v = Read-QPJson $c.proof.transitions[0].network_inspection.raw; $v['Options']['synthetic'] = 'changed'; $c.proof.transitions[0].network_inspection = New-AttachmentSource $v 11250 }
+    )) { $c = New-BridgeFixture; & $change $c; Assert-Stop { Assert-BridgeFixture $c } }
+}
+Test-QPCase 'unmatched or changed actual endpoints cannot be reconciled away' {
+    foreach ($change in @(
+        { param($c) $c.coverage[1].events = @($c.coverage[1].events[0]); $c.proof.transitions = @($c.proof.transitions[0]) },
+        { param($c) $c.coverage[1].events = @($c.coverage[1].events[1]); $c.proof.transitions = @($c.proof.transitions[1]) },
+        { param($c) $c.current['networks'][0]['Containers'][$c.cid] = @{ EndpointID = 'f' * 64 } },
+        { param($c) $v = Read-QPJson $c.proof.transitions[0].network_inspection.raw; [void]$v['Containers'].Remove($c.cid); $c.proof.transitions[0].network_inspection = New-AttachmentSource $v 11250 },
+        { param($c) $v = Read-QPJson $c.proof.transitions[0].network_inspection.raw; $v['Containers']['b' * 64]['EndpointID'] = 'd' * 64; $c.proof.transitions[0].network_inspection = New-AttachmentSource $v 11250 },
+        { param($c) $v = Read-QPJson $c.proof.transitions[0].network_inspection.raw; $v['Containers'][$c.cid]['EndpointID'] = 'c' * 64; $c.proof.transitions[0].network_inspection = New-AttachmentSource $v 11250 },
+        { param($c) $c.proof.transitions[0].network_inspection.ticks = 11350 },
+        { param($c) $c.proof.transitions[1].network_inspection = $c.proof.transitions[0].network_inspection; $c.proof.transitions[1].network_inspection.ticks = 11350 }
+    )) { $c = New-BridgeFixture; & $change $c; Assert-Stop { Assert-BridgeFixture $c } }
+}
+Test-QPCase 'bridge evidence must retain unambiguous original Docker event identity' {
+    foreach ($change in @(
+        { param($c) [void]$c.coverage[1].events[0].Remove('docker_source') },
+        { param($c) $c.coverage[1].events[0].docker_source.raw_sha256 = '0' * 64 },
+        { param($c) $e = $c.coverage[1].events[0]; $raw = Read-QPJson $e.docker_source.raw; $raw['Actor']['ID'] = 'substituted'; $e.docker_source = New-AttachmentSource $raw 11200 },
+        { param($c) $e = $c.coverage[1].events[0]; $raw = Read-QPJson $e.docker_source.raw; [void]$raw['Actor']['Attributes'].Remove('container'); $e.docker_source = New-AttachmentSource $raw 11200 },
+        { param($c) $e = $c.coverage[1].events[0]; $raw = $e.docker_source.raw.Replace('"container":', '"container":"foreign","container":'); $e.docker_source = @{ raw = $raw; raw_sha256 = Get-QPSha256 $raw; ticks = 11200 } },
+        { param($c) $c.proof.transitions += $c.proof.transitions[0] },
+        { param($c) $c.coverage[0].events = @() },
+        { param($c) $c.coverage[0].events += $c.coverage[0].events[0] }
+    )) { $c = New-BridgeFixture; & $change $c; Assert-Stop { Assert-BridgeFixture $c } }
+}
+Test-QPCase 'raw Docker identity is checked before generic event classification' {
+    foreach ($change in @(
+        { param($c) foreach ($e in $c.coverage[1].events) { $e.object_id = 'unprotected-test-object' }; $c.proof = $null },
+        { param($c) $c.coverage[0].events[0].object_id = 'unprotected-test-object' },
+        { param($c) $c.coverage[0].events[0].action = 'substituted' },
+        { param($c) $e = $c.coverage[0].events[0]; $raw = Read-QPJson $e.docker_source.raw; $raw['Type'] = 'network'; $e.docker_source = New-AttachmentSource $raw $e.ticks },
+        { param($c) $c.coverage[0].events[0].docker_source.ticks++ }
+    )) {
+        $c = New-BridgeFixture; & $change $c
+        Assert-Stop { Assert-BridgeFixture $c }
+        Assert-True ($c.session.phase -ceq 'stopped') 'Contradictory source failure not latched'
+    }
+}
+Test-QPCase 'bridge authorization never substitutes for uninterrupted observation coverage' {
+    foreach ($change in @(
+        { param($c) $c.coverage = @($c.coverage[0], $c.coverage[1]) },
+        { param($c) $c.coverage[1].complete = $false; $c.coverage[1].exit_reason = 'EOF' },
+        { param($c) $c.coverage[2].gaps = @(@{ reason = 'log rotation' }) },
+        { param($c) $c.coverage[0].start_ticks = 11200 }
+    )) { $c = New-BridgeFixture; & $change $c; Assert-Stop { Assert-BridgeFixture $c } }
 }
 Test-QPCase 'inventory capture must be freshness-bracketed and old observations cannot be reused' {
     $s = New-ReadySession; $current = New-Inventory -StartTicks 11000

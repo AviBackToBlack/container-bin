@@ -141,8 +141,10 @@ continuous observer records. Missing inputs must STOP the run.
    call `Assert-QPPreservation`. All baseline network identities, including
    `bridge`, must remain identical throughout the interval. Identical network
    configuration does not prove unchanged identity. Receipt-verified test-object
-   events are the only allowed resource events; no events on protected objects
-   are authorized. Unexpected lifecycle/cache transitions, changed bridge IDs,
+   events are the only allowed resource events. The sole protected-object event
+   exception is a fully reconciled, receipt-bound test-container attachment to
+   the original baseline bridge, under the contract below. Unexpected
+   lifecycle/cache transitions, changed bridge IDs,
    interrupted/missing observers, missed coverage, unknown objects or uncertain
    results mean STOP. Never silently reconnect, wake, resume or create a new
    baseline after drift. A subsequent run requires separate authorization.
@@ -245,6 +247,52 @@ deterministically by exact object identity without dropping fields or objects.
   must derive these records from actual uninterrupted observers, not manufacture
   empty records from endpoint snapshots. The synthetic test builders are not a
   production observer and must never be used to claim live coverage.
+
+#### Transient test-container bridge attachments
+
+Docker network events identify the **network** in `Actor.ID` and the container in
+`Actor.Attributes.container`. Preserve the original raw event; never substitute
+the container ID for the network ID or discard connect/disconnect events.
+
+Before baseline or container creation, pass the driver's independently verified,
+authorization-bound test-container plans to `New-QPPreservationSession` using
+`TestContainerPlans`. Each plan contains a unique `plan_id`, the exact private
+`project_path` bind source, immutable `image_id` and complete container `command`
+array. Verify host-directory ownership receipts before approving these plans and
+retain them privately with the authorization. The session copies the plans;
+event-time receipt assertions cannot add an approved container plan.
+
+Only baseline `bridge` connect/disconnect can use this exception. Supply
+`BridgeAttachments` to `Assert-QPPreservation` at a quiescent checkpoint:
+
+- `engine` and `authorization_sha256` match the original session.
+- `receipts` contains one actual creation receipt per attached container:
+  `container_id`, approved `plan_id`, `create_event_sha256`, and raw container
+  `inspection`. Its exact ID, creation identity, name, image, command and private
+  `/workspace` bind must match the observed container-create event and plan.
+- Every relevant observed container-create/network event carries `action`, its
+  unchanged `object_id`, and `docker_source`. Each source holds the original
+  Docker JSON `raw`, UTF-8 `raw_sha256`, and coordinator capture `ticks`. Raw
+  type/action/actor/attributes and daemon `timeNano` are validated. Duplicate or
+  missing creation events, ambiguous container attributes and substituted IDs STOP.
+  Every supplied container/network `docker_source` is bound to its wrapper before
+  event classification, including events labeled as unprotected test objects.
+- `transitions` contains exactly one `event_sha256` plus `network_inspection`
+  per connect/disconnect. Inspection sources use the same raw/hash/ticks format;
+  both direct API objects and exactly one CLI inspect-array element are supported
+  without altering the retained source. Capture each actual endpoint state after
+  its event and before the next transition. Preserve baseline ID, Created and all
+  non-endpoint fields, every original endpoint, and the exact currently connected
+  test endpoints. Every connection must have a matching disconnect; the final
+  full network inventory, including original attachments, must equal baseline.
+
+An unverified `receipt_verified=true` alone never authorizes a protected bridge
+event. Complete container/network/backend coverage is still required, and
+foreign attachments, destruction/recreation, changed configuration, unmatched
+endpoints, raw-source ambiguity, observer gaps and lifecycle transitions STOP.
+The trusted driver must collect authentic independent creation/inspection/event
+sources and reconcile ownership; hashes bind those sources, not a dishonest
+collector. This exception supplies no live-run, wake or resource-removal authority.
 
 Record the driver revision/hash, authorization, source/candidate identity, all
 capture/observer provenance, state transitions and final outcomes in the private
