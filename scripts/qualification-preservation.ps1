@@ -435,11 +435,126 @@ function Assert-QPFreshEngine {
     if ([Math]::Abs($pipeOffset - $cliOffset) -gt $TimingToleranceSeconds) { throw 'STOP: independent Engine clocks disagree' }
 }
 
+function Read-QPAttachmentSource {
+    param($Source, [switch]$Inspection)
+    Assert-QPFields $Source @('raw', 'raw_sha256', 'ticks')
+    Assert-QPTick $Source.ticks
+    if ($Source.raw -isnot [string] -or $Source.raw_sha256 -cne (Get-QPSha256 $Source.raw)) { throw 'STOP: attachment source digest mismatch' }
+    $value = Read-QPJson $Source.raw
+    if ($Inspection -and $value -is [array]) {
+        if ($value.Count -ne 1) { throw 'STOP: ambiguous Docker inspection response' }
+        $value = $value[0]
+    }
+    if ($value -isnot [Collections.IDictionary]) { throw 'STOP: Docker source object required' }
+    return ,$value
+}
+
+function Read-QPAttachmentEvent {
+    param($Event, [string]$Type)
+    Assert-QPFields $Event @('object_id', 'action', 'docker_source')
+    $raw = Read-QPAttachmentSource $Event.docker_source
+    Assert-QPFields $raw @('Type', 'Action', 'Actor', 'timeNano')
+    Assert-QPFields $raw.Actor @('ID', 'Attributes')
+    Assert-QPTick $raw.timeNano
+    if ($raw.Type -cne $Type -or $raw.Action -cne $Event.action -or $raw.Actor.ID -cne $Event.object_id -or
+        $Event.docker_source.ticks -ne $Event.ticks) { throw 'STOP: Docker event identity was changed' }
+    return ,$raw
+}
+
+function Assert-QPBridgeAttachments {
+    param($Events, $Coverage, $Baseline, $Proof, $Session, $Inventory, $EndTicks)
+    try {
+        if ($null -eq $Proof -or $null -eq $Session -or $null -eq $Inventory) { throw 'STOP: bridge attachment reconciliation required' }
+        Assert-QPFields $Proof @('engine', 'authorization_sha256', 'receipts', 'transitions')
+        Assert-QPEqual $Session.identity $Proof.engine 'attachment Engine identity'
+        if ($Proof.authorization_sha256 -cne $Session.authorization_sha256 -or $Proof.receipts -isnot [array] -or
+            $Proof.transitions -isnot [array] -or $Proof.transitions.Count -ne $Events.Count) { throw 'STOP: attachment authorization/transition mismatch' }
+        $bridges = @($Baseline.networks | Where-Object { $_['Name'] -ceq 'bridge' })
+        if ($bridges.Count -ne 1) { throw 'STOP: ambiguous baseline bridge' }
+        $bridge = $bridges[0]
+        Assert-QPFields $bridge @('Id', 'Created', 'Containers')
+        if ($bridge.Containers -isnot [Collections.IDictionary]) { throw 'STOP: baseline endpoint map required' }
+        # Quiescent full inventory equality remains mandatory; no field is waived.
+        Assert-QPEqual $Baseline.networks $Inventory.networks 'final protected networks/endpoints'
+        $owners = @{}; $active = @{}; $seen = @{}; $lastTicks = -1; $lastNano = -1
+        for ($index = 0; $index -lt $Events.Count; $index++) {
+            $event = $Events[$index]
+            $raw = Read-QPAttachmentEvent $event 'network'
+            Assert-QPFields $raw.Actor.Attributes @('container', 'name')
+            $cid = $raw.Actor.Attributes.container
+            if ($raw.Actor.ID -cne $bridge.Id -or $raw.Actor.Attributes.name -cne 'bridge' -or
+                $raw.Action -cnotin @('connect', 'disconnect') -or $cid -isnot [string] -or $cid -cnotmatch '^[0-9a-f]{64}$' -or
+                $event.ticks -le $lastTicks -or $raw.timeNano -le $lastNano -or $seen.ContainsKey($event.docker_source.raw_sha256)) { throw 'STOP: ambiguous bridge event/lifecycle' }
+            $lastTicks = $event.ticks; $lastNano = $raw.timeNano; $seen[$event.docker_source.raw_sha256] = $true
+            if (-not $owners.ContainsKey($cid)) {
+                if (@($Baseline.containers | Where-Object { $_['Id'] -ceq $cid -or $_['ID'] -ceq $cid }).Count -ne 0 -or @($bridge.Containers.Keys) -ccontains $cid) { throw 'STOP: protected container attachment' }
+                $receipts = @($Proof.receipts | Where-Object { $_['container_id'] -ceq $cid })
+                if ($receipts.Count -ne 1) { throw 'STOP: missing/ambiguous creation receipt' }
+                $receipt = $receipts[0]
+                Assert-QPFields $receipt @('plan_id', 'create_event_sha256', 'inspection')
+                $plans = @($Session.test_container_plans | Where-Object { $_['plan_id'] -ceq $receipt.plan_id })
+                if ($plans.Count -ne 1) { throw 'STOP: container not in original approved plan' }
+                $plan = $plans[0]
+                $creates = @(@($Coverage | Where-Object { $_.kind -ceq 'container' })[0].events | Where-Object {
+                    $_.object_id -ceq $cid -and $_.action -ceq 'create'
+                })
+                if ($creates.Count -ne 1) { throw 'STOP: missing/ambiguous observed creation event' }
+                $create = $creates[0]; $created = Read-QPAttachmentEvent $create 'container'
+                $actual = Read-QPAttachmentSource $receipt.inspection -Inspection
+                Assert-QPFields $actual @('Id', 'Created', 'Name', 'Image', 'Config', 'Mounts')
+                Assert-QPFields $actual.Config @('Cmd', 'Image')
+                Assert-QPFields $created.Actor.Attributes @('name', 'image')
+                $creationTime = [DateTimeOffset]::Parse($actual.Created, [Globalization.CultureInfo]::InvariantCulture)
+                $creationNano = [decimal]($creationTime.UtcTicks - [DateTimeOffset]::Parse('1970-01-01T00:00:00Z').UtcTicks) * 100
+                if ($create.docker_source.raw_sha256 -cne $receipt.create_event_sha256 -or $created.timeNano -ge $raw.timeNano -or
+                    $create.ticks -lt $Session.coverage_start_ticks -or $create.ticks -gt $EndTicks -or
+                    $receipt.inspection.ticks -lt $create.ticks -or $receipt.inspection.ticks -gt $EndTicks -or
+                    $actual.Id -cne $cid -or $actual.Created -isnot [string] -or [string]::IsNullOrWhiteSpace($actual.Created) -or
+                    $actual.Name -cne ('/' + $created.Actor.Attributes.name) -or $actual.Config.Image -cne $created.Actor.Attributes.image -or
+                    $actual.Image -cne $plan.image_id -or $creationNano -lt 0 -or $creationNano -gt $created.timeNano) { throw 'STOP: creation receipt/event identity mismatch' }
+                Assert-QPEqual $plan.command $actual.Config.Cmd 'approved container command'
+                $binds = @($actual.Mounts | Where-Object { $_['Type'] -ceq 'bind' -and $_['Source'] -ceq $plan.project_path -and $_['Destination'] -ceq '/workspace' })
+                if ($binds.Count -ne 1) { throw 'STOP: missing exact test-owned project bind' }
+                $owners[$cid] = $actual.Name.Substring(1)
+            }
+            $transitions = @($Proof.transitions | Where-Object { $_['event_sha256'] -ceq $event.docker_source.raw_sha256 })
+            if ($transitions.Count -ne 1) { throw 'STOP: missing/ambiguous endpoint observation' }
+            $source = $transitions[0].network_inspection
+            $network = Read-QPAttachmentSource $source -Inspection
+            if ($source.ticks -lt $event.ticks -or $source.ticks -gt $EndTicks -or
+                ($index + 1 -lt $Events.Count -and $source.ticks -ge $Events[$index + 1].ticks)) { throw 'STOP: endpoint observation outside event window' }
+            Assert-QPFields $network @('Id', 'Created', 'Containers')
+            if ($network.Containers -isnot [Collections.IDictionary]) { throw 'STOP: actual endpoint map required' }
+            $withoutEndpoints = Read-QPJson (ConvertTo-QPCanonicalJson $network)
+            $withoutEndpoints['Containers'] = $bridge.Containers
+            Assert-QPEqual $bridge $withoutEndpoints 'bridge identity/configuration during attachment'
+            if ($raw.Action -ceq 'connect') {
+                if ($active.ContainsKey($cid) -or @($network.Containers.Keys) -cnotcontains $cid) { throw 'STOP: unmatched/duplicate bridge connection' }
+                $endpoint = $network.Containers[$cid]
+                Assert-QPFields $endpoint @('Name', 'EndpointID')
+                if ($endpoint.Name -cne $owners[$cid] -or $endpoint.EndpointID -cnotmatch '^[0-9a-f]{64}$') { throw 'STOP: endpoint identity mismatch' }
+                foreach ($key in $network.Containers.Keys) {
+                    if ($key -cne $cid -and $network.Containers[$key].EndpointID -ceq $endpoint.EndpointID) { throw 'STOP: ambiguous endpoint identity' }
+                }
+                $active[$cid] = $endpoint
+            } else {
+                if (-not $active.ContainsKey($cid)) { throw 'STOP: unmatched bridge disconnect' }
+                $active.Remove($cid)
+            }
+            $expected = Read-QPJson (ConvertTo-QPCanonicalJson $bridge.Containers)
+            foreach ($key in $active.Keys) { $expected[$key] = $active[$key] }
+            Assert-QPEqual $expected $network.Containers 'actual network endpoints'
+        }
+        if ($active.Count -ne 0 -or $owners.Count -ne $Proof.receipts.Count) { throw 'STOP: unreconciled/ambiguous test attachment lifecycle' }
+    } catch { throw 'STOP: invalid protected bridge attachment evidence/reconciliation' }
+}
+
 function Assert-QPObservationCoverage {
-    param($Coverage, $StartTicks, $EndTicks, $ProtectedInventory)
+    param($Coverage, $StartTicks, $EndTicks, $ProtectedInventory, $BridgeAttachments = $null, $Session = $null, $Inventory = $null)
     Assert-QPTick $StartTicks
     Assert-QPTick $EndTicks
     if ($EndTicks -lt $StartTicks) { throw 'STOP: invalid coverage window' }
+    $bridgeEvents = New-Object 'Collections.Generic.List[object]'
     foreach ($kind in @('container', 'network', 'lifecycle')) {
         $streams = @($Coverage | Where-Object { $_.kind -ceq $kind })
         if ($streams.Count -ne 1) { throw 'STOP: missing or ambiguous observation stream' }
@@ -462,7 +577,7 @@ function Assert-QPObservationCoverage {
         if ($s.complete -isnot [bool] -or -not $s.complete -or $s.exit_reason -cne 'coordinator-finalized' -or @($s.gaps).Count -ne 0 -or
             $s.start_ticks -gt $StartTicks -or $s.end_ticks -lt $EndTicks -or [string]::IsNullOrWhiteSpace($s.observer_id) -or
             [string]::IsNullOrWhiteSpace($s.raw_sha256) -or $s.raw_sha256 -notmatch '^[0-9a-f]{64}$') { throw 'STOP: interrupted/incomplete observation coverage' }
-        foreach ($event in $s.events) {
+        :events foreach ($event in $s.events) {
             Assert-QPFields $event @('ticks')
             Assert-QPTick $event.ticks
             if ($event.ticks -lt $StartTicks -or $event.ticks -gt $EndTicks) { continue }
@@ -471,13 +586,22 @@ function Assert-QPObservationCoverage {
             foreach ($area in @('images', 'networks', 'containers', 'volumes')) {
                 foreach ($object in $ProtectedInventory[$area]) {
                     foreach ($key in @('Id', 'ID', 'Name')) {
-                        if (@($object.Keys) -ccontains $key -and $object[$key] -ceq $event.object_id) { throw 'STOP: event changed a protected object' }
+                        if (@($object.Keys) -ccontains $key -and $object[$key] -ceq $event.object_id) {
+                            if ($kind -ceq 'network' -and $area -ceq 'networks' -and $key -ceq 'Id' -and $object['Name'] -ceq 'bridge') {
+                                $bridgeEvents.Add($event)
+                                continue events
+                            }
+                            throw 'STOP: event changed a protected object'
+                        }
                     }
                 }
             }
             # Only explicitly receipt-authorized test-object events may occur.
             if ($event.receipt_verified -isnot [bool] -or -not $event.receipt_verified -or [string]::IsNullOrWhiteSpace($event.object_id)) { throw 'STOP: unexpected/unattributed resource event' }
         }
+    }
+    if ($bridgeEvents.Count -ne 0 -or $null -ne $BridgeAttachments) {
+        Assert-QPBridgeAttachments $bridgeEvents.ToArray() $Coverage $ProtectedInventory $BridgeAttachments $Session $Inventory $EndTicks
     }
 }
 
@@ -488,15 +612,24 @@ function Assert-QPTick {
 }
 
 function New-QPPreservationSession {
-    param($ColdInventory, $Identity, [string]$AuthorizationSha256, $ObservationStartTicks = -1)
+    param($ColdInventory, $Identity, [string]$AuthorizationSha256, $ObservationStartTicks = -1, $TestContainerPlans = @())
     if ($AuthorizationSha256 -notmatch '^[0-9a-f]{64}$') { throw 'STOP: authorization digest required' }
     Assert-QPTick $ObservationStartTicks
+    $planIds = @{}
+    foreach ($plan in $TestContainerPlans) {
+        Assert-QPFields $plan @('plan_id', 'project_path', 'image_id', 'command')
+        if ([string]::IsNullOrWhiteSpace($plan.plan_id) -or $planIds.ContainsKey($plan.plan_id) -or
+            $plan.project_path -cnotmatch '^[A-Za-z]:\\' -or $plan.image_id -cnotmatch '^sha256:[0-9a-f]{64}$' -or
+            $plan.command -isnot [array] -or $plan.command.Count -eq 0 -or @($plan.command | Where-Object { $_ -isnot [string] }).Count -ne 0) { throw 'STOP: invalid approved test-container plan' }
+        $planIds[$plan.plan_id] = $true
+    }
     return [ordered]@{
         schema_version = 1; phase = 'cold'; baseline_count = 0
         cold = Read-QPJson (ConvertTo-QPCanonicalJson $ColdInventory)
         identity = $Identity; authorization_sha256 = $AuthorizationSha256
         baseline = $null; baseline_ticks = 0; last_ticks = 0; stop_reason = $null; used_requests = @{}
         coverage_start_ticks = $ObservationStartTicks
+        test_container_plans = Read-QPJson (ConvertTo-QPCanonicalJson @($TestContainerPlans))
     }
 }
 
@@ -581,13 +714,13 @@ function Set-QPWarmBaseline {
 }
 
 function Assert-QPPreservation {
-    param($Session, $Inventory, [array]$Observations, $Coverage, $Ticks, [switch]$Final)
+    param($Session, $Inventory, [array]$Observations, $Coverage, $Ticks, [switch]$Final, $BridgeAttachments = $null)
     try {
         Assert-QPTick $Ticks
         if ($Session.phase -cne 'observing' -or $Ticks -lt $Session.last_ticks) { throw 'STOP: inactive session or invalid clock' }
         Assert-QPInventory $Inventory $Session.identity
         Assert-QPNewObservations $Session $Observations $Ticks $Inventory['capture_window']
-        Assert-QPObservationCoverage $Coverage $Session.coverage_start_ticks $Ticks $Session.baseline
+        Assert-QPObservationCoverage $Coverage $Session.coverage_start_ticks $Ticks $Session.baseline $BridgeAttachments $Session $Inventory
         foreach ($area in @('engine', 'images', 'containers', 'volumes', 'networks', 'protected_host')) { Assert-QPEqual $Session.baseline[$area] $Inventory[$area] "protected $area" }
         $Session.last_ticks = $Ticks
         if ($Final) { $Session.phase = 'complete' }
