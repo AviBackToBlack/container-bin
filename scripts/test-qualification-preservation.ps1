@@ -424,6 +424,19 @@ Test-QPCase 'bridge evidence must retain unambiguous original Docker event ident
         { param($c) $c.coverage[0].events += $c.coverage[0].events[0] }
     )) { $c = New-BridgeFixture; & $change $c; Assert-Stop { Assert-BridgeFixture $c } }
 }
+Test-QPCase 'raw Docker identity is checked before generic event classification' {
+    foreach ($change in @(
+        { param($c) foreach ($e in $c.coverage[1].events) { $e.object_id = 'unprotected-test-object' }; $c.proof = $null },
+        { param($c) $c.coverage[0].events[0].object_id = 'unprotected-test-object' },
+        { param($c) $c.coverage[0].events[0].action = 'substituted' },
+        { param($c) $e = $c.coverage[0].events[0]; $raw = Read-QPJson $e.docker_source.raw; $raw['Type'] = 'network'; $e.docker_source = New-AttachmentSource $raw $e.ticks },
+        { param($c) $c.coverage[0].events[0].docker_source.ticks++ }
+    )) {
+        $c = New-BridgeFixture; & $change $c
+        Assert-Stop { Assert-BridgeFixture $c }
+        Assert-True ($c.session.phase -ceq 'stopped') 'Contradictory source failure not latched'
+    }
+}
 Test-QPCase 'bridge authorization never substitutes for uninterrupted observation coverage' {
     foreach ($change in @(
         { param($c) $c.coverage = @($c.coverage[0], $c.coverage[1]) },

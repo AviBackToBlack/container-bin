@@ -580,6 +580,11 @@ function Assert-QPObservationCoverage {
         :events foreach ($event in $s.events) {
             Assert-QPFields $event @('ticks')
             Assert-QPTick $event.ticks
+            # Validate supplied Docker identities before wrapper-based classification.
+            # A substituted object_id must not route a protected event to the generic branch.
+            if ($kind -cin @('container', 'network') -and @($event.Keys) -ccontains 'docker_source') {
+                $null = Read-QPAttachmentEvent $event $kind
+            }
             if ($event.ticks -lt $StartTicks -or $event.ticks -gt $EndTicks) { continue }
             if ($kind -eq 'lifecycle') { throw 'STOP: Engine lifecycle/cache transition' }
             if ($null -eq $ProtectedInventory) { throw 'STOP: event has no protected inventory reconciliation' }

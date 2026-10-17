@@ -275,6 +275,8 @@ Only baseline `bridge` connect/disconnect can use this exception. Supply
   Docker JSON `raw`, UTF-8 `raw_sha256`, and coordinator capture `ticks`. Raw
   type/action/actor/attributes and daemon `timeNano` are validated. Duplicate or
   missing creation events, ambiguous container attributes and substituted IDs STOP.
+  Every supplied container/network `docker_source` is bound to its wrapper before
+  event classification, including events labeled as unprotected test objects.
 - `transitions` contains exactly one `event_sha256` plus `network_inspection`
   per connect/disconnect. Inspection sources use the same raw/hash/ticks format;
   both direct API objects and exactly one CLI inspect-array element are supported
