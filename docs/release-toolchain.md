@@ -2,15 +2,17 @@
 
 ## Deterministic security baseline
 
-`.go-version` pins **Go 1.27.2** for contributor builds, native CI, platform-specific
+`.go-version` pins **Go 1.27.3** for contributor builds, native CI, platform-specific
 source vulnerability analysis, release builds and independent reproduction.
 `check-latest: false` and `GOTOOLCHAIN=local` prevent resolution to a different
 patch or a downloaded toolchain. Updating the pin is an explicit reviewed
 maintenance change, not a floating build input. The standard-library-only
 runtime dependency policy is unchanged.
 
-Go supports its latest two release series. As checked on 2026-10-11, 1.27.2 is
-the current patched release and 1.23.12 is unsupported. The module language
+Go supports its latest two release series. On 2026-10-19 Go 1.27.3
+fixed CVE-2026-111943 / GO-2026-6809 in `crypto/x509`; the previous
+release compiler 1.27.2 was affected. The 1.23.12 toolchain remains
+unsupported. The module language
 minimum is separately **Go 1.24**, justified by the existing built-in Go/gofmt
 shim profiles (`golang:1.24`). Keeping source compatibility avoids a tool-profile
 or cache migration in this bounded release fix. It does not endorse unsupported
@@ -87,7 +89,8 @@ not part of historical v2.0.0 qualification.
 This maintenance change does not alter repository security rules, make personal
 OpenSSF attestations, or accept assessment-data licenses.
 
-References: [Go releases/support](https://go.dev/doc/devel/release),
+References: [Go 1.27.3 security advisory](https://pkg.go.dev/vuln/GO-2026-6809),
+[Go releases/support](https://go.dev/doc/devel/release),
 [official downloads](https://go.dev/dl/),
 [govulncheck configuration, limitations and exit codes](https://pkg.go.dev/golang.org/x/vuln/cmd/govulncheck),
 [pinned scanner stripped-binary fallback](https://github.com/golang/vuln/blob/v1.8.0/internal/vulncheck/binary.go#L98-L105),

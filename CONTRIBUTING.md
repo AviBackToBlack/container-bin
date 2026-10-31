@@ -21,13 +21,13 @@ Thanks for your interest in improving ContainerBin.
 All validation runs in a disposable container:
 
 ```powershell
-docker run --rm -v "${PWD}:/src" -w /src -e GOTOOLCHAIN=local golang:1.27.2 sh -c "gofmt -l . ; go vet ./... && go test ./..."
+docker run --rm -v "${PWD}:/src" -w /src -e GOTOOLCHAIN=local golang:1.27.3 sh -c "gofmt -l . ; go vet ./... && go test ./..."
 ```
 
 Cross-compile the Windows binary the same way:
 
 ```powershell
-docker run --rm -v "${PWD}:/src" -w /src -e GOFLAGS=-buildvcs=false -e GOTOOLCHAIN=local golang:1.27.2 sh -c "GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o cb.exe ."
+docker run --rm -v "${PWD}:/src" -w /src -e GOFLAGS=-buildvcs=false -e GOTOOLCHAIN=local golang:1.27.3 sh -c "GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o cb.exe ."
 ```
 
 If you *do* have Go installed, plain `gofmt`, `go vet ./...` and `go test ./...`
