@@ -31,7 +31,7 @@ body:
   - type: textarea
     id: cell-powershell51-current
     attributes:
-      label: PowerShell 5.1 — current Docker Desktop (Z)
+      label: PowerShell 5.1 — current Docker Desktop
       description: Exact Desktop build, doctor, published-candidate self-test 15/0/0 and seven environment facts, cleanup.
       render: text
     validations:
@@ -39,7 +39,7 @@ body:
   - type: textarea
     id: cell-pwsh-current
     attributes:
-      label: PowerShell 7.x — current Docker Desktop (Z)
+      label: PowerShell 7.x — current Docker Desktop
       description: Exact Desktop build, doctor, published-candidate self-test 15/0/0 and seven environment facts, cleanup.
       render: text
     validations:
@@ -47,7 +47,7 @@ body:
   - type: textarea
     id: cell-cmd-current
     attributes:
-      label: cmd.exe — current Docker Desktop (Z)
+      label: cmd.exe — current Docker Desktop
       description: Exact Desktop build, doctor, published-candidate self-test 15/0/0 and seven environment facts, cleanup.
       render: text
     validations:
@@ -55,7 +55,7 @@ body:
   - type: textarea
     id: cell-powershell51-previous
     attributes:
-      label: PowerShell 5.1 — previous Docker Desktop (Z-LAPTOP)
+      label: PowerShell 5.1 — previous Docker Desktop
       description: Exact Desktop build, doctor, published-candidate self-test 15/0/0 and seven environment facts, cleanup.
       render: text
     validations:
@@ -63,7 +63,7 @@ body:
   - type: textarea
     id: cell-pwsh-previous
     attributes:
-      label: PowerShell 7.x — previous Docker Desktop (Z-LAPTOP)
+      label: PowerShell 7.x — previous Docker Desktop
       description: Exact Desktop build, doctor, published-candidate self-test 15/0/0 and seven environment facts, cleanup.
       render: text
     validations:
@@ -71,7 +71,7 @@ body:
   - type: textarea
     id: cell-cmd-previous
     attributes:
-      label: cmd.exe — previous Docker Desktop (Z-LAPTOP)
+      label: cmd.exe — previous Docker Desktop
       description: Exact Desktop build, doctor, published-candidate self-test 15/0/0 and seven environment facts, cleanup.
       render: text
     validations:
@@ -104,7 +104,7 @@ body:
     id: self-update
     attributes:
       label: Actual published-to-published self-update
-      description: Actual prior published v2.0.1 binary to exact candidate; auth, transaction, shims and residue. Distinguish simulated source-version tests.
+      description: Actual published previous supported release binary to the exact published candidate; auth, transaction, shims and residue. Distinguish simulated source-version tests.
       render: text
     validations:
       required: true

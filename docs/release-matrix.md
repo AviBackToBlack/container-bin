@@ -107,7 +107,7 @@ candidate and fresh disposable projects, perform:
 - pipx disposable app install, both `cb expose pipx APP` and store-wide
   `cb expose pipx`, managed shim invocation and `cb unexpose APP`.
 - Node stateful execution and persisted state; representative jq and Terraform
-  stateless commands, e.g. `terraform -chdir=.\\tf validate`.
+  stateless commands, e.g. `terraform -chdir=.\tf validate`.
 - stdin/EOF, separately captured stdout and stderr, nonzero exit codes, PTY
   where applicable, and relevant negative path/ownership/security cases.
 

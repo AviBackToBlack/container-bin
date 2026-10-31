@@ -21,7 +21,7 @@ items from being repeatedly rediscovered as if they were immediately actionable.
 | Image trust | **Policy-driven Sigstore/cosign at lock time** | Online/offline evidence production and runtime authorization are implemented. Explicit non-ambient private-registry credential bridging remains. Digest locking stays the default where policy permits; required trust never falls back to digest-only. |
 | Per-project overlays | **Explicit digest-bound, add-only trust model** | Shipped in PR #80 on the merged policy foundation. Overlays exclude host mounts, env prefixes and shared cross-project volumes. |
 | Plugin/provider architecture | **Intentionally deferred** | Reopen only after at least two concrete integrations cannot be expressed safely by the declarative model. |
-| RM-31 self-update | **Explicit transactional, attestation-verifying update** | Selection/check, staging, verification, ARM64 artifact selection, the private wait helper and explicit apply wiring are implemented. A repeatable Windows/amd64 published-release E2E harness now qualifies the complete current-source-to-v1.1.0 transaction; future release candidates must rerun it against their exact published target. |
+| RM-31 self-update | **Explicit transactional, attestation-verifying update** | Selection/check, staging, verification, ARM64 artifact selection, the private wait helper and explicit apply wiring are implemented. A repeatable Windows/amd64 published-release E2E harness now qualifies the complete current-source-to-v1.1.0 transaction; the original harness requirement is historical; under [Release Qualification Policy v2](release-qualification-policy.md), it is supplementary to mandatory genuine published-to-published qualification. |
 | RM-30 Authenticode | **Design accepted; externally blocked** | Implement only after a real code-signing certificate and protected signing mechanism exist. Stable and prerelease release artifacts are both signed. |
 | RM-29 Windows ARM64 | **Lowest priority** | Native GitHub Windows ARM64 CI shipped in PR #78, reproducible release packaging in PR #86 and ARM64 self-update selection in PR #91. Real Windows-on-Arm + Docker Desktop qualification remains. Do not delay other roadmap work. |
 | Standalone Linux/macOS | **Demand-gated** | No support claim yet. WSL should create reusable narrow Linux host abstractions, but standalone hosts require their own contract and real Docker qualification. |
@@ -342,8 +342,11 @@ is not completion.
    - the repeatable Windows/amd64 qualification harness covers a complete
      current-source-to-canonical-published-release transaction, including
      provenance, helper handoff, replacement, shim reconciliation and cleanup;
-   - it passed against canonical v1.1.0 assets on 2026-10-04; each future
-     release candidate must rerun it against that exact published target.
+   - it passed against canonical v1.1.0 assets on 2026-10-04. The historical
+     requirement to rerun that simulated-version harness on every release
+     candidate is superseded by [Release Qualification Policy v2](release-qualification-policy.md):
+     the harness is supplementary; genuine published-to-published updating
+     is mandatory.
 
 3. **WSL2 activation — qualified**
    - narrow reusable Linux host interfaces, fail-closed boundary and native
