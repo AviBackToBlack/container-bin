@@ -7,7 +7,7 @@ trap 'rm -rf "$scratch"' EXIT
 cd "$scratch"
 mkdir -p tools bundle payload
 printf 'module test\n\ngo 1.24\n' > go.mod
-printf '1.27.2\n' > .go-version
+printf '1.27.3\n' > .go-version
 printf 'fixture executable\n' > payload/cb.exe
 cp payload/cb.exe bundle/cb.exe
 (cd payload; zip -q ../bundle/container-bin-v0.0.0-test-windows-amd64.zip cb.exe)
@@ -22,14 +22,14 @@ tar -czf bundle/container-bin-v0.0.0-test-linux-amd64.tar.gz -C payload cb
 cat > tools/go <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ "$1 $2" == 'env GOVERSION' ]]; then echo go1.27.2; exit; fi
+if [[ "$1 $2" == 'env GOVERSION' ]]; then echo go1.27.3; exit; fi
 if [[ "$3" == */govulncheck ]]; then
   printf '\tmod\tgolang.org/x/vuln\t%s\th1:fixture\n' "${SCANNER_VERSION:-v1.8.0}"
 else
   target="${3##*/}"
   target="${target%.exe}"
   printf '%s: %s\n\tbuild\tGOOS=%s\n\tbuild\tGOARCH=%s\n\tbuild\tCGO_ENABLED=%s\n' \
-    "$3" "${EMBEDDED_GO:-go1.27.2}" "${target%-*}" "${TARGET_ARCH:-${target#*-}}" "${CGO_FLAG:-0}"
+    "$3" "${EMBEDDED_GO:-go1.27.3}" "${target%-*}" "${TARGET_ARCH:-${target#*-}}" "${CGO_FLAG:-0}"
   if [[ -n "${DEBUG_DEFAULTS:-}" ]]; then printf '\tbuild\tDefaultGODEBUG=%s\n' "$DEBUG_DEFAULTS"; fi
 fi
 MOCK
