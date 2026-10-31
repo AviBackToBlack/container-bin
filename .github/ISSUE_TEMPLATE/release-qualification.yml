@@ -1,75 +1,126 @@
 name: Release qualification
-description: Record the Windows and WSL2/Docker Desktop validation matrix for a release
+description: Record risk-based manual qualification for the actual shipping ContainerBin candidate
 title: "[release] "
 labels: ["release-qualification"]
 body:
   - type: markdown
     attributes:
       value: |
-        Use this template to record the manual Windows and WSL2/Docker Desktop
-        release-qualification matrix. See [docs/release-matrix.md](https://github.com/AviBackToBlack/container-bin/blob/main/docs/release-matrix.md)
-        for the full procedure, the grid, and the per-cell steps.
-
-        **Sanitize everything you paste** — `cb doctor` output, registry
-        snippets and environment output can contain credentials (cloud
-        tokens passed via `env_prefixes`, proxy URLs with passwords, private
-        registry hosts).
+        Record **actual published-candidate** evidence under
+        [Release Qualification Policy v2](https://github.com/AviBackToBlack/container-bin/blob/main/docs/release-qualification-policy.md)
+        and the [release matrix](https://github.com/AviBackToBlack/container-bin/blob/main/docs/release-matrix.md).
+        Use PASS / FAIL / BLOCKED / NOT RUN. A private harness failure is not
+        automatically a product FAIL; an incomplete gate is never a PASS.
+        **Sanitize all outputs** (doctor, registry, logs, PATH, tokens and proxy
+        URLs may contain secrets). Do not attach raw private evidence.
   - type: input
-    id: version
+    id: candidate
     attributes:
-      label: cb version / git tag being qualified
-      placeholder: "v1.2.3"
+      label: Exact release candidate tag and source commit
+      placeholder: "v2.1.0-rc.1 @ full commit SHA"
     validations:
       required: true
   - type: textarea
-    id: self-update-published-e2e
+    id: supply-chain
     attributes:
-      label: Published-release self-update E2E
-      description: Record the previous release, exact published candidate tag, source commit, signed GitHub CLI version/publisher, command, and complete sanitized JSON result from scripts/qualify-self-update-published.ps1.
-      render: text
-    validations:
-      required: true
-  - type: textarea
-    id: cell-wsl2-current
-    attributes:
-      label: Native WSL2 — current stable Docker Desktop
-      description: Record the exact candidate tag/source commit, archive checksum and attestation, Windows/Docker Desktop/Engine/distribution/kernel versions, both storage-mode process results, path-boundary checks, state isolation/persistence, cleanup recovery, final zero-residue check, and proof that native Windows volumes were preserved.
+      label: Signed artifacts, provenance, security, CI and reproducibility
+      description: Published hashes, signed tag, attestation, pinned build toolchain, actual binary scans, native CI and independent reproduction. Document any difference between candidate and prospective stable source.
       render: text
     validations:
       required: true
   - type: textarea
     id: cell-powershell51-current
     attributes:
-      label: Windows PowerShell 5.1 — current stable Docker Desktop
-      description: Docker Desktop version, `cb doctor` output (sanitized), `cb self-test --release` result, and any smoke-test commands.
+      label: PowerShell 5.1 — current Docker Desktop
+      description: Exact Desktop build, doctor, published-candidate self-test 15/0/0 and seven environment facts, cleanup.
       render: text
-  - type: textarea
-    id: cell-powershell51-previous
-    attributes:
-      label: Windows PowerShell 5.1 — previous stable Docker Desktop
-      description: Docker Desktop version, `cb doctor` output (sanitized), `cb self-test --release` result, and any smoke-test commands.
-      render: text
+    validations:
+      required: true
   - type: textarea
     id: cell-pwsh-current
     attributes:
-      label: PowerShell 7.x — current stable Docker Desktop
-      description: Docker Desktop version, `cb doctor` output (sanitized), `cb self-test --release` result, and any smoke-test commands.
+      label: PowerShell 7.x — current Docker Desktop
+      description: Exact Desktop build, doctor, published-candidate self-test 15/0/0 and seven environment facts, cleanup.
       render: text
-  - type: textarea
-    id: cell-pwsh-previous
-    attributes:
-      label: PowerShell 7.x — previous stable Docker Desktop
-      description: Docker Desktop version, `cb doctor` output (sanitized), `cb self-test --release` result, and any smoke-test commands.
-      render: text
+    validations:
+      required: true
   - type: textarea
     id: cell-cmd-current
     attributes:
-      label: cmd.exe — current stable Docker Desktop
-      description: Docker Desktop version, `cb doctor` output (sanitized), `cb self-test --release` result, and any smoke-test commands.
+      label: cmd.exe — current Docker Desktop
+      description: Exact Desktop build, doctor, published-candidate self-test 15/0/0 and seven environment facts, cleanup.
       render: text
+    validations:
+      required: true
+  - type: textarea
+    id: cell-powershell51-previous
+    attributes:
+      label: PowerShell 5.1 — previous Docker Desktop
+      description: Exact Desktop build, doctor, published-candidate self-test 15/0/0 and seven environment facts, cleanup.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: cell-pwsh-previous
+    attributes:
+      label: PowerShell 7.x — previous Docker Desktop
+      description: Exact Desktop build, doctor, published-candidate self-test 15/0/0 and seven environment facts, cleanup.
+      render: text
+    validations:
+      required: true
   - type: textarea
     id: cell-cmd-previous
     attributes:
-      label: cmd.exe — previous stable Docker Desktop
-      description: Docker Desktop version, `cb doctor` output (sanitized), `cb self-test --release` result, and any smoke-test commands.
+      label: cmd.exe — previous Docker Desktop
+      description: Exact Desktop build, doctor, published-candidate self-test 15/0/0 and seven environment facts, cleanup.
       render: text
+    validations:
+      required: true
+  - type: textarea
+    id: state-current
+    attributes:
+      label: Persistent state and provider integration — current Desktop
+      description: Python new/legacy state and backup/restore, pipx, Node, jq/Terraform, streams/PTY, security negatives and cleanup.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: state-previous
+    attributes:
+      label: Persistent state and provider integration — previous Desktop
+      description: Same complete state/provider suite, separately evidenced on the previous Desktop version.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: wsl2
+    attributes:
+      label: Native WSL2 — current Desktop
+      description: Published Linux artifact/provenance, two project storage modes, tool/stream/PTY/path tests, cleanup and namespace isolation. Report actual distro/kernel/Engine.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: self-update
+    attributes:
+      label: Actual published-to-published self-update
+      description: Actual published previous supported release binary to the exact published candidate; auth, transaction, shims and residue. Distinguish simulated source-version tests.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: preservation
+    attributes:
+      label: Per-host before/after preservation and cleanup
+      description: Docker inventories, protected installs, persistent PATH, verified test-owned cleanup and residual resources. Do not assert continuous forensic coverage.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: verdict
+    attributes:
+      label: Consolidated release readiness and outstanding blockers
+      description: Explicit PASS/FAIL/BLOCKED/NOT RUN for mandatory gates; GO or NO-GO with reasons. Stable merge/tag/publication are separately authorized.
+      render: text
+    validations:
+      required: true

@@ -77,7 +77,7 @@ The minimum delivery gate for a code change is:
 | RM-26 Python global CLI exposure | **Completed in PR #74** | Stateful pipx + `cb expose pipx` shipped; plain pip `/venv/bin` remains intentionally unexposed |
 | RM-29 Windows ARM64 | **Native CI, release packaging and update selection shipped / hardware work remains** | PR #78 added native hosted ARM64 CI, PR #86 added reproducible release packaging and PR #91 added ARM64 self-update selection; real Windows-on-Arm + Docker Desktop E2E remains |
 | RM-30 Authenticode | **Design complete / externally blocked** | Provision real code-signing certificate and protected signing mechanism |
-| RM-31 self-update | **Core pipeline and repeatable published-release E2E implemented** | The read-only plan, fail-closed staging, provenance verification, architecture-specific artifact selection, rollback-safe replacement transaction, protected wait helper and explicit user-facing apply wiring are implemented. PR #126 added the Windows/amd64 harness that qualifies the complete transaction against a canonical published release; rerun it for each exact release candidate |
+| RM-31 self-update | **Core pipeline and repeatable published-release E2E implemented** | The read-only plan, fail-closed staging, provenance verification, architecture-specific artifact selection, rollback-safe replacement transaction, protected wait helper and explicit user-facing apply wiring are implemented. PR #126 added the Windows/amd64 harness that qualifies the complete transaction against a canonical published release; for current release gates see [Release Qualification Policy v2](release-qualification-policy.md): the source-version simulation harness is supplementary to a mandatory genuine published-to-published update |
 | RM-34 Cargo expose enhancement | **Intentionally deferred** | Existing expose-all/explicit selection are sufficient; reopen only for concrete unmet use case |
 | Linux/macOS hosts | **Demand-gated** | WSL may factor reusable Linux host code; standalone support needs its own demand and qualification |
 | Enterprise policy | **Foundation and signed registry completed** | PRs #75 and #84 shipped the machine-owned constraint layer and authenticated registry; image trust is tracked separately below |
@@ -484,8 +484,10 @@ protected copy of the proven installed binary. The helper waits for the parent,
 re-verifies the staged artifact and bound identities, then enters the serialized
 rollback-safe transaction. Unit/native-Windows CI covers the process boundary;
 the complete Windows/amd64 path passed against canonical v1.1.0 assets on
-2026-10-04. Release candidates must rerun the harness against their exact
-published target and retain the result with the manual release-matrix evidence.
+2026-10-04. This was the historical qualification requirement. Under
+[Release Qualification Policy v2](release-qualification-policy.md), this
+source-version simulation harness is supplementary; a genuine
+published-to-published update is mandatory instead.
 
 ## Linux and macOS hosts
 
